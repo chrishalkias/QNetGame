@@ -22,19 +22,19 @@ from matplotlib.colors import Normalize
 from matplotlib import cm
 
 from rl_stack.model import QNetwork
-from rl_stack.env_wrapper import QRNEnv, NOOP, ENTANGLE, SWAP, PURIFY, N_ACTIONS
+from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY, N_ACTIONS
 from rl_stack import strategies
 
 # ── action names for labels ───────────────────────────────────────
-_ANAMES = {NOOP: "Wait", ENTANGLE: "Entangle", SWAP: "Swap", PURIFY: "Purify"}
-_ACOLORS = {NOOP: "#aaaaaa", ENTANGLE: "#4488cc", SWAP: "#cc4444", PURIFY: "#44aa44"}
+_ANAMES = {NOOP: "Wait", SWAP: "Swap", PURIFY: "Purify"}
+_ACOLORS = {NOOP: "#aaaaaa", SWAP: "#cc4444", PURIFY: "#44aa44"}
 
 
 def _make_obs(N: int, features: np.ndarray, spacing: float = 50.0):
     """Build a synthetic observation dict for a chain of N nodes.
 
     Args:
-        features: (N, 7) float32 array of node features.
+        features: (N, 8) float32 array of node features.
         spacing: only needed to construct edge_index (chain adjacency).
     """
     src, dst = [], []
@@ -54,7 +54,7 @@ def _get_q(model, obs, device="cpu"):
     return q
 
 
-def load_model(model_path: str, node_dim: int = 7, hidden: int = 64,
+def load_model(model_path: str, node_dim: int = 8, hidden: int = 64,
                device: str = "cpu") -> QNetwork:
     model = QNetwork(node_dim, hidden, N_ACTIONS)
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
@@ -80,18 +80,18 @@ def plot_swap_preference(model, save_dir=".", resolution=40, device="cpu"):
 
     for i, f1 in enumerate(f_range):
         for j, f2 in enumerate(f_range):
-            features = np.zeros((N, 7), dtype=np.float32)
+            features = np.zeros((N, 8), dtype=np.float32)
             # Source (node 0): has one link
-            features[0] = [0.25, f1, 1, 0, 0.25, 0, 0]
+            features[0, :7] = [0.25, f1, 1, 0, 0.25, 0, 0]
             # Node 1: intermediate, has links
-            features[1] = [0.5, (f1 + 0.5) / 2, 0, 0, 0.25, 1, 0]
+            features[1, :7] = [0.5, (f1 + 0.5) / 2, 0, 0, 0.25, 1, 0]
             # Node 2 (probe): has two links with f1 and f2
             mean_f = (f1 + f2) / 2.0
-            features[2] = [0.5, mean_f, 0, 0, 0.0, 1, 0]
+            features[2, :7] = [0.5, mean_f, 0, 0, 0.0, 1, 0]
             # Node 3: intermediate
-            features[3] = [0.5, (f2 + 0.5) / 2, 0, 0, 0.25, 1, 0]
+            features[3, :7] = [0.5, (f2 + 0.5) / 2, 0, 0, 0.25, 1, 0]
             # Dest (node 4)
-            features[4] = [0.25, f2, 0, 1, 0.25, 0, 0]
+            features[4, :7] = [0.25, f2, 0, 1, 0.25, 0, 0]
 
             obs = _make_obs(N, features)
             q = _get_q(model, obs, device)  # (5, 4)
@@ -140,14 +140,14 @@ def plot_purify_preference(model, save_dir=".", resolution=40, device="cpu"):
 
     for i, f1 in enumerate(f_range):
         for j, f2 in enumerate(f_range):
-            features = np.zeros((N, 7), dtype=np.float32)
+            features = np.zeros((N, 8), dtype=np.float32)
             mean_f = (f1 + f2) / 2.0
             # Node 1 (probe): has 2 links to same neighbor → can purify
-            features[0] = [0.25, 0.5, 1, 0, 0.0, 0, 0]  # source
-            features[1] = [0.5, mean_f, 0, 0, 0.0, 0, 1]  # probe: can purify
-            features[2] = [0.5, mean_f, 0, 0, 0.0, 0, 0]
-            features[3] = [0.25, 0.5, 0, 0, 0.25, 0, 0]
-            features[4] = [0.0, 0.0, 0, 1, 0.0, 0, 0]  # dest
+            features[0, :7] = [0.25, 0.5, 1, 0, 0.0, 0, 0]  # source
+            features[1, :7] = [0.5, mean_f, 0, 0, 0.0, 0, 1]  # probe: can purify
+            features[2, :7] = [0.5, mean_f, 0, 0, 0.0, 0, 0]
+            features[3, :7] = [0.25, 0.5, 0, 0, 0.25, 0, 0]
+            features[4, :7] = [0.0, 0.0, 0, 1, 0.0, 0, 0]  # dest
 
             obs = _make_obs(N, features)
             q = _get_q(model, obs, device)
@@ -182,14 +182,14 @@ def plot_action_vs_position(model, save_dir=".", device="cpu"):
     axes = axes.flatten()
 
     for idx, N in enumerate(range(5, 13)):
-        features = np.zeros((N, 7), dtype=np.float32)
+        features = np.zeros((N, 8), dtype=np.float32)
         for i in range(N):
             is_src = 1.0 if i == 0 else 0.0
             is_dst = 1.0 if i == N - 1 else 0.0
             is_end = (i == 0 or i == N - 1)
             frac_occ = 0.25 if is_end else 0.5
             can_sw = 0.0 if is_end else 1.0
-            features[i] = [frac_occ, 0.7, is_src, is_dst, 0.25, can_sw, 0]
+            features[i, :7] = [frac_occ, 0.7, is_src, is_dst, 0.25, can_sw, 0]
 
         obs = _make_obs(N, features)
         q = _get_q(model, obs, device)  # (N, 4)
@@ -237,12 +237,12 @@ def plot_best_action_map(model, save_dir=".", resolution=30, device="cpu"):
 
     for i, occ in enumerate(occ_range):
         for j, fid in enumerate(fid_range):
-            features = np.zeros((N, 7), dtype=np.float32)
-            features[0] = [0.25, 0.6, 1, 0, 0.25, 0, 0]
-            features[1] = [occ, fid, 0, 0, max(0, occ - 0.25), occ >= 0.5, occ >= 0.5]
-            features[2] = [occ, fid, 0, 0, max(0, occ - 0.25), occ >= 0.5, 0]
-            features[3] = [occ, fid, 0, 0, max(0, occ - 0.25), occ >= 0.5, 0]
-            features[4] = [0.25, 0.6, 0, 1, 0.25, 0, 0]
+            features = np.zeros((N, 8), dtype=np.float32)
+            features[0, :7] = [0.25, 0.6, 1, 0, 0.25, 0, 0]
+            features[1, :7] = [occ, fid, 0, 0, max(0, occ - 0.25), occ >= 0.5, occ >= 0.5]
+            features[2, :7] = [occ, fid, 0, 0, max(0, occ - 0.25), occ >= 0.5, 0]
+            features[3, :7] = [occ, fid, 0, 0, max(0, occ - 0.25), occ >= 0.5, 0]
+            features[4, :7] = [0.25, 0.6, 0, 1, 0.25, 0, 0]
 
             obs = _make_obs(N, features)
             q = _get_q(model, obs, device)
@@ -350,8 +350,8 @@ def plot_live_q_trace(model, save_dir=".", device="cpu",
 # DIAGNOSTIC 6: Swap vs Entangle boundary
 # ══════════════════════════════════════════════════════════════════
 
-def plot_swap_vs_entangle(model, save_dir=".", resolution=40, device="cpu"):
-    """When should a node swap vs try to entangle more? Show the
+def plot_swap_vs_wait(model, save_dir=".", resolution=40, device="cpu"):
+    """When should a node swap vs try to wait more? Show the
     decision boundary as a function of (frac_available, mean_fidelity)."""
     N = 5
     avail_range = np.linspace(0.0, 1.0, resolution)
@@ -361,17 +361,17 @@ def plot_swap_vs_entangle(model, save_dir=".", resolution=40, device="cpu"):
     for i, avail in enumerate(avail_range):
         for j, fid in enumerate(fid_range):
             occ = max(avail, 0.5)  # at least 2 qubits occupied for swap
-            features = np.zeros((N, 7), dtype=np.float32)
-            features[0] = [0.25, 0.6, 1, 0, 0.25, 0, 0]
-            features[1] = [occ, fid, 0, 0, avail, 1, 0]
-            features[2] = [occ, fid, 0, 0, avail, 1, 0]
-            features[3] = [occ, fid, 0, 0, avail, 1, 0]
-            features[4] = [0.25, 0.6, 0, 1, 0.25, 0, 0]
+            features = np.zeros((N, 8), dtype=np.float32)
+            features[0, :7] = [0.25, 0.6, 1, 0, 0.25, 0, 0]
+            features[1, :7] = [occ, fid, 0, 0, avail, 1, 0]
+            features[2, :7] = [occ, fid, 0, 0, avail, 1, 0]
+            features[3, :7] = [occ, fid, 0, 0, avail, 1, 0]
+            features[4, :7] = [0.25, 0.6, 0, 1, 0.25, 0, 0]
 
             obs = _make_obs(N, features)
             q = _get_q(model, obs, device)
-            # Preference: positive means swap preferred over entangle
-            preference[i, j] = q[2, SWAP] - q[2, ENTANGLE]
+            # Preference: positive means swap preferred over wait
+            preference[i, j] = q[2, SWAP] - q[2, NOOP]
 
     fig, ax = plt.subplots(figsize=(7, 5.5))
     im = ax.imshow(preference, origin="lower", aspect="auto",
@@ -380,13 +380,13 @@ def plot_swap_vs_entangle(model, save_dir=".", resolution=40, device="cpu"):
                 colors="black", linewidths=2)
     ax.set_xlabel("Mean fidelity")
     ax.set_ylabel("Fraction available qubits")
-    ax.set_title("$Q(\\mathrm{swap}) - Q(\\mathrm{entangle})$ at interior node")
+    ax.set_title("$Q(\\mathrm{swap}) - Q(\\mathrm{wait})$ at interior node")
     fig.colorbar(im, ax=ax, label="Swap preference")
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "diag_swap_vs_entangle.png"), dpi=150,
+    plt.savefig(os.path.join(save_dir, "diag_swap_vs_wait.png"), dpi=150,
                 bbox_inches="tight")
     plt.close()
-    print("  Saved diag_swap_vs_entangle.png")
+    print("  Saved diag_swap_vs_wait.png")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -404,7 +404,7 @@ def run_all(model_path: str, save_dir: str = "diagnostics", device: str = "cpu")
     plot_purify_preference(model, save_dir, device=device)
     plot_action_vs_position(model, save_dir, device=device)
     plot_best_action_map(model, save_dir, device=device)
-    plot_swap_vs_entangle(model, save_dir, device=device)
+    plot_swap_vs_wait(model, save_dir, device=device)
     plot_live_q_trace(model, save_dir, device=device)
 
     print(f"\nAll diagnostics saved to {save_dir}/")

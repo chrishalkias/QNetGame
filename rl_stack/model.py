@@ -1,8 +1,4 @@
-"""GNN that outputs per-node Q-values for the 4 repeater actions.
-
-Architecture: 2-layer GraphSAGE → linear head → (N, 4) Q-values.
-Size-agnostic: works for any N because all layers are local.
-"""
+"""GNN that outputs per-node Q-values for the 3 repeater actions"""
 
 import torch
 import torch.nn as nn
@@ -17,10 +13,11 @@ class QNetwork(nn.Module):
     Output: (N, n_actions) Q-values per node.
     """
 
-    def __init__(self, node_dim: int = 7, hidden: int = 64, n_actions: int = 4):
+    def __init__(self, node_dim: int = 8, hidden: int = 32, n_actions: int = 3):
         super().__init__()
         self.conv1 = SAGEConv(node_dim, hidden)
         self.conv2 = SAGEConv(hidden, hidden)
+        self.conv3 = SAGEConv(hidden, hidden)
         self.head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
@@ -31,4 +28,5 @@ class QNetwork(nn.Module):
         x, ei = data.x, data.edge_index
         x = F.relu(self.conv1(x, ei))
         x = F.relu(self.conv2(x, ei))
-        return self.head(x)  # (total_nodes_in_batch, n_actions)
+        x = F.relu(self.conv3(x, ei))
+        return self.head(x)          # [total_nodes_in_batch, n_actions]
