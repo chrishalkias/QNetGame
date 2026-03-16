@@ -1,4 +1,9 @@
-# `quantum_repeater_sim`
+# QNetGame
+
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![LaTeX](https://img.shields.io/badge/LaTeX-008080?logo=latex&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
+![PyTorch Geometric](https://img.shields.io/badge/PyTorch%20Geometric-EE4C2C?style=flat&logo=pytorch&logoColor=white)
 
 A discrete-time quantum repeater network simulator with classical
 communication delays, designed as the environment for a Reinforcement
@@ -524,7 +529,6 @@ print(net)
 
 ---
 
----
 
 ## 9. Known Limitations
 
