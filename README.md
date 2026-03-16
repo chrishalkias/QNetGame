@@ -83,10 +83,10 @@ Two adjacent repeaters $i, j$ attempt to create a Bell pair.
 $$
 P_{\text{gen}}(i,j) = \frac{p_{\text{gen}}^{(i)} + p_{\text{gen}}^{(j)}}{2}
 \times
-\begin{Bmatrix}
-e^{-\alpha\, d_{ij}/2} & \text{if distance\_dep\_gen} \\
+\begin{cases}
+e^{-\alpha\, d_{ij}/2} & \text{if distance-dep-gen} \\
 1 & \text{otherwise}
-\end{Bmatrix}
+\end{cases}
 $$
 
 **Initial fidelity** of the new pair:
