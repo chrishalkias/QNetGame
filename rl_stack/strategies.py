@@ -1,11 +1,12 @@
-"""Heuristic strategies for baseline comparison against the RL agent.
+'''
+Heuristic strategies for baseline comparison against the RL agent.
 
 Each strategy takes a QRNEnv and returns an (N,) action array
 containing only NOOP, SWAP, or PURIFY.  All strategies respect the
 action mask (source/dest are always NOOP).
 
 Entanglement is handled automatically by the environment step.
-"""
+'''
 
 from __future__ import annotations
 import numpy as np
@@ -16,7 +17,7 @@ from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY
 def swap_asap(env: QRNEnv) -> np.ndarray:
     """Swap at every interior node that can, immediately.
 
-    If a node has ≥2 available qubits linked to distinct partners,
+    If a node has =>2 available qubits linked to distinct partners,
     assign SWAP.  The network's swap function itself handles
     contention gracefully (returns failure if qubits became
     locked by an earlier swap in the same timestep).

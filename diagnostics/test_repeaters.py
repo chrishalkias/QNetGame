@@ -6,6 +6,7 @@ import sys, time, itertools
 import numpy as np
 
 sys.path.insert(0, ".")
+
 from quantum_repeater_sim import (
     Repeater, SwapPolicy, RepeaterNetwork, build_chain, build_grid,
     network_to_heterodata, fidelity_to_werner, werner_to_fidelity,

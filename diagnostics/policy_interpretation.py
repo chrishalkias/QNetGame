@@ -25,7 +25,7 @@ from rl_stack.model import QNetwork
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY, N_ACTIONS
 from rl_stack import strategies
 
-# ── action names for labels ───────────────────────────────────────
+# ----- action names for labels------------------------------
 _ANAMES = {NOOP: "Wait", SWAP: "Swap", PURIFY: "Purify"}
 _ACOLORS = {NOOP: "#aaaaaa", SWAP: "#cc4444", PURIFY: "#44aa44"}
 
@@ -62,9 +62,9 @@ def load_model(model_path: str, node_dim: int = 8, hidden: int = 64,
     return model
 
 
-# ══════════════════════════════════════════════════════════════════
+# ==================================================================
 # DIAGNOSTIC 1: Swap preference as f(f1, f2)
-# ══════════════════════════════════════════════════════════════════
+# ==================================================================
 
 def plot_swap_preference(model, save_dir=".", resolution=40, device="cpu"):
     """Heatmap of Q(swap) - Q(wait) at a middle node as a function of
@@ -127,9 +127,9 @@ def plot_swap_preference(model, save_dir=".", resolution=40, device="cpu"):
     print("  Saved diag_swap_preference.png")
 
 
-# ══════════════════════════════════════════════════════════════════
+# ==================================================================
 # DIAGNOSTIC 2: Purify preference as f(f1, f2)
-# ══════════════════════════════════════════════════════════════════
+# ==================================================================
 
 def plot_purify_preference(model, save_dir=".", resolution=40, device="cpu"):
     """Heatmap of Q(purify) - Q(wait) at a node with two links to the
@@ -170,62 +170,11 @@ def plot_purify_preference(model, save_dir=".", resolution=40, device="cpu"):
     print("  Saved diag_purify_preference.png")
 
 
-# ══════════════════════════════════════════════════════════════════
-# DIAGNOSTIC 3: Preferred action vs node position
-# ══════════════════════════════════════════════════════════════════
 
-def plot_action_vs_position(model, save_dir=".", device="cpu"):
-    """For chains of N=5..12, show the preferred action at each node
-    when all interior nodes have 2 links (can_swap=1) and moderate
-    fidelity. Source=0, dest=N-1."""
-    fig, axes = plt.subplots(2, 4, figsize=(16, 6), sharey=True)
-    axes = axes.flatten()
+# ==================================================================
+# DIAGNOSTIC 3: Best action map (action type heatmap)
+# ==================================================================
 
-    for idx, N in enumerate(range(5, 13)):
-        features = np.zeros((N, 8), dtype=np.float32)
-        for i in range(N):
-            is_src = 1.0 if i == 0 else 0.0
-            is_dst = 1.0 if i == N - 1 else 0.0
-            is_end = (i == 0 or i == N - 1)
-            frac_occ = 0.25 if is_end else 0.5
-            can_sw = 0.0 if is_end else 1.0
-            features[i, :7] = [frac_occ, 0.7, is_src, is_dst, 0.25, can_sw, 0]
-
-        obs = _make_obs(N, features)
-        q = _get_q(model, obs, device)  # (N, 4)
-
-        ax = axes[idx]
-        x = np.arange(N)
-        width = 0.18
-        for a in range(N_ACTIONS):
-            ax.bar(x + a * width - 0.27, q[:, a], width,
-                   label=_ANAMES[a], color=_ACOLORS[a], alpha=0.8)
-
-        best = q.argmax(axis=1)
-        for i in range(N):
-            ax.scatter(i, q[i, best[i]] + 0.5, marker="v", color="black", s=15, zorder=5)
-
-        ax.set_xticks(x)
-        ax.set_xticklabels([f"R{i}" for i in range(N)], fontsize=7)
-        ax.set_title(f"N={N}", fontsize=9)
-        ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
-        if idx == 0:
-            ax.set_ylabel("Q-value")
-        if idx == 0:
-            ax.legend(fontsize=6, loc="upper left")
-
-    fig.suptitle("Q-values per action at each node (all interior nodes can swap, F≈0.7)",
-                 fontsize=11)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "diag_action_vs_position.png"), dpi=150,
-                bbox_inches="tight")
-    plt.close()
-    print("  Saved diag_action_vs_position.png")
-
-
-# ══════════════════════════════════════════════════════════════════
-# DIAGNOSTIC 4: Best action map (action type heatmap)
-# ══════════════════════════════════════════════════════════════════
 
 def plot_best_action_map(model, save_dir=".", resolution=30, device="cpu"):
     """For the middle node of a 5-node chain, show which action is
@@ -268,87 +217,10 @@ def plot_best_action_map(model, save_dir=".", resolution=30, device="cpu"):
     print("  Saved diag_best_action_map.png")
 
 
-# ══════════════════════════════════════════════════════════════════
-# DIAGNOSTIC 5: Live episode Q-value trace
-# ══════════════════════════════════════════════════════════════════
 
-def plot_live_q_trace(model, save_dir=".", device="cpu",
-                      N=6, p_gen=0.8, p_swap=0.7, cutoff=15,
-                      max_steps=40, seed=42):
-    """Run a live episode with the greedy policy and plot Q-values at
-    each step for every node, coloured by chosen action."""
-    from rl_stack.agent import QRNAgent, _obs_to_data
-
-    env = QRNEnv(n_repeaters=N, n_ch=4, spacing=50.0,
-                 p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
-                 dt_seconds=0.0, max_steps=max_steps,
-                 rng=np.random.default_rng(seed))
-    obs = env.reset()
-
-    # Traces: q_trace[node][step] = (q_values, chosen_action)
-    q_trace = {i: [] for i in range(N)}
-    step = 0
-
-    while step < max_steps:
-        q = _get_q(model, obs, device)
-        mask = env.get_action_mask()
-        q_masked = q.copy()
-        q_masked[~mask] = -float("inf")
-        actions = q_masked.argmax(axis=1)
-
-        for i in range(N):
-            q_trace[i].append((q[i].copy(), int(actions[i])))
-
-        obs, _, done, info = env.step(actions)
-        step += 1
-        if done:
-            break
-
-    # Plot: one subplot per node
-    n_cols = min(N, 4)
-    n_rows = (N + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 3 * n_rows),
-                             sharex=True, squeeze=False)
-    steps_arr = np.arange(len(q_trace[0]))
-
-    for i in range(N):
-        ax = axes[i // n_cols][i % n_cols]
-        qs = np.array([t[0] for t in q_trace[i]])  # (steps, 4)
-        chosen = [t[1] for t in q_trace[i]]
-
-        for a in range(N_ACTIONS):
-            ax.plot(steps_arr, qs[:, a], color=_ACOLORS[a],
-                    alpha=0.5, linewidth=1, label=_ANAMES[a] if i == 0 else None)
-
-        # Mark chosen action
-        for t in range(len(chosen)):
-            ax.scatter(t, qs[t, chosen[t]], color=_ACOLORS[chosen[t]],
-                       s=12, zorder=5, edgecolors="black", linewidths=0.3)
-
-        src_tag = " (SRC)" if i == env.source else (" (DST)" if i == env.dest else "")
-        ax.set_title(f"R{i}{src_tag}", fontsize=9)
-        ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
-
-    # Remove unused axes
-    for i in range(N, n_rows * n_cols):
-        axes[i // n_cols][i % n_cols].set_visible(False)
-
-    axes[0][0].legend(fontsize=7, loc="upper left")
-    fig.suptitle(f"Q-value traces during greedy episode (N={N}, steps={step},"
-                 f" F={info.get('fidelity', 0):.3f})", fontsize=11)
-    fig.supxlabel("Step")
-    fig.supylabel("Q-value")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "diag_q_trace.png"), dpi=150,
-                bbox_inches="tight")
-    plt.close()
-    print(f"  Saved diag_q_trace.png (episode ran {step} steps, "
-          f"F={info.get('fidelity', 0):.3f})")
-
-
-# ══════════════════════════════════════════════════════════════════
-# DIAGNOSTIC 6: Swap vs Entangle boundary
-# ══════════════════════════════════════════════════════════════════
+# ==================================================================
+# DIAGNOSTIC 4: Swap vs Entangle boundary
+# ==================================================================
 
 def plot_swap_vs_wait(model, save_dir=".", resolution=40, device="cpu"):
     """When should a node swap vs try to wait more? Show the
@@ -389,9 +261,10 @@ def plot_swap_vs_wait(model, save_dir=".", resolution=40, device="cpu"):
     print("  Saved diag_swap_vs_wait.png")
 
 
-# ══════════════════════════════════════════════════════════════════
+# ==================================================================
 # MAIN
-# ══════════════════════════════════════════════════════════════════
+# ==================================================================
+
 
 def run_all(model_path: str, save_dir: str = "diagnostics", device: str = "cpu"):
     """Run all diagnostics and save plots."""
@@ -402,10 +275,8 @@ def run_all(model_path: str, save_dir: str = "diagnostics", device: str = "cpu")
 
     plot_swap_preference(model, save_dir, device=device)
     plot_purify_preference(model, save_dir, device=device)
-    plot_action_vs_position(model, save_dir, device=device)
     plot_best_action_map(model, save_dir, device=device)
     plot_swap_vs_wait(model, save_dir, device=device)
-    plot_live_q_trace(model, save_dir, device=device)
 
     print(f"\nAll diagnostics saved to {save_dir}/")
 
@@ -417,5 +288,6 @@ if __name__ == "__main__":
     # parser.add_argument("--device", default="cpu")
     # args = parser.parse_args()
     # run_all(args.model, args.save_dir, args.device)
-
-    run_all(model_path='checkpoints/policy.pth', save_dir='diagnostics/figures', device='cpu')
+    path = "checkpoints/003/"
+    run_all(model_path=path+'policy.pth', save_dir=path+'diagnostics', device='cpu')
+    

@@ -15,20 +15,35 @@ def random_params_generator():
             'p_swap' : np.random.rand(),
             'cutoff' : np.random.randint(1, 100)}
 
+SEP = "=" * 72
+OK = FAIL = 0
+
+def _ok(msg=""): 
+    global OK; 
+    OK += 1 
+    print(f"    \u2713 {msg}") if msg else None
+
+
 class TestRepeaterNetwork_CoreTests(unittest.TestCase):
 
     def setUP(self):
         ...
+
     
     def test_init(self):
-        for _ in range(100):
+        print(print(f"\n{SEP}\nTEST 1: Initialization test\n{SEP}"))
+        N=100
+        for _ in range(N):
             params = random_params_generator()
             r = Repeater(rid=1, **params)
             self.assertFalse(r.num_occupied())
-            self.assertFalse(r.available_indices())
+            self.assertFalse(r.num_available())
             self.assertTrue(r.has_free_qubit())
             self.assertFalse(r.can_swap())
             self.assertFalse(r.num_locked())
+        _ok(f"{N} Init tests")
+
+            
 
     def test_1_entangle(self):
         n_ch = random.randint(2, 10)
@@ -44,10 +59,10 @@ class TestRepeaterNetwork_CoreTests(unittest.TestCase):
             r1.set_link(q1, 2, q2, 1, 1, None)
             r2.set_link(q2, 1, q1, 1, 1, None)
 
-            self.assertTrue(r1.num_occupied()==1)
-            self.assertTrue(r2.num_occupied()==1)
-            self.assertTrue(r1.partner_qubit == q2)
-            self.assertTrue(r2.partner_qubit == q1)
+            self.assertTrue(r1.num_occupied()==k+1)
+            self.assertTrue(r2.num_occupied()==k+1)
+            self.assertTrue(r1.partner_qubit[q2])
+            self.assertTrue(r2.partner_qubit[q1])
 
 
 if __name__ == '__main__':

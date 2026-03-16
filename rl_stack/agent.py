@@ -312,7 +312,7 @@ class QRNAgent:
                        os.path.join(save_path, "policy.pth"))
 
         if plot:
-            self._plot_training(metrics)
+            self._plot_training(metrics, save_path)
 
         return metrics
     
