@@ -63,7 +63,7 @@ Every entangled pair is described by a single scalar, the Werner
 parameter $p \in [0, 1]$, corresponding to the two-qubit state
 
 $$
-\rho(p) = p\,|\Phi^+\rangle\!\langle\Phi^+| + \frac{1-p}{4}\,I_4
+\rho(p) = p\,|\Phi^+\rangle\!\langle\Phi^+| + \frac{1-p}{4}I_4
 $$
 
 Fidelity with respect to the target Bell state is
@@ -83,10 +83,10 @@ Two adjacent repeaters $i, j$ attempt to create a Bell pair.
 $$
 P_{\text{gen}}(i,j) = \frac{p_{\text{gen}}^{(i)} + p_{\text{gen}}^{(j)}}{2}
 \times
-\begin{cases}
+\begin{Bmatrix}
 e^{-\alpha\, d_{ij}/2} & \text{if distance\_dep\_gen} \\
 1 & \text{otherwise}
-\end{cases}
+\end{Bmatrix}
 $$
 
 **Initial fidelity** of the new pair:
