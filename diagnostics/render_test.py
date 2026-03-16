@@ -20,19 +20,18 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from quantum_repeater_sim.network  import build_chain, build_grid
-from quantum_repeater_sim.repeater import SwapPolicy
+from quantum_repeater_sim.network  import build_chain, build_grid, build_GEANT
 
-OUT = pathlib.Path("quantum_repeater_sim/tests/renders")
+OUT = pathlib.Path("diagnostics/renders")
 OUT.mkdir(exist_ok=True)
 
 # Common keyword arguments shared by every scenario
 COMMON = dict(n_ch=4, p_gen=1.0, p_swap=1.0, F0=0.98, channel_loss=0.0)
 
 
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 #  Scenario 1 – Empty chain (topology only)
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 def scenario_empty_chain():
     net = build_chain(5, spacing=50.0, cutoff=20,
                       rng=np.random.default_rng(0), **COMMON)
@@ -40,9 +39,9 @@ def scenario_empty_chain():
     print("[1] empty_chain ✓")
 
 
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 #  Scenario 2 – Elementary links on several edges
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 def scenario_elementary_links():
     net = build_chain(5, spacing=50.0, cutoff=20,
                       rng=np.random.default_rng(1), **COMMON)
@@ -60,9 +59,9 @@ def scenario_elementary_links():
     print("[2] elementary_links ✓")
 
 
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 #  Scenario 3 – Post-swap: long-range link R0 ↔ R2
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 def scenario_post_swap():
     net = build_chain(5, spacing=50.0, cutoff=20, dt_seconds=1.0,
                       rng=np.random.default_rng(2), **COMMON)
@@ -82,9 +81,9 @@ def scenario_post_swap():
     print("[3] post_swap ✓")
 
 
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 #  Scenario 4 – Pending swap (locked qubits visible)
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 def scenario_pending_swap():
     # Small dt → large classical delay → event stays pending
     net = build_chain(5, spacing=50.0, cutoff=50, dt_seconds=1e-5,
@@ -105,9 +104,9 @@ def scenario_pending_swap():
     print("[4] pending_swap ✓")
 
 
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 #  Scenario 5 – 2 × 3 grid with mixed entanglement
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
 def scenario_grid():
     net = build_grid(2, 3, spacing=60.0, cutoff=20,
                      rng=np.random.default_rng(4), **COMMON)
@@ -129,12 +128,33 @@ def scenario_grid():
     net.render(filepath=str(OUT / "5_grid_mixed.png"))
     print("[5] grid_mixed ✓")
 
+# ==============================================================
+#  Scenario 6 – Geant with some Entanglements
+# ==============================================================
+def geant_net():
+    net= build_GEANT()
 
-# ══════════════════════════════════════════════════════════════
+    net.entangle(0, 1)
+    net.entangle(1, 2)
+    net.entangle(0, 3)
+    net.entangle(3, 4)
+    net.entangle(4, 5)
+    net.entangle(2, 5)
+
+    for _ in range(3):
+        net.age_links(discard_expired=False)
+
+    net.render(filepath=str(OUT / "6_GEANT_mixed.png"))
+    print("[6] geant_net ✓")
+
+
+# ==============================================================
+
 if __name__ == "__main__":
     scenario_empty_chain()
     scenario_elementary_links()
     scenario_post_swap()
     scenario_pending_swap()
     scenario_grid()
+    geant_net()
     print(f"\nAll renders saved to  {OUT.resolve()}/")

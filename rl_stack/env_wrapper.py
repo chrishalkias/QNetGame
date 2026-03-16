@@ -30,13 +30,13 @@ from __future__ import annotations
 from typing import Dict, Tuple, Optional
 import numpy as np
 
-from quantum_repeater_sim.network import RepeaterNetwork, build_chain
+from quantum_repeater_sim.network import RepeaterNetwork, build_chain, build_grid, build_GEANT
 from quantum_repeater_sim.repeater import (
     Repeater, SwapPolicy, werner_to_fidelity, NO_PARTNER,
     QUBIT_OCCUPIED,
 )
 
-# ── action constants ──────────────────────────────────────────────
+# --- action constants ----------------------------------------------------
 NOOP    = 0
 SWAP    = 1
 PURIFY  = 2
@@ -44,7 +44,7 @@ N_ACTIONS = 3
 ACTION_NAMES = ["noop", "swap", "purify"]
 
 
-class QRNEnv:
+class QRNEnv(RepeaterNetwork):
     """
                                                               
               ▄▄▄▄▄   ▄▄▄▄▄▄▄   ▄▄▄    ▄▄▄        ▄▄▄▄▄▄▄             
@@ -63,35 +63,59 @@ class QRNEnv:
     STEP_COST       = -0.01
     SUCCESS_REWARD  =  1.0
 
-    def __init__(self, n_repeaters: int = 5, n_ch: int = 4,
-                 spacing: float = 50.0, p_gen: float = 0.8,
-                 p_swap: float = 0.5, cutoff: int = 20,
-                 F0: float = 0.95, channel_loss: float = 0.02,
-                 dt_seconds: float = 1e-4, max_steps: int = 50,
+    def __init__(self, 
+                 n_repeaters = 5, 
+                 n_ch = 4,
+                 spacing = 50.0, 
+                 p_gen = 0.8,
+                 p_swap = 0.5, 
+                 cutoff = 20,
+                 F0 = 0.95, 
+                 channel_loss = 0.02,
+                 dt_seconds = 1e-4, 
+                 max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
-                 heterogeneous: bool = False, ee: bool = False):
-
+                 heterogeneous = False, 
+                 ee = False,
+                 topology = 'chain'):
+        
+        if topology not in ['chain', 'grid', 'geant']:
+            raise ValueError(f'Topology {topology} not supported')
+        
         self.rng = rng if rng is not None else np.random.default_rng()
         self.max_steps = max_steps
 
-        self.net = build_chain(
-            n_repeaters, n_ch=n_ch, spacing=spacing,
-            p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
-            F0=F0, channel_loss=channel_loss,
-            dt_seconds=dt_seconds,
-            distance_dep_gen=True, rng=self.rng)
+        if topology == 'chain':
+            self.net = build_chain(
+                n_repeaters, n_ch=n_ch, spacing=spacing,
+                p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+                F0=F0, channel_loss=channel_loss,
+                dt_seconds=dt_seconds,
+                distance_dep_gen=True, rng=self.rng)
+            
+        elif topology == 'grid':
+            self.net = build_grid(
+                    rows=n_repeaters, cols=n_repeaters, 
+                    n_ch=n_ch,spacing=50.0,
+                    swap_policy=SwapPolicy.FARTHEST,
+                    p_gen=0.8, p_swap=0.5, cutoff=20)
+            
+        elif topology == 'geant':
+            build_GEANT(
+                n_ch=n_ch, swap_policy=SwapPolicy.FARTHEST,
+                p_gen=p_gen, p_swap=p_swap, cutoff=cutoff)
 
         if heterogeneous:
             for rep in self.net.repeaters:
                 rep.p_gen  = self.rng.uniform(0.3, 1.0)
                 rep.p_swap = self.rng.uniform(0.3, 1.0)
 
-        self.N       = self.net.N
-        self.source  = -1
-        self.dest    = -1
-        self.steps   = 0
-        self.done    = False
-        self.ee      = ee
+        self.N  = self.net.N
+        self.source = -1
+        self.dest = -1
+        self.steps = 0
+        self.done = False
+        self.topology = topology
         self._pick_targets()
 
                                            
@@ -104,7 +128,7 @@ class QRNEnv:
 #                     ▀▀▀                    
 
     def _pick_targets(self):
-        if self.N <= 2 or self.ee:
+        if self.N <= 2 or self.topology == 'chain':
             self.source, self.dest = 0, self.N - 1
             return
         while True:
@@ -130,14 +154,15 @@ class QRNEnv:
         Features per node (8):
             [0] frac_occupied     — occupied / n_ch
             [1] mean_fidelity     — avg F of occupied qubits (0 if none)
-            [2] is_source         — 1.0 / 0.0
-            [3] is_dest           — 1.0 / 0.0
+            [2] is_source         — 0/1
+            [3] is_dest           — 0/1
             [4] frac_available    — available (unlocked occupied) / n_ch
             [5] can_swap          — 1.0 if ≥2 available qubits to different partners
             [6] can_purify        — 1.0 if ≥2 available qubits to same partner
             [7] time_remaining    — (max_steps - steps) / max_steps
 
         Features [5] and [6] are forced to 0 for source / dest.
+        #TODO add p_gen, p_s, tau as features for inhomogenious
         """
         feats = np.zeros((self.N, 8), dtype=np.float32)
         for i, rep in enumerate(self.net.repeaters):
@@ -329,3 +354,8 @@ class QRNEnv:
     @staticmethod
     def action_label(action: int, node: int) -> str:
         return f"{['W','S','P'][action]}({node})"
+    
+    def render(self, filepath=None, figsize=None, dpi=250):
+        return self.net.render(filepath, figsize, dpi, source_dest=(self.source, self.dest))
+
+

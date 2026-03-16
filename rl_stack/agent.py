@@ -22,10 +22,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.data import Data, Batch
 
-from .model import QNetwork
-from .buffer import ReplayBuffer
-from .env_wrapper import QRNEnv, N_ACTIONS, NOOP, SWAP, PURIFY, ACTION_NAMES
-from . import strategies
+from rl_stack.model import QNetwork
+from rl_stack.buffer import ReplayBuffer
+from rl_stack.env_wrapper import QRNEnv, N_ACTIONS, NOOP, SWAP, PURIFY, ACTION_NAMES
+from rl_stack import strategies
 
 import matplotlib
 matplotlib.use("Agg")
@@ -87,16 +87,16 @@ class QRNAgent:
     during target Q-value computation to ensure physical validity.
     """
 
-    def __init__(self, node_dim: int = NODE_DIM, hidden: int = 64,
-                 lr: float = 3e-4, gamma: float = 0.99,
-                 buffer_size: int = 80_000, batch_size: int = 64,
-                 tau: float = 0.005, epsilon: float = 1.0):
+    def __init__(self, node_dim = NODE_DIM, hidden = 64,
+                 lr = 3e-4, gamma = 0.99,
+                 buffer_size = 80_000, batch_size = 64,
+                 tau = 0.005, epsilon = 1.0):
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.gamma    = gamma
+        self.gamma = gamma
         self.batch_size = batch_size
-        self.tau      = tau
-        self.epsilon  = epsilon
+        self.tau = tau
+        self.epsilon = epsilon
 
         self.policy_net = QNetwork(node_dim, hidden, N_ACTIONS).to(self.device)
         self.target_net = QNetwork(node_dim, hidden, N_ACTIONS).to(self.device)
@@ -104,8 +104,8 @@ class QRNAgent:
         self.target_net.eval()
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
-        self.loss_fn   = nn.SmoothL1Loss()
-        self.memory    = ReplayBuffer(max_size=buffer_size)
+        self.loss_fn = nn.SmoothL1Loss()
+        self.memory = ReplayBuffer(max_size=buffer_size)
 
             #  ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄       ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ 
             # █████▀▀▀ ███▀▀▀▀▀ ███      ███▀▀▀▀▀ ███▀▀▀▀▀ ▀▀▀███▀▀▀ 
@@ -217,14 +217,21 @@ class QRNAgent:
 
 
 
-    def train(self, episodes: int = 3000, max_steps: int = 50,
-              n_range: List[int] = [4, 5, 6, 7],
-              p_gen: float = 0.8, p_swap: float = 0.7,
-              cutoff: int = 30, F0: float = 0.95,
-              channel_loss: float = 0.02, dt_seconds: float = 1e-3,
-              heterogeneous: bool = True, curriculum: bool = True,
-              save_path: Optional[str] = None,
-              plot: bool = True) -> Dict[str, list]:
+    def train(self, 
+              episodes = 3000, 
+              max_steps = 50,
+              n_range = [4, 5, 6, 7],
+              p_gen = 0.8, 
+              p_swap = 0.7,
+              cutoff = 30, 
+              F0 = 0.95,
+              channel_loss = 0.02, 
+              dt_seconds = 1e-3,
+              heterogeneous = True, 
+              curriculum = True,
+              topology = 'chain', 
+              save_path = None,
+              plot = True) -> Dict[str, list]:
         """                                                                                              
         Train with curriculum over chain sizes.
 
@@ -233,12 +240,13 @@ class QRNAgent:
             20-60 %  up to median
             60-100 % full range
         """
+        #TODO: Add wandb logging
         metrics = {"reward": [], "loss": [], "steps": [], "success": []}
         eps_init, eps_fin = 1.0, 0.05
 
         try:
             for ep in range(episodes):
-                # ── Curriculum: progressively widen chain size pool ──
+                # -- Curriculum: progressively widen chain size pool --
                 prog = ep / max(episodes, 1)
                 if curriculum:
                     if prog < 0.20:
@@ -252,14 +260,22 @@ class QRNAgent:
                     pool = n_range
                 n_nodes = int(np.random.choice(pool))
 
-                env = QRNEnv(
-                    n_repeaters=n_nodes, n_ch=4, spacing=50.0,
-                    p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
-                    F0=F0, channel_loss=channel_loss,
-                    dt_seconds=dt_seconds, max_steps=max_steps,
-                    rng=np.random.default_rng(),
-                    heterogeneous=heterogeneous, ee=True)
-
+                args = {
+                    'n_repeaters': n_nodes,
+                    'n_ch': 4,
+                    'spacing': 50,
+                    'p_gen': p_gen,
+                    'p_swap': p_swap,
+                    'cutoff': cutoff,
+                    'F0' : F0,
+                    'channel_loss' : channel_loss,
+                    'dt_seconds': dt_seconds,
+                    'max_steps' : max_steps,
+                    'heterogeneous' : heterogeneous,
+                    'topology' : topology
+                    }
+                
+                env = QRNEnv(**args)
                 obs   = env.reset()
                 score = 0.0
                 ep_loss = []
@@ -324,12 +340,24 @@ class QRNAgent:
         #    ███    ▀███████ ███████▀    ███    
                                       
 
-    def validate(self, model_path=None,
-                 n_episodes=100, max_steps=50,
-                 n_repeaters=8, p_gen=0.8, p_swap=0.7,
-                 cutoff=15, F0=0.95, channel_loss=0.02,
-                 dt_seconds=1e-3, plot_actions=True,
-                 save_dir=".", ee=True):
+    def validate(self, 
+                 model_path=None,
+                 n_episodes=100, 
+                 max_steps=50,
+                 n_repeaters=8, 
+                 n_ch = 4,
+                 p_gen=0.8, 
+                 p_swap=0.7,
+                 cutoff=15, 
+                 F0=0.95, 
+                 channel_loss=0.02,
+                 dt_seconds=1e-3, 
+                 plot_actions=True,
+                 topology = 'chain',
+                 heterogeneous = False,
+                 verbose = 0,
+                 save_dir="."
+                ):
         """
         Validate agent vs baselines; plot action timelines."""
         if model_path is not None:
@@ -349,14 +377,25 @@ class QRNAgent:
         results   = {k: {"steps": [], "fidelities": []} for k in strat_fns}
         timelines = {k: [] for k in strat_fns}
 
+        args = {
+            'n_repeaters': n_repeaters,
+            'n_ch': n_ch,
+            'spacing': 50,
+            'p_gen': p_gen,
+            'p_swap': p_swap,
+            'cutoff': cutoff,
+            'F0' : F0,
+            'channel_loss' : channel_loss,
+            'dt_seconds': dt_seconds,
+            'max_steps' : max_steps,
+            'heterogeneous' : heterogeneous,
+            'topology' : topology
+            }
+        
         for name, fn in strat_fns.items():
             for ep in range(n_episodes):
-                env = QRNEnv(
-                    n_repeaters=n_repeaters, n_ch=4, spacing=50.0,
-                    p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
-                    F0=F0, channel_loss=channel_loss,
-                    dt_seconds=dt_seconds, max_steps=max_steps,
-                    rng=np.random.default_rng(ep), ee=ee)
+
+                env = QRNEnv(**args)
                 obs  = env.reset()
                 done = False
                 fid  = 0.0
@@ -375,6 +414,11 @@ class QRNAgent:
 
                     obs, reward, done, info = env.step(acts)
                     fid = info.get("fidelity", 0.0)
+
+                    if verbose==1 and name=="Agent": # save agent actions in geometric plots
+                        savedir=f"{save_dir}visual/state_{step}.png"
+                        os.makedirs(os.path.dirname(savedir), exist_ok=True)
+                        env.render(filepath=savedir)
                     if done:
                         break
 

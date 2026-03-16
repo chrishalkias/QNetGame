@@ -5,6 +5,7 @@ Handles the inter-node logic.
 """
 
 from __future__ import annotations
+from math import radians, cos, sin, sqrt, atan2 # for Geant
 from typing import Optional, Tuple, Dict, Any, List
 import numpy as np
 
@@ -15,77 +16,6 @@ from .repeater import (
 )
 
                                                                                            
-# ▄▄▄▄▄▄▄▄▄                ▄▄                     ▄▄              ▄▄    ▄▄                   
-# ▀▀▀███▀▀▀                ██                     ██          ▀▀  ██    ██                   
-#    ███ ▄███▄ ████▄ ▄███▄ ██ ▄███▄ ▄████ ██ ██   ████▄ ██ ██ ██  ██ ▄████ ▄█▀█▄ ████▄ ▄█▀▀▀ 
-#    ███ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██▄██   ██ ██ ██ ██ ██  ██ ██ ██ ██▄█▀ ██ ▀▀ ▀███▄ 
-#    ███ ▀███▀ ████▀ ▀███▀ ██ ▀███▀ ▀████  ▀██▀   ████▀ ▀██▀█ ██▄ ██ ▀████ ▀█▄▄▄ ██    ▄▄▄█▀ 
-#              ██                      ██   ██                                               
-#              ▀▀                    ▀▀▀  ▀▀▀                                                
-
-def build_chain(n_repeaters, 
-                n_ch=4, 
-                spacing=50.0,
-                swap_policy=SwapPolicy.FARTHEST,
-                p_gen=0.8, 
-                p_swap=0.5, 
-                cutoff=20, 
-                **kw
-                )-> RepeaterNetwork:
-    """Creates a chain topology network"""
-    reps = [
-            Repeater(rid=i, 
-                     n_ch=n_ch, 
-                     swap_policy=swap_policy,
-                     position=np.array([i * spacing, 0.0]),
-                     p_gen=p_gen, 
-                     p_swap=p_swap, 
-                     cutoff=cutoff
-                     )
-            for i in range(n_repeaters)
-            ]
-    adj = np.zeros((n_repeaters, n_repeaters), dtype=np.float64)
-
-    for i in range(n_repeaters - 1):
-        adj[i, i+1] = adj[i+1, i] = 1.0
-
-    return RepeaterNetwork(reps, adj, **kw)
-
-
-def build_grid(rows, 
-               cols, 
-               n_ch=4, 
-               spacing=50.0,
-               swap_policy=SwapPolicy.FARTHEST,
-               p_gen=0.8, 
-               p_swap=0.5, 
-               cutoff=20, 
-               **kw
-               )-> RepeaterNetwork:
-    """Creates a grid topology network"""
-    N = rows * cols
-    reps = [
-            Repeater(rid=idx, 
-                     n_ch=n_ch, 
-                     swap_policy=swap_policy,
-                     position=np.array([c * spacing, r * spacing]),
-                     p_gen=p_gen, 
-                     p_swap=p_swap, 
-                     cutoff=cutoff
-                     ) for idx in range(N) for r, c in [divmod(idx, cols)]
-            ]
-    adj = np.zeros((N, N), dtype=np.float64)
-    for idx in range(N):
-        r, c = divmod(idx, cols)
-        if c+1 < cols: adj[idx, idx+1] = adj[idx+1, idx] = 1.0
-        if r+1 < rows: adj[idx, idx+cols] = adj[idx+cols, idx] = 1.0
-    return RepeaterNetwork(reps, adj, **kw)
-
-    def build_GEANT():
-        ...
-
-
-# ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
 
 
 class RepeaterNetwork:
@@ -588,16 +518,17 @@ class RepeaterNetwork:
 #                                                               ██ 
 #                                                             ▀▀▀  
 
-    def render(self, filepath=None, figsize=None, dpi=250):
+    def render(self, filepath=None, figsize=None, dpi=250,
+            source_dest: tuple | None = None):
         """
         Render the current network state as a publication-quality PNG.
 
         Repeaters  → rounded boxes with an R_i label above.
         Qubits     → circles inside each box (white = free,
-                      blue = occupied, red-orange = locked).
+                    blue = occupied, red-orange = locked).
         Adjacency  → thin grey dashed lines between boxes.
         Entanglement links → curved arcs colour-coded by fidelity
-                      that route around intermediate repeater boxes.
+                    that route around intermediate repeater boxes.
 
         Parameters
         ----------
@@ -608,6 +539,10 @@ class RepeaterNetwork:
             Figure dimensions in inches.  Auto-computed when *None*.
         dpi : int
             Resolution of the saved PNG (default 250).
+        source_dest : tuple[int, int] or None
+            A ``(source, dest)`` pair of repeater indices.  When provided,
+            both repeaters receive a soft yellow halo drawn behind their
+            box to distinguish them visually from interior nodes.
 
         Returns
         -------
@@ -619,13 +554,14 @@ class RepeaterNetwork:
         import matplotlib.patches as mpatches
         from matplotlib.patches import FancyBboxPatch, Circle
         from matplotlib.path import Path as MplPath
+        from collections import defaultdict
         import numpy as np
         import networkx as nx
 
         plt.rcParams.update({
             "font.family":       "serif",
             "font.serif":        ["CMU Serif", "Computer Modern Roman",
-                                  "DejaVu Serif", "Times New Roman"],
+                                "DejaVu Serif", "Times New Roman"],
             "mathtext.fontset":  "cm",
             "font.size":         8,
             "axes.linewidth":    0.4,
@@ -633,65 +569,140 @@ class RepeaterNetwork:
             "savefig.facecolor": "white",
         })
 
-        N      = self.N
-        n_ch   = self.repeaters[0].n_ch
-        pos    = self._positions.copy()
+        N    = self.N
+        n_ch = self.repeaters[0].n_ch
+        pos  = self._positions.copy()
 
-
-        #Build an nx.Graph for adjacency (used for edgedrawing and shortest-path hop counts)
-        G_adj = nx.from_numpy_array(self.adj)
+        G_adj  = nx.from_numpy_array(self.adj)
         pos_nx = {i: tuple(pos[i]) for i in range(N)}
 
-
-        #Geometry parameters (scaled to inter-repeater spacing)
+        # ── Geometry constants ────────────────────────────────────────────────
         if N > 1:
             nonzero = self._dist_matrix[self._dist_matrix > 0]
-            scale = float(nonzero.min()) if len(nonzero) else 1.0
+            scale   = float(nonzero.min()) if len(nonzero) else 1.0
         else:
             scale = 1.0
 
-        BOX_W     = scale * 0.55
-        BOX_H     = scale * 0.30
-        BOX_PAD   = scale * 0.012
-        Q_RADIUS  = scale * 0.032
-        C_BOX_FACE  = "#F2F2F2"
-        C_BOX_EDGE  = "#2B2B2B"
-        C_ADJ       = "#AAAAAA"
-        C_FREE      = "#FFFFFF"
-        C_FREE_E    = "#999999"
-        C_OCC       = "#4477AA"
-        C_OCC_E     = "#224488"
-        C_LOCK      = "#EE6677"
-        C_LOCK_E    = "#CC3311"
+        BOX_W      = scale * 0.55
+        BOX_H      = scale * 0.30
+        BOX_PAD    = scale * 0.012
+        Q_RADIUS   = scale * 0.032
+        C_BOX_FACE = "#F2F2F2";  C_BOX_EDGE = "#2B2B2B"
+        C_ADJ      = "#AAAAAA"
+        C_FREE     = "#FFFFFF";  C_FREE_E   = "#999999"
+        C_OCC      = "#4477AA";  C_OCC_E    = "#224488"
+        C_LOCK     = "#EE6677";  C_LOCK_E   = "#CC3311"
 
+        N_LAYERS    = 10
+        GLOW_SPREAD = BOX_W * 0.7
+        GLOW_COLOR  = "#FFD700"
+        GLOW_ALPHA  = 0.18
 
-        #Compute qubit (x, y) positions inside each box
-        # Dots sit in the lower half; labels go above them.
+        # ── Qubit dot positions ───────────────────────────────────────────────
         qubit_xy = {}
         for rep in self.repeaters:
             cx, cy = rep.position
             for qi in range(n_ch):
-                qx = cx - BOX_W / 2 + BOX_W * (qi + 1) / (n_ch + 1)
-                qy = cy - BOX_H * 0.10
-                qubit_xy[(rep.rid, qi)] = (qx, qy)
+                qubit_xy[(rep.rid, qi)] = (
+                    cx - BOX_W / 2 + BOX_W * (qi + 1) / (n_ch + 1),
+                    cy - BOX_H * 0.10,
+                )
 
+        # ── PASS 1: compute all arc geometry ─────────────────────────────────
+        # A quadratic Bézier is always within its control-point convex hull,
+        # so max(P0, ctrl, P2) gives a tight bound on the arc extent.
+        # We collect every control point here so we can size the figure
+        # correctly *before* drawing anything.
+        links    = self.get_all_links()
+        pair_idx = defaultdict(int)
+        arc_data = []   # list of dicts consumed by the drawing pass
 
-        #  Figure setup 
-        all_x, all_y = pos[:, 0], pos[:, 1]
+        ctrl_pts_x = []   # accumulate control-point coordinates for bbox
+        ctrl_pts_y = []
+
+        for lk in links:
+            ra, qa, rb, qb = int(lk[0]), int(lk[1]), int(lk[2]), int(lk[3])
+            fid = float(lk[4])
+
+            x1, y1 = qubit_xy[(ra, qa)]
+            x2, y2 = qubit_xy[(rb, qb)]
+            dx, dy  = x2 - x1, y2 - y1
+            length  = np.hypot(dx, dy)
+            if length < 1e-12:
+                continue
+
+            nx_v, ny_v = -dy / length, dx / length
+
+            clearance    = BOX_H * 0.45
+            min_ctrl_off = BOX_H + 2 * clearance   # ≈ 1.9 × BOX_H — enough to clear any box
+            # Arc height scales mildly with link length so short and long links look
+            # proportional, but is hard-capped so long-range links never escape the
+            # figure.  hop_factor was removed — arcs need not be taller just because
+            # they span more hops; the cap alone keeps everything visible.
+            base_off = min(max(min_ctrl_off, 0.10 * length), BOX_H * 5)
+
+            if ny_v < 0 or (abs(ny_v) < 1e-9 and nx_v < 0):
+                nx_v, ny_v = -nx_v, -ny_v
+
+            rx1, ry1 = pos[ra];  rx2, ry2 = pos[rb]
+            rdx, rdy  = rx2 - rx1, ry2 - ry1
+            rl = np.hypot(rdx, rdy)
+            if rl > 1e-12:
+                rnx, rny = -rdy / rl, rdx / rl
+                for k in range(N):
+                    if k == ra or k == rb:
+                        continue
+                    pk     = pos[k]
+                    t_proj = ((pk[0]-rx1)*rdx + (pk[1]-ry1)*rdy) / (rl**2)
+                    if 0.05 < t_proj < 0.95:
+                        d_perp = (pk[0]-rx1)*rnx + (pk[1]-ry1)*rny
+                        if abs(d_perp) > BOX_H * 0.6:
+                            if (d_perp * (rnx*nx_v + rny*ny_v)) > 0:
+                                nx_v, ny_v = -nx_v, -ny_v
+                                break
+
+            pair_key = (min(ra, rb), max(ra, rb))
+            k    = pair_idx[pair_key];  pair_idx[pair_key] += 1
+            sign = 1 if k % 2 == 0 else -1
+            tier = (k // 2) + 1
+            offset = sign * base_off * (0.85 + 0.40 * (tier - 1))
+
+            ctrl_x = (x1 + x2) / 2 + nx_v * offset
+            ctrl_y = (y1 + y2) / 2 + ny_v * offset
+
+            # anchor points on the qubit dot surface
+            ax1 = x1 + nx_v * Q_RADIUS * np.sign(offset)
+            ay1 = y1 + ny_v * Q_RADIUS * np.sign(offset)
+            ax2 = x2 + nx_v * Q_RADIUS * np.sign(offset)
+            ay2 = y2 + ny_v * Q_RADIUS * np.sign(offset)
+
+            ctrl_pts_x.extend([ax1, ctrl_x, ax2])
+            ctrl_pts_y.extend([ay1, ctrl_y, ay2])
+
+            arc_data.append(dict(
+                ax1=ax1, ay1=ay1, ax2=ax2, ay2=ay2,
+                ctrl_x=ctrl_x, ctrl_y=ctrl_y,
+                fid=fid,
+            ))
+
+        # ── Figure extent — driven by repeater positions AND arc control pts ──
+        all_x = list(pos[:, 0]) + ctrl_pts_x
+        all_y = list(pos[:, 1]) + ctrl_pts_y
+
         margin_x = scale * 0.85
-        margin_y = scale * 1.1          # extra vertical space for arcs
+        margin_y = scale * 0.55   # smaller fixed padding; arcs now set the real ceiling
 
-        x_lo = float(all_x.min()) - margin_x
-        x_hi = float(all_x.max()) + margin_x
-        y_lo = float(all_y.min()) - margin_y
-        y_hi = float(all_y.max()) + margin_y
+        x_lo = float(np.min(all_x)) - margin_x
+        x_hi = float(np.max(all_x)) + margin_x
+        y_lo = float(np.min(all_y)) - margin_y
+        y_hi = float(np.max(all_y)) + margin_y
 
         if figsize is None:
-            x_span = max(x_hi - x_lo, 1e-6)
-            y_span = max(y_hi - y_lo, 1e-6)
-            aspect = x_span / y_span
-            fig_h  = max(3.5, min(10.0, 2.8 + N * 0.18))
-            fig_w  = max(fig_h * aspect, fig_h)
+            x_span  = max(x_hi - x_lo, 1e-6)
+            y_span  = max(y_hi - y_lo, 1e-6)
+            aspect  = x_span / y_span
+            fig_h   = max(3.5, min(14.0, 2.8 + N * 0.18))
+            fig_w   = max(fig_h * aspect, fig_h)
             figsize = (fig_w, fig_h)
 
         fig, ax = plt.subplots(figsize=figsize)
@@ -700,172 +711,103 @@ class RepeaterNetwork:
         ax.set_aspect("equal")
         ax.axis("off")
 
-        # Adjacency edges (dashed)
+        # ── Yellow glow halos ─────────────────────────────────────────────────
+        if source_dest is not None:
+            for rid in set(source_dest):
+                cx, cy = self.repeaters[rid].position
+                for layer in range(N_LAYERS, 0, -1):
+                    t      = (N_LAYERS - layer) / (N_LAYERS - 1)
+                    margin = GLOW_SPREAD * (layer / N_LAYERS)
+                    alpha  = GLOW_ALPHA * (1.0 - t)
+                    w, h   = BOX_W + 2*margin, BOX_H + 2*margin
+                    pad    = BOX_PAD + margin * 0.25
+                    ax.add_patch(FancyBboxPatch(
+                        (cx - w/2, cy - h/2), w, h,
+                        boxstyle=f"round,pad={pad:.6f}",
+                        facecolor=GLOW_COLOR, edgecolor="none",
+                        alpha=alpha, zorder=1, linewidth=0))
+
+        # ── Adjacency edges (dashed) ──────────────────────────────────────────
         nx.draw_networkx_edges(
             G_adj, pos_nx, ax=ax,
-            style="dashed", width=0.7,
-            edge_color=C_ADJ, alpha=0.75,
-        )
+            style="dashed", width=0.7, edge_color=C_ADJ, alpha=0.75)
 
-        #  Entanglement arcs
-        #      ─ colour-coded by fidelity (RdYlGn)
-        #      ─ curvature scales with hop count so arcs
-        #        clear all intermediate repeater boxes
-        cmap = plt.cm.RdYlGn
-        norm = plt.Normalize(vmin=0.25, vmax=1.0)
+        # ── PASS 2: draw entanglement arcs ────────────────────────────────────
+        cmap     = plt.cm.RdYlGn
+        norm_col = plt.Normalize(vmin=0.25, vmax=1.0)
 
-        links = self.get_all_links()
-        from collections import defaultdict
-        pair_idx = defaultdict(int)
-
-        for lk in links:
-            ra, qa, rb, qb = int(lk[0]), int(lk[1]), int(lk[2]), int(lk[3])
-            fid = float(lk[4])
-
-            x1, y1 = qubit_xy[(ra, qa)]
-            x2, y2 = qubit_xy[(rb, qb)]
-            dx, dy = x2 - x1, y2 - y1
-            length = np.hypot(dx, dy)
-            if length < 1e-12:
-                continue
-
-            # perpendicular unit vector
-            nx_v, ny_v = -dy / length, dx / length
-
-            # ---- hop count via networkx shortest path ----
-            try:
-                n_hops = nx.shortest_path_length(G_adj, ra, rb)
-            except nx.NetworkXNoPath:
-                n_hops = 1
-
-            # The arc's peak (at t = 0.5 of a quadratic Bézier) is
-            #   peak_height = control_offset / 2.
-            # We need peak_height > BOX_H / 2 + clearance for every
-            # intermediate box, so control_offset > BOX_H + 2*clearance.
-            clearance    = BOX_H * 0.45
-            min_ctrl_off = BOX_H + 2 * clearance   # ≈ 1.9 × BOX_H
-            hop_factor   = max(1, n_hops - 1)
-            base_off     = max(min_ctrl_off, 0.15 * length) * hop_factor
-
-            # ---- orient arc to avoid intermediate repeater boxes ----
-            # Default: perpendicular with positive y component
-            # (> "above" for horizontal chains).  For purely vertical
-            # links, prefer positive x.
-            if ny_v < 0 or (abs(ny_v) < 1e-9 and nx_v < 0):
-                nx_v, ny_v = -nx_v, -ny_v
-
-            # Override ONLY when an intermediate repeater is clearly
-            # off-axis on the chosen side (not merely collinear).
-            # Collinear intermediates are handled by the arc offset.
-            rx1, ry1 = pos[ra]
-            rx2, ry2 = pos[rb]
-            rdx, rdy = rx2 - rx1, ry2 - ry1
-            rl = np.hypot(rdx, rdy)
-            if rl > 1e-12:
-                rnx, rny = -rdy / rl, rdx / rl
-                for k in range(N):
-                    if k == ra or k == rb:
-                        continue
-                    pk = pos[k]
-                    t_proj = ((pk[0]-rx1)*rdx + (pk[1]-ry1)*rdy) / (rl**2)
-                    if 0.05 < t_proj < 0.95:
-                        d_perp = (pk[0]-rx1)*rnx + (pk[1]-ry1)*rny
-                        # Only flip for repeaters clearly on the arc
-                        # side (off-axis), not for collinear ones.
-                        if abs(d_perp) > BOX_H * 0.6:
-                            same_side = (d_perp * (rnx*nx_v + rny*ny_v)) > 0
-                            if same_side:
-                                nx_v, ny_v = -nx_v, -ny_v
-                                break
-
-            # spread multiple links between the same repeater pair
-            pair_key = (min(ra, rb), max(ra, rb))
-            k = pair_idx[pair_key]
-            pair_idx[pair_key] += 1
-            sign = 1 if k % 2 == 0 else -1
-            tier = (k // 2) + 1
-            offset = sign * base_off * (0.85 + 0.40 * (tier - 1))
-
-            # control point
-            ctrl_x = (x1 + x2) / 2 + nx_v * offset
-            ctrl_y = (y1 + y2) / 2 + ny_v * offset
-
-            # Anchor the arc at the top of each qubit dot
-            ax1 = x1 + nx_v * Q_RADIUS * np.sign(offset)
-            ay1 = y1 + ny_v * Q_RADIUS * np.sign(offset)
-            ax2 = x2 + nx_v * Q_RADIUS * np.sign(offset)
-            ay2 = y2 + ny_v * Q_RADIUS * np.sign(offset)
+        for arc in arc_data:
+            ax1, ay1   = arc["ax1"], arc["ay1"]
+            ax2, ay2   = arc["ax2"], arc["ay2"]
+            ctrl_x     = arc["ctrl_x"]
+            ctrl_y     = arc["ctrl_y"]
+            fid        = arc["fid"]
+            colour     = cmap(norm_col(fid))
 
             verts = [(ax1, ay1), (ctrl_x, ctrl_y), (ax2, ay2)]
             codes = [MplPath.MOVETO, MplPath.CURVE3, MplPath.CURVE3]
-
-            colour = cmap(norm(fid))
             ax.add_patch(mpatches.PathPatch(
                 MplPath(verts, codes),
                 facecolor="none", edgecolor=colour,
                 linewidth=1.15, zorder=3, capstyle="round"))
 
-            # fidelity label at the Bézier midpoint (t = 0.5)
-            lbl_x = 0.25 * ax1 + 0.5 * ctrl_x + 0.25 * ax2
-            lbl_y = 0.25 * ay1 + 0.5 * ctrl_y + 0.25 * ay2
+            # fidelity label at Bézier midpoint t = 0.5
+            lbl_x = 0.25*ax1 + 0.5*ctrl_x + 0.25*ax2
+            lbl_y = 0.25*ay1 + 0.5*ctrl_y + 0.25*ay2
             ax.text(lbl_x, lbl_y, f"$F\\!=\\!{fid:.2f}$",
                     ha="center", va="center", fontsize=6,
                     color=colour, zorder=6,
                     bbox=dict(facecolor="white", edgecolor="none",
-                              alpha=0.88, pad=0.8))
+                            alpha=0.88, pad=0.8))
 
-        # Repeater boxes
+        # ── Repeater boxes ────────────────────────────────────────────────────
         for rep in self.repeaters:
             cx, cy = rep.position
-            box = FancyBboxPatch(
-                (cx - BOX_W / 2, cy - BOX_H / 2),
-                BOX_W, BOX_H,
+            is_hl    = source_dest is not None and rep.rid in source_dest
+            edge_col = "#B8860B" if is_hl else C_BOX_EDGE
+            lw       = 1.4       if is_hl else 0.8
+            ax.add_patch(FancyBboxPatch(
+                (cx - BOX_W/2, cy - BOX_H/2), BOX_W, BOX_H,
                 boxstyle=f"round,pad={BOX_PAD:.6f}",
-                facecolor=C_BOX_FACE, edgecolor=C_BOX_EDGE,
-                linewidth=0.8, zorder=2)
-            ax.add_patch(box)
-
-            ax.text(cx, cy + BOX_H / 2 + Q_RADIUS * 2.5,
-                    f"$R_{{{rep.rid}}}$",
+                facecolor=C_BOX_FACE, edgecolor=edge_col,
+                linewidth=lw, zorder=2))
+            ax.text(cx, cy + BOX_H/2 + Q_RADIUS*2.5, f"$R_{{{rep.rid}}}$",
                     ha="center", va="bottom", fontsize=9, zorder=6)
 
-        # Qubit dots + labels
+        # ── Qubit dots + labels ───────────────────────────────────────────────
         for rep in self.repeaters:
             for qi in range(n_ch):
                 qx, qy = qubit_xy[(rep.rid, qi)]
-
                 if rep.locked[qi]:
                     fc, ec = C_LOCK, C_LOCK_E
                 elif rep.status[qi] == QUBIT_OCCUPIED:
                     fc, ec = C_OCC, C_OCC_E
                 else:
                     fc, ec = C_FREE, C_FREE_E
-
-                ax.add_patch(Circle(
-                    (qx, qy), Q_RADIUS,
-                    facecolor=fc, edgecolor=ec,
-                    linewidth=0.55, zorder=4))
-
-                ax.text(qx, qy + Q_RADIUS * 2.2,
-                        f"$q_{{{qi}}}$",
+                ax.add_patch(Circle((qx, qy), Q_RADIUS,
+                                    facecolor=fc, edgecolor=ec,
+                                    linewidth=0.55, zorder=4))
+                ax.text(qx, qy + Q_RADIUS*2.2, f"$q_{{{qi}}}$",
                         ha="center", va="bottom", fontsize=5.5,
                         color="#444444", zorder=6)
 
-
-        # Legend & title
+        # ── Legend & title ────────────────────────────────────────────────────
         legend_items = [
             mpatches.Patch(fc=C_FREE, ec=C_FREE_E, lw=0.6, label="Free"),
             mpatches.Patch(fc=C_OCC,  ec=C_OCC_E,  lw=0.6, label="Occupied"),
-            mpatches.Patch(fc=C_LOCK, ec=C_LOCK_E,  lw=0.6, label="Locked"),
-            plt.Line2D([], [], color=C_ADJ, ls="--", lw=0.7,
-                       label="Adjacency"),
-            plt.Line2D([], [], color=cmap(norm(0.85)), lw=1.15,
-                       label="Entanglement"),
+            mpatches.Patch(fc=C_LOCK, ec=C_LOCK_E, lw=0.6, label="Locked"),
+            plt.Line2D([], [], color=C_ADJ, ls="--", lw=0.7, label="Adjacency"),
+            plt.Line2D([], [], color=cmap(norm_col(0.85)), lw=1.15,
+                    label="Entanglement"),
         ]
+        if source_dest is not None:
+            legend_items.append(
+                mpatches.Patch(fc=GLOW_COLOR, ec="#B8860B", lw=0.8,
+                            alpha=0.7, label="Src / Dst"))
         ax.legend(handles=legend_items, loc="upper right",
-                  fontsize=6.5, framealpha=0.92,
-                  edgecolor="#CCCCCC", handlelength=1.4,
-                  borderpad=0.6, labelspacing=0.35)
+                fontsize=6.5, framealpha=0.92,
+                edgecolor="#CCCCCC", handlelength=1.4,
+                borderpad=0.6, labelspacing=0.35)
 
         ax.set_title(
             f"Network state at $t = {self.time_step}$,  "
@@ -878,4 +820,267 @@ class RepeaterNetwork:
             fig.savefig(filepath, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         return fig
+# ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+
+# ▄▄▄▄▄▄▄▄▄                ▄▄                     ▄▄              ▄▄    ▄▄                   
+# ▀▀▀███▀▀▀                ██                     ██          ▀▀  ██    ██                   
+#    ███ ▄███▄ ████▄ ▄███▄ ██ ▄███▄ ▄████ ██ ██   ████▄ ██ ██ ██  ██ ▄████ ▄█▀█▄ ████▄ ▄█▀▀▀ 
+#    ███ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██▄██   ██ ██ ██ ██ ██  ██ ██ ██ ██▄█▀ ██ ▀▀ ▀███▄ 
+#    ███ ▀███▀ ████▀ ▀███▀ ██ ▀███▀ ▀████  ▀██▀   ████▀ ▀██▀█ ██▄ ██ ▀████ ▀█▄▄▄ ██    ▄▄▄█▀ 
+#              ██                      ██   ██                                               
+#              ▀▀                    ▀▀▀  ▀▀▀                                                
+
+def build_chain(n_repeaters, 
+                n_ch=4, 
+                spacing=50.0,
+                swap_policy=SwapPolicy.FARTHEST,
+                p_gen=0.8, 
+                p_swap=0.5, 
+                cutoff=20, 
+                **kw
+                )-> RepeaterNetwork:
+    """Creates a chain topology network"""
+    reps = [
+            Repeater(rid=i, 
+                     n_ch=n_ch, 
+                     swap_policy=swap_policy,
+                     position=np.array([i * spacing, 0.0]),
+                     p_gen=p_gen, 
+                     p_swap=p_swap, 
+                     cutoff=cutoff
+                     )
+            for i in range(n_repeaters)
+            ]
+    adj = np.zeros((n_repeaters, n_repeaters), dtype=np.float64)
+
+    for i in range(n_repeaters - 1):
+        adj[i, i+1] = adj[i+1, i] = 1.0
+
+    return RepeaterNetwork(reps, adj, **kw)
+
+
+def build_grid(rows, 
+               cols, 
+               n_ch=4, 
+               spacing=50.0,
+               swap_policy=SwapPolicy.FARTHEST,
+               p_gen=0.8, 
+               p_swap=0.5, 
+               cutoff=20, 
+               **kw
+               )-> RepeaterNetwork:
+    """Creates a grid topology network"""
+    N = rows * cols
+    reps = [
+            Repeater(rid=idx, 
+                     n_ch=n_ch, 
+                     swap_policy=swap_policy,
+                     position=np.array([c * spacing, r * spacing]),
+                     p_gen=p_gen, 
+                     p_swap=p_swap, 
+                     cutoff=cutoff
+                     ) for idx in range(N) for r, c in [divmod(idx, cols)]
+            ]
+    adj = np.zeros((N, N), dtype=np.float64)
+    for idx in range(N):
+        r, c = divmod(idx, cols)
+        if c+1 < cols: 
+            adj[idx, idx+1] = adj[idx+1, idx] = 1.0
+        if r+1 < rows: 
+            adj[idx, idx+cols] = adj[idx+cols, idx] = 1.0
+    return RepeaterNetwork(reps, adj, **kw)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km between two lat/lon points."""
+    R = 6371.0
+    dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dlat / 2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)**2
+    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
+
+
+# ---------------------------------------------------------------------------------------------------------------
+#  GEANT Pan-European Research Network  (24 nodes, 37 links)
+# ---------------------------------------------------------------------------------------------------------------
+#
+#                                                         NO---------                    ---------FI
+#                                                          \         ----------SE--------
+#                                                          \                --
+#                                                           \            ---
+#                                                            \        ---
+#                                                             \    ---
+#                                                             \  --
+#                                                              DK
+#                                                             /
+#                                                           //
+#                                                          /
+#         IE-                                             /
+#            ------                   ---NL              /                         ----PL
+#                  ------      -------   / ---          /                 -----------
+#                        --UK--         /     --      //          --------  ----
+#                           --         -BE----- ---  /   ---------     -----
+#                             --      -   --   -----DE--------------CZ-
+#                               -- ---  -----LU--   |                ----
+#                                 FR----            |                   ---
+#                                /  -- ---------    |          -----------ATSK-
+#                              //     ---       ----CH---------         --    ---HU-
+#                             /          ---         \                --     ---    ----
+#                            /              --        \\             SI    --           ----
+#                           /                 ---       \           /  --HR                 ----
+#                          /                     ---     \         /                            ----
+#                        //                         --    \       /                                 --RO
+#                       /                             ---  \      /                                  /
+#                      /                                 ---\\   /                                   /
+#                     /                                     --\ /                                   /
+#                    /                                        -IT-                                 /
+#                  //                                             ----                             /
+#                 /                                                   -----                       /
+#             ---ES                                                        ----                   /
+#     --------                                                                 -----             /
+# PT--                                                                              -----       /
+#                                                                                        ----   /
+#                                                                                            --GR
+
+def build_GEANT(
+    n_ch: int = 4,
+    swap_policy=SwapPolicy.FARTHEST,
+    p_gen: float = 0.8,
+    p_swap: float = 0.5,
+    cutoff: int = 20,
+    **kw,
+    ) -> RepeaterNetwork:
+    """
+    GÉANT pan-European research network topology.
+
+    24 nodes, 37 links.  Node positions are derived from the capital-city
+    lat/lon of each member country and projected onto a flat 2-D plane via
+    an equirectangular projection centred on the mean latitude (~50 °N).
+    Units are kilometres, so distances in the adjacency matrix are km.
+
+    Node index → country code mapping
+    -----------------------------------
+     0 AT   1 BE   2 CH   3 CZ   4 DE   5 DK   6 ES   7 FR
+     8 GR   9 HR  10 HU  11 IE  12 IT  13 LU  14 NL  15 NO
+    16 PL  17 PT  18 RO  19 SE  20 SI  21 SK  22 UK  23 FI
+    """
+
+    # ==== node definitions: (country_code, latitude °N, longitude °E) =======
+    NODE_DATA = [
+        ("AT", 48.21,  16.37),   #  0  Vienna,     Austria
+        ("BE", 50.85,   4.35),   #  1  Brussels,   Belgium
+        ("CH", 47.38,   8.54),   #  2  Zurich,     Switzerland
+        ("CZ", 50.08,  14.44),   #  3  Prague,     Czech Republic
+        ("DE", 50.11,   8.68),   #  4  Frankfurt,  Germany
+        ("DK", 55.68,  12.57),   #  5  Copenhagen, Denmark
+        ("ES", 40.42,  -3.70),   #  6  Madrid,     Spain
+        ("FR", 48.86,   2.35),   #  7  Paris,      France
+        ("GR", 37.97,  23.73),   #  8  Athens,     Greece
+        ("HR", 45.81,  15.98),   #  9  Zagreb,     Croatia
+        ("HU", 47.50,  19.04),   # 10  Budapest,   Hungary
+        ("IE", 53.33,  -6.25),   # 11  Dublin,     Ireland
+        ("IT", 41.90,  12.50),   # 12  Rome,       Italy
+        ("LU", 49.61,   6.13),   # 13  Luxembourg, Luxembourg
+        ("NL", 52.37,   4.90),   # 14  Amsterdam,  Netherlands
+        ("NO", 59.91,  10.75),   # 15  Oslo,       Norway
+        ("PL", 52.23,  21.01),   # 16  Warsaw,     Poland
+        ("PT", 38.72,  -9.14),   # 17  Lisbon,     Portugal
+        ("RO", 44.43,  26.10),   # 18  Bucharest,  Romania
+        ("SE", 59.33,  18.07),   # 19  Stockholm,  Sweden
+        ("SI", 46.05,  14.51),   # 20  Ljubljana,  Slovenia
+        ("SK", 48.14,  17.11),   # 21  Bratislava, Slovakia
+        ("UK", 51.51,  -0.13),   # 22  London,     United Kingdom
+        ("FI", 60.17,  24.93),   # 23  Helsinki,   Finland
+    ]
+
+    N = len(NODE_DATA)
+    lats = np.array([nd[1] for nd in NODE_DATA])
+    lons = np.array([nd[2] for nd in NODE_DATA])
+
+    # equirectangular projection → km  (centred on mean latitude)
+    lat_ref   = np.radians(lats.mean())
+    KM_PER_DEG = 111.32
+    positions = np.stack(
+        [lons * np.cos(lat_ref) * KM_PER_DEG,
+         lats * KM_PER_DEG],
+        axis=1,
+    )
+
+    reps = [
+        Repeater(
+            rid=i,
+            n_ch=n_ch,
+            swap_policy=swap_policy,
+            position=positions[i],
+            p_gen=p_gen,
+            p_swap=p_swap,
+            cutoff=cutoff,
+        )
+        for i in range(N)
+    ]
+
+    # === GÉANT2 link list ===================================
+    EDGES = [
+        # AT (0)
+        (0,  2),   # AT–CH
+        (0,  3),   # AT–CZ
+        (0, 10),   # AT–HU
+        (0, 20),   # AT–SI
+        (0, 21),   # AT–SK
+        # BE (1)
+        (1,  4),   # BE–DE
+        (1,  7),   # BE–FR
+        (1, 13),   # BE–LU
+        (1, 14),   # BE–NL
+        # CH (2)
+        (2,  4),   # CH–DE
+        (2,  7),   # CH–FR
+        (2, 12),   # CH–IT
+        # CZ (3)
+        (3,  4),   # CZ–DE
+        (3, 16),   # CZ–PL
+        (3, 21),   # CZ–SK
+        # DE (4)
+        (4,  5),   # DE–DK
+        (4, 13),   # DE–LU
+        (4, 14),   # DE–NL
+        (4, 16),   # DE–PL
+        # DK (5)
+        (5, 15),   # DK–NO
+        (5, 19),   # DK–SE
+        # ES (6)
+        (6,  7),   # ES–FR
+        (6, 17),   # ES–PT
+        # FR (7)
+        (7, 12),   # FR–IT
+        (7, 13),   # FR–LU
+        (7, 22),   # FR–UK
+        # GR (8)
+        (8, 12),   # GR–IT
+        (8, 18),   # GR–RO
+        # HR (9)
+        (9, 10),   # HR–HU
+        (9, 20),   # HR–SI
+        # HU (10)
+        (10, 18),  # HU–RO
+        (10, 21),  # HU–SK
+        # IE (11)
+        (11, 22),  # IE–UK
+        # IT (12)
+        (12, 20),  # IT–SI
+        # NL (14)
+        (14, 22),  # NL–UK
+        # NO (15)
+        (15, 19),  # NO–SE
+        # SE (19)
+        (19, 23),  # SE–FI
+    ]
+
+    # adjacency matrix weighted by Haversine distance (km)
+    adj = np.zeros((N, N), dtype=np.float64)
+    for i, j in EDGES:
+        d = _haversine_km(lats[i], lons[i], lats[j], lons[j])
+        adj[i, j] = adj[j, i] = d
+
+    return RepeaterNetwork(reps, adj, **kw)
+
 
