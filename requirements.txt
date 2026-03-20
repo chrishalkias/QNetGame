@@ -3,3 +3,5 @@ numpy==2.4.2
 torch==2.6.0
 torch_geometric==2.7.0
 networkx==3.6.1
+pytest==9.0.2
+mutmut>=2.0

@@ -84,7 +84,7 @@ $$
 P_{\text{gen}}(i,j) = \frac{p_{\text{gen}}^{(i)} + p_{\text{gen}}^{(j)}}{2}
 \times
 \begin{cases}
-e^{-\alpha\, d_{ij}/2} & \text{if distance-dep-gen} \\
+e^{-\alpha\; d_{ij}/2} & \text{if distance-dep-gen} \\
 1 & \text{otherwise}
 \end{cases}
 $$
@@ -92,7 +92,7 @@ $$
 **Initial fidelity** of the new pair:
 
 $$
-F_0(i,j) = F_0 \cdot e^{-\alpha\, d_{ij}}
+F_0(i,j) = F_0 \cdot e^{-\alpha\; d_{ij}}
 $$
 
 where $\alpha$ is the fibre attenuation and $d_{ij}$ is the Euclidean

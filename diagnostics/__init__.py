@@ -1,5 +1,5 @@
 """RL module for quantum repeater network routing."""
-from rl_stack.env_wrapper import QRNEnv, N_ACTIONS, NOOP, ENTANGLE, SWAP, PURIFY
+from rl_stack.env_wrapper import QRNEnv, N_ACTIONS, NOOP, SWAP, PURIFY
 from rl_stack.buffer import ReplayBuffer
 from rl_stack import strategies
 

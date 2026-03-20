@@ -288,6 +288,6 @@ if __name__ == "__main__":
     # parser.add_argument("--device", default="cpu")
     # args = parser.parse_args()
     # run_all(args.model, args.save_dir, args.device)
-    path = "checkpoints/004/"
+    path = "checkpoints/006/"
     run_all(model_path=path+'policy.pth', save_dir=path+'diagnostics', device='cpu')
     
