@@ -62,6 +62,7 @@ class QRNEnv(RepeaterNetwork):
 
     STEP_COST       = -0.01
     SUCCESS_REWARD  =  1.0
+    FAILED_ACTION   = -0.05
 
     def __init__(self, 
                  n_repeaters = 5, 
@@ -75,15 +76,17 @@ class QRNEnv(RepeaterNetwork):
                  dt_seconds = 1e-4, 
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
-                 heterogeneous = False, 
-                 ee = False,
-                 topology = 'chain'):
+                 heterogeneous = False,
+                 topology = 'chain',
+                 gamma = 0.99):
         
         if topology not in ['chain', 'grid', 'geant']:
             raise ValueError(f'Topology {topology} not supported')
         
         self.rng = rng if rng is not None else np.random.default_rng()
         self.max_steps = max_steps
+        self.gamma = gamma
+        self._phi = 0.0
 
         if topology == 'chain':
             self.net = build_chain(
@@ -95,13 +98,13 @@ class QRNEnv(RepeaterNetwork):
             
         elif topology == 'grid':
             self.net = build_grid(
-                    rows=n_repeaters, cols=n_repeaters, 
-                    n_ch=n_ch,spacing=50.0,
+                    rows=n_repeaters, cols=n_repeaters,
+                    n_ch=n_ch, spacing=spacing,
                     swap_policy=SwapPolicy.FARTHEST,
-                    p_gen=0.8, p_swap=0.5, cutoff=20)
+                    p_gen=p_gen, p_swap=p_swap, cutoff=cutoff)
             
         elif topology == 'geant':
-            build_GEANT(
+            self.net = build_GEANT(
                 n_ch=n_ch, swap_policy=SwapPolicy.FARTHEST,
                 p_gen=p_gen, p_swap=p_swap, cutoff=cutoff)
 
@@ -133,7 +136,8 @@ class QRNEnv(RepeaterNetwork):
             return
         while True:
             s, d = sorted(self.rng.choice(self.N, size=2, replace=False))
-            if abs(s - d) > 1:
+            # Ensure source and dest are not directly adjacent
+            if not self.net.adj[s, d]:
                 self.source, self.dest = int(s), int(d)
                 return
 
@@ -249,8 +253,9 @@ class QRNEnv(RepeaterNetwork):
     def step(self, actions: np.ndarray) -> Tuple[Dict, float, bool, Dict]:
         """Execute one step:  actions → age → check e2e → auto-entangle."""
         assert len(actions) == self.N
+        actions = actions.copy()
         info = {"fidelity": 0.0, "swaps": 0, "purifies": 0,
-                "noops": 0, "actions": actions.copy()}
+                "noops": 0, "failed_actions": 0, "actions": actions.copy()}
 
         # Safety: clamp any non-NOOP at source / dest
         for t in [self.source, self.dest]:
@@ -261,13 +266,17 @@ class QRNEnv(RepeaterNetwork):
         # Phase 1a: execute purifications first (order matters:
         #   purify before swap ensures swapped links are freshly improved)
         for r in np.flatnonzero(actions == PURIFY):
-            self._exec_purify(int(r))
+            result = self._exec_purify(int(r))
             info["purifies"] += 1
+            if not result["success"]:
+                info["failed_actions"] += 1
 
         # Phase 1b: execute swaps
         for r in np.flatnonzero(actions == SWAP):
-            self._exec_swap(int(r))
+            result = self._exec_swap(int(r))
             info["swaps"] += 1
+            if not result["success"]:
+                info["failed_actions"] += 1
 
         info["noops"] = int(np.sum(actions == NOOP))
 
@@ -279,18 +288,33 @@ class QRNEnv(RepeaterNetwork):
         connected, fidelity = self._check_e2e()
         info["fidelity"] = fidelity
 
+        # Reward shaping: failed actions get penalized
+        penalty = info["failed_actions"] * self.FAILED_ACTION
+
         if connected:
             self.done = True
-            return self.get_observation(), self.SUCCESS_REWARD, True, info
+            # Terminal: Φ(s_terminal) = 0 by PBRS convention
+            shaping = -self._phi
+            reward = fidelity * self.SUCCESS_REWARD + penalty + shaping
+            return self.get_observation(), reward, True, info
 
         if self.steps >= self.max_steps:
             self.done = True
-            return self.get_observation(), self.STEP_COST, True, info
+            shaping = -self._phi
+            return self.get_observation(), self.STEP_COST + penalty + shaping, True, info
 
         # Phase 4: auto-entangle for next step's observation
         self._auto_entangle()
 
-        return self.get_observation(), self.STEP_COST, False, info
+        # PBRS: γΦ(s') - Φ(s)
+        if self.topology == "chain":
+            phi_new = self._compute_chain_progress()
+            shaping = self.gamma * phi_new - self._phi
+            self._phi = phi_new
+        else:
+            shaping = 0
+
+        return self.get_observation(), self.STEP_COST + penalty + shaping, False, info
 
                                                                      
 #  ▄▄▄▄▄▄▄                                                             
@@ -308,22 +332,22 @@ class QRNEnv(RepeaterNetwork):
         for r1, r2 in pairs:
             self.net.entangle(int(r1), int(r2))
 
-    def _exec_swap(self, r: int):
-        self.net.swap(r)
+    def _exec_swap(self, r: int) -> Dict:
+        return self.net.swap(r)
 
-    def _exec_purify(self, r: int):
+    def _exec_purify(self, r: int) -> Dict:
         rep = self.net.repeaters[r]
         avail = rep.available_indices()
         if len(avail) < 2:
-            return
+            return {"success": False, "reason": "insufficient_qubits"}
         partners = rep.partner_repeater[avail]
         unique, counts = np.unique(
             partners[partners != NO_PARTNER], return_counts=True)
         valid = [(int(p), c) for p, c in zip(unique, counts) if c >= 2]
         if not valid:
-            return
+            return {"success": False, "reason": "no_valid_pair"}
         best_nb = max(valid, key=lambda x: x[1])[0]
-        self.net.purify(r, best_nb)
+        return self.net.purify(r, best_nb)
 
     def _check_e2e(self) -> Tuple[bool, float]:
         """Check whether source and dest share a direct entanglement link."""
@@ -332,6 +356,33 @@ class QRNEnv(RepeaterNetwork):
             if int(src_rep.partner_repeater[qi]) == self.dest:
                 return True, float(werner_to_fidelity(src_rep.werner_param[qi]))
         return False, 0.0
+
+    def _compute_chain_progress(self) -> float:
+        """BFS from source through entangled links; return farthest hop / total hops."""
+        if self.topology != 'chain':
+            return 0.0
+        total_hops = self.dest - self.source
+        if total_hops <= 0:
+            return 0.0
+
+        visited = {self.source}
+        frontier = {self.source}
+        farthest = self.source
+
+        while frontier:
+            next_frontier = set()
+            for node in frontier:
+                rep = self.net.repeaters[node]
+                for qi in rep.occupied_indices():
+                    partner = int(rep.partner_repeater[qi])
+                    if partner != NO_PARTNER and partner not in visited:
+                        visited.add(partner)
+                        next_frontier.add(partner)
+                        if partner > farthest:
+                            farthest = partner
+            frontier = next_frontier
+
+        return min((farthest - self.source) / total_hops, 1.0)
     
                              
 # ▄▄▄      ▄▄▄                 
@@ -349,6 +400,7 @@ class QRNEnv(RepeaterNetwork):
         self.steps = 0
         self.done  = False
         self._auto_entangle()
+        self._phi = self._compute_chain_progress()
         return self.get_observation()
 
     @staticmethod

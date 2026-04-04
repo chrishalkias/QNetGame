@@ -487,9 +487,12 @@ class TestStepFunction(unittest.TestCase):
         p  = fidelity_to_werner(0.95)
         env.net.repeaters[0].set_link(q0, 2, q2, p)
         env.net.repeaters[2].set_link(q2, 0, q0, p)
-        _, reward, done, _ = env.step(np.zeros(3, dtype=int))
+        _, reward, done, info = env.step(np.zeros(3, dtype=int))
         self.assertTrue(done)
-        self.assertAlmostEqual(reward, QRNEnv.SUCCESS_REWARD)
+        # Reward = fidelity * SUCCESS_REWARD + penalty + PBRS_shaping
+        fidelity = info["fidelity"]
+        expected = fidelity * QRNEnv.SUCCESS_REWARD + (-env._phi)
+        self.assertAlmostEqual(reward, expected)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

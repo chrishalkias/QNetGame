@@ -61,7 +61,9 @@ class RepeaterNetwork:
         self.adj = np.asarray(adjacency, dtype=np.float64)
 
         # import check: make sure provide adjecency is good
-        assert self.adj.shape == (self.N, self.N)
+        if self.adj.shape != (self.N, self.N):
+            raise ValueError(f"Adjacency matrix shape {self.adj.shape} does not match "
+                             f"number of repeaters ({self.N})")
 
 
         self.channel_loss = channel_loss
@@ -171,7 +173,7 @@ class RepeaterNetwork:
         if not rep.can_swap():
             result["reason"] = "insufficient_qubits"; return result
         
-        pair = rep.select_swap_pair(self._positions)
+        pair = rep.select_swap_pair(self._positions, rng=self.rng)
 
         if pair is None:
             result["reason"] = "no_valid_pair"; return result
@@ -196,7 +198,7 @@ class RepeaterNetwork:
         # store the remote repeater and qubits
         ra, qa_r = int(rep.partner_repeater[qa]), int(rep.partner_qubit[qa])
         rb, qb_r = int(rep.partner_repeater[qb]), int(rep.partner_qubit[qb])
-        p_new = rep.werner_param[qa] * rep.werner_param[qb]
+        p_new = float(rep.werner_param[qa]) * float(rep.werner_param[qb])
 
         # The BSM physically destroys the local qubits — free them immediately
         # so the swapping repeater can reuse its memory slots.
@@ -259,11 +261,12 @@ class RepeaterNetwork:
         q2_sac = int(rep1.partner_qubit[q1_sac])
         q2_keep = int(rep1.partner_qubit[q1_keep])
         p_keep, p_sac = rep1.werner_param[q1_keep], rep1.werner_param[q1_sac]
+        f_keep, f_sac = werner_to_fidelity(p_keep), werner_to_fidelity(p_sac)
 
-        result["old_fidelity"] = float(werner_to_fidelity(p_keep))
+        result["old_fidelity"] = float(f_keep)
 
-        success = self.rng.random() <= bbpssw_success_prob(p_keep, p_sac)
-        p_new = bbpssw_new_werner(p_keep, p_sac) if success else 0.0
+        success = self.rng.random() <= bbpssw_success_prob(f_keep, f_sac)
+        p_new = bbpssw_new_werner(f_keep, f_sac) if success else 0.0
 
         # Lock all 4 qubits
         rep1.lock_qubit(q1_sac); rep1.lock_qubit(q1_keep)
@@ -306,7 +309,8 @@ class RepeaterNetwork:
             for qi in rep.age_occupied():
                 expired_pairs.append((rep.rid, int(qi)))
 
-        # 2) resolve pending events
+        # 2) resolve pending events (before expiring, so locked qubits
+        #    involved in in-flight operations get resolved first)
         resolved = 0
         still_pending = []
 
@@ -325,7 +329,7 @@ class RepeaterNetwork:
 
         self.pending_events = still_pending
 
-        # 3) expire old links
+        # 3) expire old links (after resolving events)
         n_destroyed = 0
         if discard_expired:
             for rid, qidx in expired_pairs:
@@ -404,8 +408,10 @@ class RepeaterNetwork:
             rep2.unlock_qubit(q2_keep)
         else:
             # Failure: destroy both pairs (free_qubit clears locks)
-            self._break_link(r1, q1_sac)
-            self._break_link(r1, q1_keep)
+            if rep1.status[q1_sac] == QUBIT_OCCUPIED: self._break_link(r1, q1_sac)
+            if rep2.status[q2_sac] == QUBIT_OCCUPIED: self._break_link(r2, q2_sac)
+            if rep1.status[q1_keep] == QUBIT_OCCUPIED: self._break_link(r1, q1_keep)
+            if rep2.status[q2_keep] == QUBIT_OCCUPIED: self._break_link(r2, q2_keep)
 
                                                    
 # ▄▄▄▄▄                                     ▄▄       

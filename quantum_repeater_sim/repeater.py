@@ -69,7 +69,7 @@ class Repeater:
                  cutoff: int = 20
                  ):
         
-        # Repeter Attributes
+        # Repeater Attributes
         self.rid = rid
         self.n_ch = n_ch
         self.swap_policy = swap_policy
@@ -183,8 +183,10 @@ class Repeater:
 
         # set the value for p. depending on age and effective cutoff
         linkCutoff = int(self.link_cutoff[qubit])
-        timeDependentWernerParam = p * np.exp(-link_age / linkCutoff)
-        self.werner_param[qubit] = timeDependentWernerParam if linkCutoff > 0 and link_age > 0 else p
+        if linkCutoff > 0 and link_age > 0:
+            self.werner_param[qubit] = p * np.exp(-link_age / linkCutoff)
+        else:
+            self.werner_param[qubit] = p
 
     def free_qubit(self, qubit):
         """Set a qubit free by removing all internal and external pointers"""
@@ -223,7 +225,8 @@ class Repeater:
         onlineAges = self.age[qubits]
 
         # Update OCCUPIED ONLY: \lambda = p0 e^(-m/m*)
-        self.werner_param[qubits] = (onlineP0s* np.exp(-onlineAges / onlineCutoffs))
+        safe_cutoffs = np.maximum(onlineCutoffs, 1)
+        self.werner_param[qubits] = (onlineP0s * np.exp(-onlineAges / safe_cutoffs))
         unaffectedQubits = np.flatnonzero(qubits & (self.age >= self.link_cutoff))
         return unaffectedQubits
 
@@ -237,7 +240,7 @@ class Repeater:
 #                        ██                                          
 #                        ▀▀     
                                      
-    def select_swap_pair(self, network_positions:np.array) -> (Tuple[int, int] | None):
+    def select_swap_pair(self, network_positions:np.array, rng: Optional[np.random.Generator] = None) -> (Tuple[int, int] | None):
         """Internal selection of the swap pair"""
         occupiedQubits = self.available_indices()
         numQubitsReadyToSwap = len(occupiedQubits)
@@ -246,7 +249,8 @@ class Repeater:
             return None
         
         if self.swap_policy == SwapPolicy.RANDOM:
-            chosen = np.random.choice(occupiedQubits, size=2, replace=False)
+            _rng = rng if rng is not None else np.random.default_rng()
+            chosen = _rng.choice(occupiedQubits, size=2, replace=False)
             return int(chosen[0]), int(chosen[1])
         
         idx_i, idx_j = np.triu_indices(numQubitsReadyToSwap, k=1)
@@ -302,8 +306,8 @@ class Repeater:
         fid = werner_to_fidelity(self.werner_param)
         pn = self.partner_repeater.astype(np.float64)
 
-        #NOTE set unphisical links with no partenr to zero
-        pn[pn == NO_PARTNER] = 0.0
+        # Encode "no partner" as -1.0 to avoid collision with repeater ID 0
+        pn[pn == NO_PARTNER] = -1.0
 
         # normalized age
         age_norm = self.age.astype(np.float64) / max(self.cutoff, 1)

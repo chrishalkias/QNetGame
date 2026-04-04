@@ -68,17 +68,15 @@ def _repeater_colors(N: int):
 
 _ACTION_HATCH = {NOOP: "", SWAP: "///", PURIFY: "..."}
 
-
+            #   ▄▄▄▄    ▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄ ▄▄▄    ▄▄▄ ▄▄▄▄▄▄▄▄▄ 
+            # ▄██▀▀██▄ ███▀▀▀▀▀  ███▀▀▀▀▀ ████▄  ███ ▀▀▀███▀▀▀ 
+            # ███  ███ ███       ███▄▄    ███▀██▄███    ███    
+            # ███▀▀███ ███  ███▀ ███      ███  ▀████    ███    
+            # ███  ███ ▀██████▀  ▀███████ ███    ███    ███    
+                      
 
 class QRNAgent:
-    """
-                                                     
-                  ▄▄▄▄    ▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄ ▄▄▄    ▄▄▄ ▄▄▄▄▄▄▄▄▄ 
-                ▄██▀▀██▄ ███▀▀▀▀▀  ███▀▀▀▀▀ ████▄  ███ ▀▀▀███▀▀▀ 
-                ███  ███ ███       ███▄▄    ███▀██▄███    ███    
-                ███▀▀███ ███  ███▀ ███      ███  ▀████    ███    
-                ███  ███ ▀██████▀  ▀███████ ███    ███    ███    
-                                                                             
+    """                                                       
     Double-DQN agent with per-node Q-values on a GNN backbone.
 
     The agent selects one of {noop, swap, purify} for every node.
@@ -90,8 +88,10 @@ class QRNAgent:
     def __init__(self, node_dim = NODE_DIM, hidden = 64,
                  lr = 3e-4, gamma = 0.99,
                  buffer_size = 80_000, batch_size = 64,
-                 tau = 0.005, epsilon = 1.0):
-        
+                 tau = 0.005, epsilon = 1.0,
+                 rng: Optional[np.random.Generator] = None):
+
+        self.rng = rng if rng is not None else np.random.default_rng()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.gamma = gamma
         self.batch_size = batch_size
@@ -119,11 +119,11 @@ class QRNAgent:
         """ε-greedy over masked Q-values.  (N,) int32 actions."""
         N = mask.shape[0]
 
-        if training and np.random.random() < self.epsilon:
+        if training and self.rng.random() < self.epsilon:
             actions = np.zeros(N, dtype=np.int32)
             for i in range(N):
                 valid = np.flatnonzero(mask[i])
-                actions[i] = np.random.choice(valid) if len(valid) else NOOP
+                actions[i] = self.rng.choice(valid) if len(valid) else NOOP
             return actions
 
         data = _obs_to_data(obs, self.device)
@@ -221,6 +221,7 @@ class QRNAgent:
               episodes = 3000, 
               max_steps = 50,
               n_range = [4, 5, 6, 7],
+              n_ch = 4,
               p_gen = 0.8, 
               p_swap = 0.7,
               cutoff = 30, 
@@ -232,37 +233,33 @@ class QRNAgent:
               topology = 'chain', 
               save_path = None,
               plot = True) -> Dict[str, list]:
-        """                                                                                              
+        """
         Train with curriculum over chain sizes.
 
-        Curriculum splits training into 3 phases:
-            0-20 %   small chains only  (≤ min+1)
-            20-60 %  up to median
-            60-100 % full range
+        Curriculum linearly expands the maximum chain size from n_range[0]
+        to n_range[-1] over the first 80% of training, then holds the full
+        range for the final 20%.
         """
         #TODO: Add wandb logging
         metrics = {"reward": [], "loss": [], "steps": [], "success": []}
         eps_init, eps_fin = 1.0, 0.05
+        n_min, n_max = min(n_range), max(n_range)
 
         try:
             for ep in range(episodes):
-                # -- Curriculum: progressively widen chain size pool --
+                # -- Curriculum: linearly widen max chain size --
                 prog = ep / max(episodes, 1)
-                if curriculum:
-                    if prog < 0.20:
-                        pool = [r for r in n_range if r <= min(n_range) + 1]
-                    elif prog < 0.60:
-                        mid = (min(n_range) + max(n_range)) // 2
-                        pool = [r for r in n_range if r <= mid + 1]
-                    else:
-                        pool = n_range
+                if curriculum and n_min < n_max:
+                    ramp = min(prog / 0.8, 1.0)  # linear 0→1 over first 80%
+                    cap = n_min + int(ramp * (n_max - n_min))
+                    pool = [r for r in n_range if r <= cap]
                 else:
                     pool = n_range
-                n_nodes = int(np.random.choice(pool))
+                n_nodes = int(self.rng.choice(pool))
 
                 args = {
                     'n_repeaters': n_nodes,
-                    'n_ch': 4,
+                    'n_ch': n_ch,
                     'spacing': 50,
                     'p_gen': p_gen,
                     'p_swap': p_swap,
@@ -313,7 +310,7 @@ class QRNAgent:
                 metrics["success"].append(
                     1.0 if info.get("fidelity", 0) > 0 else 0.0)
 
-                if ep % 200 == 0 or ep == episodes - 1 and ep>0:
+                if ep % 200 == 0 or (ep == episodes - 1 and ep > 0):
                     avg_r = np.mean(metrics["reward"][-200:])
                     avg_s = np.mean(metrics["success"][-200:])
                     print(f"Ep {ep:>5d}/{episodes} | R={avg_r:>7.3f} | "
@@ -369,12 +366,14 @@ class QRNAgent:
         self.epsilon = 0.0
 
         strat_fns = {
-            "Agent":     None,
-            "SwapASAP":  strategies.swap_asap,
-            "PurifySwap": strategies.purify_then_swap,
-            "Random":    None,
+            "Agent":        None,
+            "SwapASAP":     strategies.swap_asap,
+            "FidGatedSwap": strategies.fidelity_gated_swap,
+            "PurifySwap":   strategies.purify_then_swap,
+            "Random":       None,
         }
-        results   = {k: {"steps": [], "fidelities": []} for k in strat_fns}
+        results   = {k: {"steps": [], "fidelities": [], "total": 0}
+                     for k in strat_fns}
         timelines = {k: [] for k in strat_fns}
 
         args = {
@@ -392,45 +391,80 @@ class QRNAgent:
             'topology' : topology
             }
         
+        action_rng = np.random.default_rng()
+        seed_rng = np.random.default_rng(42)
+        ep_seeds = seed_rng.integers(0, 2**32, size=n_episodes)
+
+        # Store all episode timelines so we can pick the median one
+        all_timelines = {k: [] for k in strat_fns}
+
         for name, fn in strat_fns.items():
             for ep in range(n_episodes):
 
-                env = QRNEnv(**args)
+                env = QRNEnv(**args,
+                             rng=np.random.default_rng(int(ep_seeds[ep])))
                 obs  = env.reset()
                 done = False
                 fid  = 0.0
+                ep_actions = []
 
                 for step in range(max_steps):
                     mask = env.get_action_mask()
                     if name == "Agent":
                         acts = self.select_actions(obs, mask, training=False)
                     elif name == "Random":
-                        acts = strategies.random_policy(env, env.rng)
+                        acts = strategies.random_policy(env, action_rng)
                     else:
                         acts = fn(env)
 
-                    if ep == 0 and plot_actions:
-                        timelines[name].append(acts.copy())
+                    if plot_actions:
+                        ep_actions.append(acts.copy())
 
                     obs, reward, done, info = env.step(acts)
                     fid = info.get("fidelity", 0.0)
 
-                    if verbose==1 and name=="Agent": # save agent actions in geometric plots
+                    if verbose==1 and name=="Agent":
                         savedir=f"{save_dir}visual/state_{step}.png"
                         os.makedirs(os.path.dirname(savedir), exist_ok=True)
                         env.render(filepath=savedir)
                     if done:
                         break
 
-                steps_taken = step + 1 if done and fid > 0 else max_steps
-                results[name]["steps"].append(steps_taken)
-                if fid > 0:
+                succeeded = done and fid > 0
+                if succeeded:
+                    results[name]["steps"].append(step + 1)
                     results[name]["fidelities"].append(fid)
+                results[name]["total"] += 1
+
+                if plot_actions:
+                    all_timelines[name].append(ep_actions)
 
         self.epsilon = old_eps
         self._print_results_table(results, n_repeaters, p_gen, p_swap, cutoff)
 
         if plot_actions:
+            # Pick the median-length successful episode per strategy
+            for name in strat_fns:
+                episodes = all_timelines[name]
+                succ_steps = results[name]["steps"]
+                if not succ_steps:
+                    # No successes — use the first episode as fallback
+                    timelines[name] = episodes[0] if episodes else []
+                    continue
+                median_steps = int(np.median(succ_steps))
+                # Find the successful episode closest to the median
+                best_idx, best_diff = 0, float("inf")
+                ep_succ = 0
+                for ep_idx, ep_tl in enumerate(episodes):
+                    ep_len = len(ep_tl)
+                    if ep_len >= max_steps:
+                        continue  # skip failed episodes
+                    diff = abs(ep_len - median_steps)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_idx = ep_idx
+                timelines[name] = episodes[best_idx]
+
             self._plot_timeline_grid(timelines, n_repeaters,
                                      p_gen, p_swap, cutoff, save_dir)
         return results
@@ -460,14 +494,15 @@ class QRNAgent:
             axes[1].set_ylabel("Loss")
             axes[1].set_yscale("log")
 
-        axes[2].plot(_running_avg(metrics["success"], 50), color="seagreen",
+        axes[2].fill_between(ep, metrics["steps"], alpha=0.15, color="seagreen")
+        axes[2].plot(_running_avg(metrics["steps"], 50), color="seagreen",
                      lw=1.4)
-        axes[2].set_ylabel("Success Rate")
-        axes[2].set_ylim(-0.05, 1.05)
+        axes[2].set_ylabel("Avg Steps to Termination")
         axes[2].set_xlabel("Episode")
 
         plt.tight_layout()
-        plt.savefig(f"{save_path}training_metrics.png", dpi=200, bbox_inches="tight")
+        fname = os.path.join(save_path, "training_metrics.png") if save_path else "training_metrics.png"
+        plt.savefig(fname, dpi=200, bbox_inches="tight")
         plt.close()
 
     @staticmethod
@@ -480,12 +515,13 @@ class QRNAgent:
               f"{'Succ%':>6}")
         print("-" * 70)
         for name, data in results.items():
-            avg_s = np.mean(data["steps"])
-            std_s = np.std(data["steps"])
-            ns    = len(data["fidelities"])
+            ns   = len(data["steps"])   # only successful episodes
+            tot  = data["total"]
+            succ = ns / max(tot, 1) * 100
+            avg_s = np.mean(data["steps"]) if ns else float("nan")
+            std_s = np.std(data["steps"])  if ns else 0.0
             avg_f = np.mean(data["fidelities"]) if ns else 0.0
             std_f = np.std(data["fidelities"])  if ns else 0.0
-            succ  = ns / max(len(data["steps"]), 1) * 100
             print(f"{name:<14} | {avg_s:>5.1f}{pm}{std_s:<5.1f} | "
                   f"{avg_f:>6.4f}{pm}{std_f:<6.4f} | {succ:>5.0f}%")
 
@@ -553,7 +589,7 @@ class QRNAgent:
         ax.set_xlim(-0.5, max_steps + 1.5)
         ax.set_ylim(-0.3, n_strats * (row_h + 0.3))
         ax.set_xlabel("Time Step")
-        ax.set_title(f"Policy Actions (N={N}, pg={pg}, ps={ps}, c={c})")
+        ax.set_title(f"Policy Actions — median episode (N={N}, pg={pg}, ps={ps}, c={c})")
         ax.grid(False)
 
         handles = []

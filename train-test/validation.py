@@ -5,16 +5,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Test QRNAgent")
     #Validation variables
     parser.add_argument("--run_id", type=str, default="v006")
-    parser.add_argument("--episodes", type=int, default=200)
-    parser.add_argument("--steps", type=int, default=100)
+    parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--steps", type=int, default=200)
 
     #System variables
-    parser.add_argument("--nodes", type=int, default=4)
+    parser.add_argument("--nodes", type=int, default=6)
     parser.add_argument("--n_ch", type=int, default=4)
-    parser.add_argument("--p_gen", type=float, default=0.99)
-    parser.add_argument("--p_swap", type=float, default=0.99)
-    parser.add_argument("--cutoff", type=int, default=200)
-    parser.add_argument("--heterogeneous", type=bool, default=False)
+    parser.add_argument("--p_gen", type=float, default=0.1)
+    parser.add_argument("--p_swap", type=float, default=0.85)
+    parser.add_argument("--cutoff", type=int, default=15)
+    parser.add_argument("--heterogeneous", action="store_true")
     parser.add_argument("--topology", type=str, default='chain')
 
     # CC variables
@@ -22,9 +22,9 @@ def parse_args():
     parser.add_argument("--channel_loss", type=float, default=0.0)
     parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
 
-    parser.add_argument("--path", type=str, default="checkpoints/003/")
+    parser.add_argument("--path", type=str, default="checkpoints/cluster_004/")
     parser.add_argument("--dict", type=str, default="policy.pth")
-    parser.add_argument("--plot_actions", type=bool, default=True) #1e-4 for CC
+    parser.add_argument("--no_plot_actions", dest="plot_actions", action="store_false", default=True)
     parser.add_argument("--verbose", type=int, default=0)
     
     return parser.parse_args()

@@ -5,22 +5,23 @@ from rl_stack import QRNAgent
 def parse_args():
     parser = argparse.ArgumentParser(description="Train QRNAgent")
     # Algorithm Variables
-    parser.add_argument("--run_id", type=float, default="006")
+    parser.add_argument("--run_id", type=str, default="xxx")
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--max_steps", type=int, default=30)
-    parser.add_argument("--episodes", type=int, default=2000)
+    parser.add_argument("--max_steps", type=int, default=20)
+    parser.add_argument("--episodes", type=int, default=300)
 
     # System Variables
-    parser.add_argument("--n_lo", type=int, default=3)
-    parser.add_argument("--n_hi", type=int, default=5)
-    parser.add_argument("--disable_curriculum", action="store_false", dest="curriculum")
-    parser.add_argument("--topology", type=str, default='grid')
-    parser.add_argument("--heterogeneous", type=bool, default=False)
-    parser.add_argument("--p_gen", type=float, default=0.70)
+    parser.add_argument("--n_lo", type=int, default=5)
+    parser.add_argument("--n_hi", type=int, default=8)
+    parser.add_argument("--curriculum", action='store_false')
+    parser.add_argument("--n_ch", type=int, default=4)
+    parser.add_argument("--topology", type=str, default='chain')
+    parser.add_argument("--heterogeneous", action="store_false")
+    parser.add_argument("--p_gen", type=float, default=0.60)
     parser.add_argument("--p_swap", type=float, default=0.85)
-    parser.add_argument("--cutoff", type=int, default=10)
+    parser.add_argument("--cutoff", type=int, default=6)
 
     # CC Variables
     parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
@@ -35,14 +36,14 @@ if __name__ == "__main__":
 
     # Generate unique save directory to prevent checkpoint overwriting
     run_name = str(args.run_id)
-    save_path = args.save_base_dir + run_name
+    save_path = os.path.join(args.save_base_dir, run_name)
     os.makedirs(save_path, exist_ok=True)
     
 
-    agent = QRNAgent(lr=args.lr, 
+    agent = QRNAgent(lr=args.lr,
                      hidden=args.hidden,
-                     batch_size=args.batch_size, 
-                     buffer_size=10_000,
+                     batch_size=args.batch_size,
+                     buffer_size=80_000,
                      gamma=0.99, 
                      tau=0.005,
                      epsilon=1,)
