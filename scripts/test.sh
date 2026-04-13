@@ -6,13 +6,13 @@ cd "$(dirname "$0")/.."
 export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
 python3 -u train-test/validation.py \
-    --run_id v006 \
+    --run_id cluster_004 \
     --episodes 200 \
     --steps 100 \
-    --nodes 10 \
+    --nodes 7 \
     --n_ch 4 \
-    --p_gen 0.85 \
-    --p_swap 0.95 \
+    --p_gen 0.5 \
+    --p_swap 0.85 \
     --cutoff 15 \
     --topology chain \
     --path checkpoints/cluster_004/ \

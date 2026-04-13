@@ -3,7 +3,7 @@
     "model": "checkpoints/cluster_004/policy.pth",
     "episodes_per_point": 200,
     "seed": 42,
-    "timestamp": "2026-04-03T15:01:28.843401+00:00",
+    "timestamp": "2026-04-05T22:36:00.435824+00:00",
     "note": "completed by partial_validate.py"
   },
   "sweeps": {

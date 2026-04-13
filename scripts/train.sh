@@ -13,10 +13,10 @@ python -u train-test/train.py \
     --batch_size 64 \
     --max_steps 20 \
     --n_lo 5 \
-    --n_hi 8 \
+    --n_hi 10 \
     --topology chain \
     --p_gen 0.60 \
     --p_swap 0.85 \
-    --cutoff 6 \
+    --cutoff 9 \
     --save_base_dir checkpoints/local \
     "$@"

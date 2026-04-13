@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument("--n_ch", type=int, default=4)
     parser.add_argument("--p_gen", type=float, default=0.1)
     parser.add_argument("--p_swap", type=float, default=0.85)
-    parser.add_argument("--cutoff", type=int, default=15)
+    parser.add_argument("--cutoff", type=int, default=100)
     parser.add_argument("--heterogeneous", action="store_true")
     parser.add_argument("--topology", type=str, default='chain')
 

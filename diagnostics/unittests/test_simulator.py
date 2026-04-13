@@ -29,7 +29,7 @@ from quantum_repeater_sim.repeater import (
     Repeater, SwapPolicy,
     QUBIT_FREE, QUBIT_OCCUPIED, NO_PARTNER,
     fidelity_to_werner, werner_to_fidelity,
-    bbpssw_success_prob, bbpssw_new_werner,
+    bbpssw_success_prob, bbpssw_new_fidelity,
 )
 from quantum_repeater_sim.network import (
     RepeaterNetwork, build_chain, build_grid, build_GEANT,
@@ -146,30 +146,28 @@ class TestBBPSSWPurification(unittest.TestCase):
     """
 
     def test_success_prob_identical_states(self):
-        # For two identical Werner states p = 0.9, check against formula.
-        p = fidelity_to_werner(0.9)
-        expected = (8/9)*p*p - (2/9)*(2*p) + 5/9
-        self.assertAlmostEqual(float(bbpssw_success_prob(p, p)), expected, places=9)
+        # For two identical states with F = 0.9, check against formula.
+        f = 0.9
+        expected = (4/3)*f*f - (2/3)*f + 1/3
+        self.assertAlmostEqual(float(bbpssw_success_prob(f, f)), expected, places=9)
 
-    def test_new_werner_higher_than_inputs(self):
+    def test_new_fidelity_higher_than_inputs(self):
         # A successful purification must strictly improve fidelity.
-        p1 = fidelity_to_werner(0.8)
-        p2 = fidelity_to_werner(0.75)
-        p_new = bbpssw_new_werner(p1, p2)
-        self.assertGreater(float(p_new), max(p1, p2),
-                           "Purified Werner param must exceed both inputs.")
+        f1, f2 = 0.8, 0.75
+        f_new = bbpssw_new_fidelity(f1, f2)
+        self.assertGreater(float(f_new), max(f1, f2),
+                           "Purified fidelity must exceed both inputs.")
 
     def test_purification_with_perfect_states(self):
-        # Two Bell states (p = 1) should give p_new = 1 and P_suc = 1.
-        p = 1.0
-        self.assertAlmostEqual(float(bbpssw_success_prob(p, p)), 1.0, places=9)
-        self.assertAlmostEqual(float(bbpssw_new_werner(p, p)), 1.0, places=9)
+        # Two Bell states (F = 1) should give F_new = 1 and P_suc = 1.
+        f = 1.0
+        self.assertAlmostEqual(float(bbpssw_success_prob(f, f)), 1.0, places=9)
+        self.assertAlmostEqual(float(bbpssw_new_fidelity(f, f)), 1.0, places=9)
 
     def test_success_prob_in_valid_range(self):
         # P_suc must lie in [0, 1] for any physical input.
         for f in [0.6, 0.7, 0.8, 0.9, 1.0]:
-            p = fidelity_to_werner(f)
-            ps = float(bbpssw_success_prob(p, p))
+            ps = float(bbpssw_success_prob(f, f))
             self.assertGreaterEqual(ps, 0.0)
             self.assertLessEqual(ps, 1.0)
 
@@ -179,7 +177,9 @@ class TestEntanglementSwapping(unittest.TestCase):
 
     def test_swap_product_rule_in_network(self):
         # Build R0–R1–R2, entangle 0↔1 and 1↔2, swap at R1.
-        # Expected: p_new = p_01 * p_12.
+        # Expected: initial_werner of the new link = p_01 * p_12 (product rule).
+        # The current werner_param will differ due to age-based decoherence
+        # during the classical delay, so we check initial_werner directly.
         net = _perfect_chain(3, cutoff=50)
         net.entangle(0, 1)
         net.entangle(1, 2)
@@ -200,8 +200,8 @@ class TestEntanglementSwapping(unittest.TestCase):
         rep0 = net.repeaters[0]
         occupied = rep0.occupied_indices()
         self.assertTrue(len(occupied) > 0, "R0 should hold the new link.")
-        actual_p_new = float(rep0.werner_param[occupied[0]])
-        self.assertAlmostEqual(actual_p_new, expected_p_new, places=5)
+        actual_initial_p = float(rep0.initial_werner[occupied[0]])
+        self.assertAlmostEqual(actual_initial_p, expected_p_new, places=5)
 
     def test_local_qubits_freed_after_bsm(self):
         # BSM physically consumes both local qubits immediately.
@@ -667,6 +667,10 @@ class TestGhostLinkResolution(unittest.TestCase):
             "q1_sac": q1_sac, "q2_sac": q2_sac,
             "q1_keep": q1_keep, "q2_keep": q2_keep,
             "p_new": 0.95,
+            "gen_keep1": int(net.repeaters[0].generation_id[q1_keep]),
+            "gen_keep2": int(net.repeaters[1].generation_id[q2_keep]),
+            "gen_sac1": int(net.repeaters[0].generation_id[q1_sac]),
+            "gen_sac2": int(net.repeaters[1].generation_id[q2_sac]),
         })
         net.age_links(discard_expired=False)
         # No zombie links on R0.

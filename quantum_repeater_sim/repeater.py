@@ -17,10 +17,14 @@ def werner_to_fidelity(p):
     return (3.0 * np.asarray(p, dtype=np.float64) + 1.0) / 4.0
 
 def bbpssw_success_prob(f1, f2):
-    return (8/9 * f1 * f2) - 2/9 * (f1 + f2) +5/9
+    # Simplified BBPSSW success probability for Werner states.
+    # Equivalent to (3*p1*p2 + 1)/4 in Werner parameters.
+    # Yields 0.25 at F=0.25 (fully mixed), 1 at F=1 (perfect).
+    return (4/3 * f1 * f2) - 1/3 * (f1 + f2) + 1/3
 
-def bbpssw_new_werner(f1, f2):
-    return (1 - (f1 + f2) + 10 * f1 * f2)/(5 - 2 * (f1 + f2) +8 * f1 * f2)
+def bbpssw_new_fidelity(f1, f2):
+    """Post-purification fidelity given two input fidelities (BBPSSW protocol)."""
+    return (1 - (f1 + f2) + 10 * f1 * f2)/(5 - 2 * (f1 + f2) + 8 * f1 * f2)
 
 class SwapPolicy(enum.IntEnum):
     FARTHEST  = 0
@@ -57,6 +61,7 @@ class Repeater:
         "age",               # The ages of the links
         "link_cutoff",       # Effective link cutoff (min(c1, c2))
         "locked",            # Locked qubits (used for CC)
+        "generation_id",     # Monotonic counter incremented on each allocation
     )
 
     def __init__(self, 
@@ -87,6 +92,7 @@ class Repeater:
         self.age = np.zeros(n_ch, dtype=np.int32)
         self.link_cutoff = np.full(n_ch, cutoff, dtype=np.int32)
         self.locked = np.zeros(n_ch, dtype=np.bool_)
+        self.generation_id = np.zeros(n_ch, dtype=np.uint32)
 
                                                                                  
 # ▄▄▄▄▄▄▄                         ▄▄                                               
@@ -151,6 +157,7 @@ class Repeater:
             return -1
         qubit = int(freeQubits[0]) # choose the first one in the list
         self.status[qubit] = QUBIT_OCCUPIED
+        self.generation_id[qubit] += 1
         return qubit
 
     def set_link(self, 

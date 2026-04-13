@@ -1,0 +1,29 @@
+4 panels of the 2D projection of the 64-dim conv3 embeddings (15,625 observations):
+
+-Preferred action: Wait dominates, Swap appears at the right edge, 
+Purify only in a tiny green cluster — consistent with the other diagnostics
+
+-Mean fidelity: PC1 is strongly correlated with fidelity — the embedding space 
+is primarily organised along a fidelity axis
+-Occupancy: PC2 separates low from high occupancy — the embedding forms a 
+fan shape where occupancy drives vertical spread
+
+-Time remaining: weakly structured across both PCs, confirming the agent's 
+decisions are relatively insensitive to time (as seen in the deep probes)
+diag_pca_variance.png — scree plot: PC1 explains 42%, first 3 PCs explain ~70%, need ~7 PCs to reach 90%. 
+The embedding is low-dimensional relative 
+to its 64-dim size — the GNN has learned a compact, ~3-5 dimensional representation of what matters.
+
+Comparing node 5/10-chain vs node 2/5-chain:
+
+-PC1 jumps from 42% → 68% — the embedding is even more dominated by a single axis in the larger chain.
+With 3-hop receptive field, node 5 in a 10-chain sees only 3 hops out (nodes 2–8), 
+giving it a richer neighbourhood context that condenses onto one stronger principal axis
+
+-Occupancy now traces the characteristic spiral/curl shape in the lower-left, rather than the smooth fan in the 5-chain — 
+the GNN aggregation from more hops creates a more complex nonlinear manifold
+
+-Action boundary (Wait vs Swap) is still clearly separated at the right edge, same as before
+
+-Variance plot: 90% reached at ~4 PCs vs ~7 PCs for the 5-chain — the representation is actually more 
+compressed in the larger network context

@@ -13,3 +13,8 @@ task_plan.md
 TODO.md
 tester.ipynb
 .mutmut*
+graph_builder.py
+# Large binaries — use rsync to move these, not git
+*.zip
+checkpoints/*/visual/
+slurm_logs/

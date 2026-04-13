@@ -12,7 +12,7 @@ import numpy as np
 from .repeater import (
     Repeater, SwapPolicy, NO_PARTNER, QUBIT_FREE, QUBIT_OCCUPIED,
     fidelity_to_werner, werner_to_fidelity,
-    bbpssw_success_prob, bbpssw_new_werner,
+    bbpssw_success_prob, bbpssw_new_fidelity,
 )
 
                                                                                            
@@ -226,6 +226,8 @@ class RepeaterNetwork:
             "r": r, "qa": qa, "qb": qb,
             "ra": ra, "qa_r": qa_r, "rb": rb, "qb_r": qb_r,
             "p_new": p_new,
+            "gen_a": int(rep_a.generation_id[qa_r]),
+            "gen_b": int(rep_b.generation_id[qb_r]),
         })
 
         result.update(success=True,
@@ -266,7 +268,7 @@ class RepeaterNetwork:
         result["old_fidelity"] = float(f_keep)
 
         success = self.rng.random() <= bbpssw_success_prob(f_keep, f_sac)
-        p_new = bbpssw_new_werner(f_keep, f_sac) if success else 0.0
+        p_new = fidelity_to_werner(bbpssw_new_fidelity(f_keep, f_sac)) if success else 0.0
 
         # Lock all 4 qubits
         rep1.lock_qubit(q1_sac); rep1.lock_qubit(q1_keep)
@@ -280,6 +282,10 @@ class RepeaterNetwork:
             "q1_sac": q1_sac, "q2_sac": q2_sac,
             "q1_keep": q1_keep, "q2_keep": q2_keep,
             "p_new": p_new,
+            "gen_keep1": int(rep1.generation_id[q1_keep]),
+            "gen_keep2": int(rep2.generation_id[q2_keep]),
+            "gen_sac1": int(rep1.generation_id[q1_sac]),
+            "gen_sac2": int(rep2.generation_id[q2_sac]),
         })
 
         result.update(success=success,
@@ -359,12 +365,15 @@ class RepeaterNetwork:
         ra, qa_r, rb, qb_r = ev["ra"], ev["qa_r"], ev["rb"], ev["qb_r"]
         rep_a, rep_b = self.repeaters[ra], self.repeaters[rb]
 
-        # [Guard] remote qubits may have been freed by expiry during the delay
-        a_alive = rep_a.status[qa_r] == QUBIT_OCCUPIED
-        b_alive = rep_b.status[qb_r] == QUBIT_OCCUPIED
+        # [Guard] remote qubits may have been freed by expiry during the delay,
+        # or reallocated to a new link (ghost link / dangling pointer check).
+        a_alive = (rep_a.status[qa_r] == QUBIT_OCCUPIED and
+                   int(rep_a.generation_id[qa_r]) == ev["gen_a"])
+        b_alive = (rep_b.status[qb_r] == QUBIT_OCCUPIED and
+                   int(rep_b.generation_id[qb_r]) == ev["gen_b"])
 
         if not (a_alive and b_alive):
-            # At least one side expired — clean up the survivor
+            # At least one side expired or was reallocated — clean up the survivor
             if a_alive:
                 rep_a.free_qubit(qa_r)
             if b_alive:
@@ -372,9 +381,14 @@ class RepeaterNetwork:
             return
 
         ec = min(rep_a.cutoff, rep_b.cutoff)
-        # Establish the new end-to-end link between the remote qubits
-        rep_a.set_link(qa_r, rb, qb_r, ev["p_new"], link_age=0, effective_cutoff=ec)
-        rep_b.set_link(qb_r, ra, qa_r, ev["p_new"], link_age=0, effective_cutoff=ec)
+        # Each qubit retains its own memory age; use max so future
+        # decoherence tracks the older qubit (swap already accounts for
+        # both pre-swap Werner params via p_new = p_A * p_B).
+        inherited_age = max(int(rep_a.age[qa_r]), int(rep_b.age[qb_r]))
+        rep_a.set_link(qa_r, rb, qb_r, ev["p_new"],
+                       link_age=inherited_age, effective_cutoff=ec)
+        rep_b.set_link(qb_r, ra, qa_r, ev["p_new"],
+                       link_age=inherited_age, effective_cutoff=ec)
         rep_a.unlock_qubit(qa_r)
         rep_b.unlock_qubit(qb_r)
 
@@ -389,21 +403,42 @@ class RepeaterNetwork:
         rep1, rep2 = self.repeaters[r1], self.repeaters[r2]
 
         if ev["success"]:
-            # Destroy sacrifice pair
-            self._break_link(r1, q1_sac)
+            # Destroy sacrifice pair (with generation-ID guard to avoid
+            # breaking a new link that reused the same qubit slot)
+            s1_valid = (rep1.status[q1_sac] == QUBIT_OCCUPIED and
+                        int(rep1.generation_id[q1_sac]) == ev["gen_sac1"])
+            if s1_valid:
+                self._break_link(r1, q1_sac)
+            else:
+                # r1 side expired/reallocated; check r2 side independently
+                s2_valid = (rep2.status[q2_sac] == QUBIT_OCCUPIED and
+                            int(rep2.generation_id[q2_sac]) == ev["gen_sac2"])
+                if s2_valid:
+                    rep2.free_qubit(q2_sac)
+                # Unlock any stale locks left on the sacrifice slots
+                if rep1.locked[q1_sac]:
+                    rep1.unlock_qubit(q1_sac)
+                if rep2.locked[q2_sac]:
+                    rep2.unlock_qubit(q2_sac)
 
-            # Guard: kept qubits may have been freed by expiry
-            if (rep1.status[q1_keep] != QUBIT_OCCUPIED or
-                rep2.status[q2_keep] != QUBIT_OCCUPIED):
-                if rep1.status[q1_keep] == QUBIT_OCCUPIED: self._break_link(r1, q1_keep)
-                if rep2.status[q2_keep] == QUBIT_OCCUPIED: self._break_link(r2, q2_keep)
+            # Guard: kept qubits may have been freed by expiry or reallocated
+            k1_alive = (rep1.status[q1_keep] == QUBIT_OCCUPIED and
+                        int(rep1.generation_id[q1_keep]) == ev["gen_keep1"])
+            k2_alive = (rep2.status[q2_keep] == QUBIT_OCCUPIED and
+                        int(rep2.generation_id[q2_keep]) == ev["gen_keep2"])
+            if not (k1_alive and k2_alive):
+                if k1_alive: self._break_link(r1, q1_keep)
+                if k2_alive: self._break_link(r2, q2_keep)
                 return
 
             ec = min(rep1.cutoff, rep2.cutoff)
+            # Purification keeps the pair in place; each qubit retains its own
+            # memory age.  Use max so future decoherence tracks the older qubit.
+            inherited_age = max(int(rep1.age[q1_keep]), int(rep2.age[q2_keep]))
             rep1.set_link(q1_keep, r2, q2_keep, ev["p_new"],
-                          link_age=0, effective_cutoff=ec)
+                          link_age=inherited_age, effective_cutoff=ec)
             rep2.set_link(q2_keep, r1, q1_keep, ev["p_new"],
-                          link_age=0, effective_cutoff=ec)
+                          link_age=inherited_age, effective_cutoff=ec)
             rep1.unlock_qubit(q1_keep)
             rep2.unlock_qubit(q2_keep)
         else:
