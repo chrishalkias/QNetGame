@@ -113,15 +113,15 @@ both links through $C$ are destroyed.
 ### 2.4 BBPSSW Purification
 
 When two repeaters share two or more Bell pairs, they can sacrifice one
-pair to improve another:
+pair to improve another. In terms of fidelities $F_1, F_2 \in [0.25, 1]$:
 
 $$
-P_{\text{succ}} = \frac{3\,p_1\,p_2+1}{4},
+P_{\text{succ}} = \tfrac{4}{3}F_1 F_2 - \tfrac{1}{3}(F_1+F_2) + \tfrac{1}{3},
 \qquad
-p_{\text{new}} = \frac{2\,p_1\,p_2+p_1+p_2}{3\,p_1\,p_2+1}
+F_{\text{new}} = \frac{1 - (F_1+F_2) + 10\,F_1 F_2}{5 - 2(F_1+F_2) + 8\,F_1 F_2}
 $$
 
-The pair with the lower Werner parameter is sacrificed. On failure, both
+The pair with the lower fidelity is sacrificed. On failure, both
 pairs are destroyed.
 
 ### 2.5 Memory Decoherence
