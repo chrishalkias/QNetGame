@@ -403,16 +403,18 @@ class RepeaterNetwork:
         rep1, rep2 = self.repeaters[r1], self.repeaters[r2]
 
         if ev["success"]:
-            # Destroy sacrifice pair (with generation-ID guard to avoid
-            # breaking a new link that reused the same qubit slot)
+            # Destroy sacrifice pair — check both sides' generation-IDs before
+            # calling _break_link, which follows partner pointers that may be stale.
             s1_valid = (rep1.status[q1_sac] == QUBIT_OCCUPIED and
                         int(rep1.generation_id[q1_sac]) == ev["gen_sac1"])
-            if s1_valid:
-                self._break_link(r1, q1_sac)
+            s2_valid = (rep2.status[q2_sac] == QUBIT_OCCUPIED and
+                        int(rep2.generation_id[q2_sac]) == ev["gen_sac2"])
+            if s1_valid and s2_valid:
+                self._break_link(r1, q1_sac)   # frees both sides via partner ptr
             else:
-                # r1 side expired/reallocated; check r2 side independently
-                s2_valid = (rep2.status[q2_sac] == QUBIT_OCCUPIED and
-                            int(rep2.generation_id[q2_sac]) == ev["gen_sac2"])
+                # At least one side expired/reallocated — free survivors individually.
+                if s1_valid:
+                    rep1.free_qubit(q1_sac)
                 if s2_valid:
                     rep2.free_qubit(q2_sac)
                 # Unlock any stale locks left on the sacrifice slots
@@ -442,11 +444,24 @@ class RepeaterNetwork:
             rep1.unlock_qubit(q1_keep)
             rep2.unlock_qubit(q2_keep)
         else:
-            # Failure: destroy both pairs (free_qubit clears locks)
-            if rep1.status[q1_sac] == QUBIT_OCCUPIED: self._break_link(r1, q1_sac)
-            if rep2.status[q2_sac] == QUBIT_OCCUPIED: self._break_link(r2, q2_sac)
-            if rep1.status[q1_keep] == QUBIT_OCCUPIED: self._break_link(r1, q1_keep)
-            if rep2.status[q2_keep] == QUBIT_OCCUPIED: self._break_link(r2, q2_keep)
+            # Failure: destroy all four qubits, guarding each with generation-ID
+            # to avoid corrupting a new link that reused the same qubit slot.
+            for rep, q, gen_key in (
+                (rep1, q1_sac,  "gen_sac1"),
+                (rep2, q2_sac,  "gen_sac2"),
+                (rep1, q1_keep, "gen_keep1"),
+                (rep2, q2_keep, "gen_keep2"),
+            ):
+                if (rep.status[q] == QUBIT_OCCUPIED and
+                        int(rep.generation_id[q]) == ev[gen_key]):
+                    # Partner pointer still valid — use _break_link to free both sides.
+                    # Determine which repeater index owns this qubit.
+                    rid = rep.rid
+                    self._break_link(rid, q)
+                else:
+                    # Slot was reallocated; just clear any zombie lock.
+                    if rep.locked[q]:
+                        rep.unlock_qubit(q)
 
                                                    
 # ▄▄▄▄▄                                     ▄▄       

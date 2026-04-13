@@ -101,12 +101,14 @@ class QRNEnv(RepeaterNetwork):
                     rows=n_repeaters, cols=n_repeaters,
                     n_ch=n_ch, spacing=spacing,
                     swap_policy=SwapPolicy.FARTHEST,
-                    p_gen=p_gen, p_swap=p_swap, cutoff=cutoff)
-            
+                    p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+                    rng=self.rng)
+
         elif topology == 'geant':
             self.net = build_GEANT(
                 n_ch=n_ch, swap_policy=SwapPolicy.FARTHEST,
-                p_gen=p_gen, p_swap=p_swap, cutoff=cutoff)
+                p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+                rng=self.rng)
 
         if heterogeneous:
             for rep in self.net.repeaters:
@@ -157,7 +159,7 @@ class QRNEnv(RepeaterNetwork):
 
         Features per node (8):
             [0] frac_occupied     — occupied / n_ch
-            [1] mean_fidelity     — avg F of occupied qubits (0 if none)
+            [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
             [2] is_source         — 0/1
             [3] is_dest           — 0/1
             [4] frac_available    — available (unlocked occupied) / n_ch
@@ -171,9 +173,9 @@ class QRNEnv(RepeaterNetwork):
         feats = np.zeros((self.N, 8), dtype=np.float32)
         for i, rep in enumerate(self.net.repeaters):
             feats[i, 0] = rep.num_occupied() / rep.n_ch
-            occ = rep.occupied_indices()
-            feats[i, 1] = (float(np.mean(werner_to_fidelity(rep.werner_param[occ])))
-                           if len(occ) > 0 else 0.0)
+            avail = rep.available_indices()
+            feats[i, 1] = (float(np.mean(werner_to_fidelity(rep.werner_param[avail])))
+                           if len(avail) > 0 else 0.0)
             feats[i, 2] = 1.0 if i == self.source else 0.0
             feats[i, 3] = 1.0 if i == self.dest   else 0.0
             feats[i, 4] = rep.num_available() / rep.n_ch

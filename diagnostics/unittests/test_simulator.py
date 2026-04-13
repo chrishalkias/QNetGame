@@ -453,6 +453,12 @@ class TestPurification(unittest.TestCase):
         q2_sac = int(net.repeaters[0].partner_qubit[q1_sac])
         q2_keep = int(net.repeaters[0].partner_qubit[q1_keep])
 
+        # Capture generation IDs before locking (as the real protocol does).
+        gen_sac1  = int(net.repeaters[0].generation_id[q1_sac])
+        gen_sac2  = int(net.repeaters[1].generation_id[q2_sac])
+        gen_keep1 = int(net.repeaters[0].generation_id[q1_keep])
+        gen_keep2 = int(net.repeaters[1].generation_id[q2_keep])
+
         # Manually lock as the protocol would and inject failure event.
         net.repeaters[0].lock_qubit(q1_sac);  net.repeaters[0].lock_qubit(q1_keep)
         net.repeaters[1].lock_qubit(q2_sac);  net.repeaters[1].lock_qubit(q2_keep)
@@ -462,6 +468,8 @@ class TestPurification(unittest.TestCase):
             "q1_sac": q1_sac, "q2_sac": q2_sac,
             "q1_keep": q1_keep, "q2_keep": q2_keep,
             "p_new": 0.0,
+            "gen_sac1": gen_sac1, "gen_sac2": gen_sac2,
+            "gen_keep1": gen_keep1, "gen_keep2": gen_keep2,
         })
         net.age_links(discard_expired=False)
         # Both pairs must be destroyed.
