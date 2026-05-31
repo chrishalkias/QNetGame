@@ -5,9 +5,7 @@
 .pytest_cache
 __pycache__/
 *.pyc
-a_project_information
-findings.md
-progress.md
+docs/
 review.md
 task_plan.md
 TODO.md
