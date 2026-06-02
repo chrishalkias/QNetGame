@@ -120,3 +120,23 @@ def test_legacy_pending_increments_on_deferred_swap():
     be.entangle(1, 2)
     be.swap(1)            # nonzero channel delay -> deferred
     assert be.n_pending >= 1
+
+
+from quantum_repeater_sim.backends import make_backend
+
+
+def test_factory_builds_legacy_chain():
+    be = make_backend("legacy", topology="chain", n_repeaters=4,
+                      rng=np.random.default_rng(1))
+    assert isinstance(be, LegacyBackend)
+    assert be.topology().N == 4
+
+
+def test_factory_rejects_unknown_backend():
+    with pytest.raises(ValueError):
+        make_backend("quantum_magic", topology="chain")
+
+
+def test_factory_netsquid_not_yet_available():
+    with pytest.raises(NotImplementedError):
+        make_backend("netsquid", topology="chain")
