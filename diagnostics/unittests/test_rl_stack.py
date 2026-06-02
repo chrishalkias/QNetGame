@@ -893,5 +893,53 @@ class TestQNetworkForwardPass(unittest.TestCase):
         self.assertEqual(out.shape, (3+5+7, 3))
 
 
+class TestEnvRewireCorrectness(unittest.TestCase):
+    """The backend-rewired env produces VALID, correct rollouts.
+
+    We deliberately do NOT assert a frozen reward trajectory — the contract is
+    correctness (valid shapes/ranges, mask-respecting actions, finite rewards,
+    working e2e detection), not byte-reproduction of the old numpy engine.
+    """
+
+    def test_swap_asap_rollout_is_valid(self):
+        import numpy as np
+        from rl_stack.env_wrapper import QRNEnv
+        from rl_stack.strategies import swap_asap
+        env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7,
+                     cutoff=20, max_steps=40, topology="chain",
+                     rng=np.random.default_rng(2024))
+        obs = env.reset()
+        self.assertEqual(obs["x"].shape, (env.N, 8))
+        self.assertEqual(obs["edge_index"].shape[0], 2)
+        for _ in range(40):
+            mask = env.get_action_mask()
+            a = swap_asap(env)
+            for i in range(env.N):
+                self.assertTrue(mask[i, a[i]])
+            obs, r, done, info = env.step(a)
+            self.assertTrue(np.isfinite(r))
+            self.assertEqual(obs["x"].shape, (env.N, 8))
+            self.assertTrue(np.all(obs["x"] >= -1e-6))
+            self.assertTrue(np.all(obs["x"] <= 1.0 + 1e-6))
+            if done:
+                break
+
+    def test_e2e_detection_terminates(self):
+        import numpy as np
+        from rl_stack.env_wrapper import QRNEnv
+        from rl_stack.strategies import swap_asap
+        env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0,
+                     cutoff=50, max_steps=80, topology="chain",
+                     dt_seconds=0.0, rng=np.random.default_rng(7))
+        env.reset()
+        reached = False
+        for _ in range(80):
+            _, _, done, info = env.step(swap_asap(env))
+            if done and info["fidelity"] > 0.0:
+                reached = True
+                break
+        self.assertTrue(reached)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
