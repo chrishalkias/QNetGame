@@ -140,3 +140,15 @@ def test_factory_rejects_unknown_backend():
 def test_factory_netsquid_not_yet_available():
     with pytest.raises(NotImplementedError):
         make_backend("netsquid", topology="chain")
+
+
+def test_fidelity_gated_swap_uses_backend_snapshot():
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.strategies import fidelity_gated_swap
+    env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7, cutoff=20,
+                 max_steps=40, topology="chain",
+                 rng=np.random.default_rng(7))
+    env.reset()
+    actions = fidelity_gated_swap(env, f_threshold=0.5)
+    assert actions.shape == (env.N,)
+    assert set(np.unique(actions)).issubset({0, 1})  # NOOP or SWAP only

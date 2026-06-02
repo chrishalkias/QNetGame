@@ -45,23 +45,22 @@ def purify_then_swap(env: QRNEnv) -> np.ndarray:
 def fidelity_gated_swap(env: QRNEnv, f_threshold: float = 0.5) -> np.ndarray:
     """Swap only when the node's mean link fidelity exceeds a threshold.
 
-    Approximates the learned RL policy from cluster_004: the agent
-    waits for fresh, high-quality links before swapping and never
-    purifies.  This single-threshold rule captures ~80 % of the
-    agent's advantage over swap-ASAP in most regimes.
-    """
-    from quantum_repeater_sim.repeater import werner_to_fidelity
+    Approximates the learned RL policy from cluster_004: wait for fresh,
+    high-quality links before swapping; never purify.
 
+    Reads the PhysicsBackend snapshot (engine-agnostic) rather than the
+    legacy engine internals.
+    """
     mask = env.get_action_mask()
     actions = np.full(env.N, NOOP, dtype=np.int32)
     for i in range(env.N):
         if not mask[i, SWAP]:
             continue
-        rep = env.net.repeaters[i]
-        occ = rep.occupied_indices()
-        if len(occ) == 0:
+        ns = env.backend.node_state(i)
+        occ = ns.occupied
+        if not bool(occ.any()):
             continue
-        mean_f = float(np.mean(werner_to_fidelity(rep.werner_param[occ])))
+        mean_f = float(ns.fidelity[occ].mean())
         if mean_f >= f_threshold:
             actions[i] = SWAP
     return actions
