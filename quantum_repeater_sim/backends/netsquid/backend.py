@@ -66,6 +66,37 @@ class NetSquidBackend(PhysicsBackend):
         c = max(int(self._link_cutoff[node, q]), 1)
         return float(self._p0[node, q] * np.exp(-int(self._age[node, q]) / c))
 
+    # ---- physics hooks (analytic defaults; FullDMBackend overrides) ----
+    def _create_link(self, a, qa, b, qb, F, ec):
+        """Establish a fresh entangled pair's physics + bookkeeping."""
+        p = float(fidelity_to_werner(F))
+        self._set_link(a, qa, b, qb, p, 0, ec)
+        self._set_link(b, qb, a, qa, p, 0, ec)
+
+    def _swap_measure(self, r, qa, qb):
+        """Return (payload, reported_new_fidelity) at BSM time.
+        analytic payload is the post-swap Werner p_new."""
+        p_new = self._current_werner(r, qa) * self._current_werner(r, qb)
+        return p_new, float(werner_to_fidelity(p_new))
+
+    def _swap_resolve(self, ra, qa_r, rb, qb_r, payload, age, ec):
+        """Establish the new e2e link physics + bookkeeping at resolution time."""
+        p_new = payload
+        self._set_link(ra, qa_r, rb, qb_r, p_new, age, ec)
+        self._set_link(rb, qb_r, ra, qa_r, p_new, age, ec)
+
+    def _decohere_tick(self):
+        """Apply one tick of decoherence. analytic: lazy (no-op)."""
+        pass
+
+    def _read_fidelity(self, node, q):
+        """Current F of the link occupying (node, q)."""
+        return werner_to_fidelity(self._current_werner(node, q))
+
+    def _discard(self, node, q):
+        """Release any physical resource held by slot (node, q). analytic: none."""
+        pass
+
     def topology(self) -> Topology:
         return Topology(N=self._N,
                         adjacency=_freeze(self._adj.copy()),
@@ -75,7 +106,7 @@ class NetSquidBackend(PhysicsBackend):
         occ = self._occupied[node]
         fid = np.zeros(self._n_ch, dtype=np.float64)
         for q in np.flatnonzero(occ):
-            fid[q] = werner_to_fidelity(self._current_werner(node, int(q)))
+            fid[q] = self._read_fidelity(node, int(q))
         return NodeState(
             node_id=int(node),
             n_ch=self._n_ch,
@@ -97,7 +128,7 @@ class NetSquidBackend(PhysicsBackend):
                 if b > a:
                     out.append(LinkState(
                         a, int(q), b, int(self._partner_qubit[a, q]),
-                        werner_to_fidelity(self._current_werner(a, int(q))),
+                        self._read_fidelity(a, int(q)),
                         int(self._age[a, q])))
         return out
 
@@ -130,6 +161,7 @@ class NetSquidBackend(PhysicsBackend):
         self._link_cutoff[node, q] = link_cutoff
 
     def _free_qubit(self, node, q):
+        self._discard(node, q)
         self._occupied[node, q] = False
         self._locked[node, q] = False
         self._partner_node[node, q] = NO_PARTNER
@@ -159,10 +191,8 @@ class NetSquidBackend(PhysicsBackend):
             result["reason"] = "generation_failed"; return result
         q1, q2 = self._allocate(r1), self._allocate(r2)
         fid = self._gen_fidelity(r1, r2)
-        p = float(fidelity_to_werner(fid))
         ec = int(min(self._cutoff[r1], self._cutoff[r2]))
-        self._set_link(r1, q1, r2, q2, p, 0, ec)
-        self._set_link(r2, q2, r1, q1, p, 0, ec)
+        self._create_link(r1, q1, r2, q2, fid, ec)
         result.update(success=True, fidelity=float(fid), reason="ok")
         return result
 
@@ -209,7 +239,7 @@ class NetSquidBackend(PhysicsBackend):
 
         ra, qa_r = int(self._partner_node[r, qa]), int(self._partner_qubit[r, qa])
         rb, qb_r = int(self._partner_node[r, qb]), int(self._partner_qubit[r, qb])
-        p_new = self._current_werner(r, qa) * self._current_werner(r, qb)
+        payload, reported_F = self._swap_measure(r, qa, qb)
 
         # BSM consumes local qubits immediately
         self._free_qubit(r, qa)
@@ -243,14 +273,12 @@ class NetSquidBackend(PhysicsBackend):
                     self._free_qubit(rb, qb_r)
                 return
             inherited = max(int(self._age[ra, qa_r]), int(self._age[rb, qb_r]))
-            self._set_link(ra, qa_r, rb, qb_r, p_new, inherited, ec)
-            self._set_link(rb, qb_r, ra, qa_r, p_new, inherited, ec)
+            self._swap_resolve(ra, qa_r, rb, qb_r, payload, inherited, ec)
             self._locked[ra, qa_r] = False
             self._locked[rb, qb_r] = False
 
         self._clock.schedule(delay, _resolve)
-        result.update(success=True,
-                      new_fidelity=float(werner_to_fidelity(p_new)),
+        result.update(success=True, new_fidelity=reported_F,
                       partners=(ra, rb), reason="pending")
         return result
 
@@ -264,6 +292,7 @@ class NetSquidBackend(PhysicsBackend):
         # 1) age occupied slots; snapshot expiry candidates + their generation
         occ = self._occupied.copy()
         self._age[occ] += 1
+        self._decohere_tick()
         expired = occ & (self._age >= self._link_cutoff)
         exp_gen = self._generation.copy()
         # 2) run the engine one tick -> fires due deferred resolutions
