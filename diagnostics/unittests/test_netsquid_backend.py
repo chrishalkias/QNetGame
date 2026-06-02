@@ -216,3 +216,68 @@ def test_qrnenv_constructs_on_netsquid():
                  dt_seconds=0.0, rng=np.random.default_rng(1))
     obs = env.reset()
     assert obs["x"].shape == (env.N, 8)
+
+
+def test_netsquid_swap_asap_rollout_is_valid():
+    import numpy as np
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.strategies import swap_asap
+    env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7, cutoff=20,
+                 max_steps=40, topology="chain", backend="netsquid",
+                 dt_seconds=0.0, rng=np.random.default_rng(2024))
+    obs = env.reset()
+    assert obs["x"].shape == (env.N, 8)
+    for _ in range(40):
+        mask = env.get_action_mask()
+        a = swap_asap(env)
+        for i in range(env.N):
+            assert mask[i, a[i]]
+        obs, r, done, info = env.step(a)
+        assert np.isfinite(r)
+        assert np.all(obs["x"] >= -1e-6) and np.all(obs["x"] <= 1.0 + 1e-6)
+        if done:
+            break
+
+
+def test_netsquid_e2e_reachable_perfect_chain():
+    import numpy as np
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.strategies import swap_asap
+    env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=50,
+                 max_steps=80, topology="chain", backend="netsquid",
+                 dt_seconds=0.0, rng=np.random.default_rng(7))
+    env.reset()
+    ok = False
+    for _ in range(80):
+        _, _, done, info = env.step(swap_asap(env))
+        if done and info["fidelity"] > 0.0:
+            ok = True
+            break
+    assert ok
+
+
+def test_qualitative_parity_legacy_vs_netsquid():
+    """Both engines reach e2e under perfect params, with sane fidelity.
+
+    Qualitative parity (per the guiding principle), NOT byte-equality.
+    Built and measured one-at-a-time (NetSquid global sim state).
+    """
+    import numpy as np
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.strategies import swap_asap
+
+    def run(backend):
+        env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=50,
+                     max_steps=80, topology="chain", backend=backend,
+                     dt_seconds=0.0, rng=np.random.default_rng(11))
+        env.reset()
+        for _ in range(80):
+            _, _, done, info = env.step(swap_asap(env))
+            if done:
+                return info["fidelity"]
+        return 0.0
+
+    f_legacy = run("legacy")
+    f_netsquid = run("netsquid")
+    assert f_legacy > 0.0 and f_netsquid > 0.0     # both reach e2e
+    assert 0.0 <= f_netsquid <= 1.0
