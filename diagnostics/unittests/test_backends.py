@@ -137,9 +137,13 @@ def test_factory_rejects_unknown_backend():
         make_backend("quantum_magic", topology="chain")
 
 
-def test_factory_netsquid_not_yet_available():
+def test_factory_netsquid_grid_full_dm_not_yet_available():
+    # netsquid chain/analytic is implemented in M1; grid/geant (M2) and
+    # full_dm (M3) are still guarded.
     with pytest.raises(NotImplementedError):
-        make_backend("netsquid", topology="chain")
+        make_backend("netsquid", topology="grid")
+    with pytest.raises(NotImplementedError):
+        make_backend("netsquid", topology="chain", fidelity_mode="full_dm")
 
 
 def test_fidelity_gated_swap_uses_backend_snapshot():
