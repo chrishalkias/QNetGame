@@ -109,8 +109,60 @@ class NetSquidBackend(PhysicsBackend):
     def time(self) -> float:
         return float(self._clock.tick)
 
+    # ---- slot helpers ----
+    def _free_slot(self, node):
+        free = np.flatnonzero((~self._occupied[node]) & (~self._locked[node]))
+        return int(free[0]) if len(free) else -1
+
+    def _allocate(self, node):
+        q = self._free_slot(node)
+        if q < 0:
+            return -1
+        self._occupied[node, q] = True
+        self._generation[node, q] += 1
+        return q
+
+    def _set_link(self, node, q, partner_node, partner_q, p0, age, link_cutoff):
+        self._partner_node[node, q] = partner_node
+        self._partner_qubit[node, q] = partner_q
+        self._p0[node, q] = p0
+        self._age[node, q] = age
+        self._link_cutoff[node, q] = link_cutoff
+
+    def _free_qubit(self, node, q):
+        self._occupied[node, q] = False
+        self._locked[node, q] = False
+        self._partner_node[node, q] = NO_PARTNER
+        self._partner_qubit[node, q] = NO_PARTNER
+        self._p0[node, q] = 0.0
+        self._age[node, q] = 0
+        self._link_cutoff[node, q] = self._cutoff[node]
+
+    def _break_link(self, node, q):
+        pn, pq = int(self._partner_node[node, q]), int(self._partner_qubit[node, q])
+        if pn != NO_PARTNER:
+            self._free_qubit(pn, pq)
+        self._free_qubit(node, q)
+
+    # ---- ACTION 1: entangle (instantaneous) ----
     def entangle(self, r1: int, r2: int) -> dict:
-        raise NotImplementedError("entangle lands in Task 3")
+        result = {"success": False, "fidelity": 0.0, "reason": ""}
+        if self._adj[r1, r2] == 0:
+            result["reason"] = "not_adjacent"; return result
+        if self._free_slot(r1) < 0:
+            result["reason"] = "no_free_qubit_r1"; return result
+        if self._free_slot(r2) < 0:
+            result["reason"] = "no_free_qubit_r2"; return result
+        if self._rng.random() > self._gen_prob(r1, r2):
+            result["reason"] = "generation_failed"; return result
+        q1, q2 = self._allocate(r1), self._allocate(r2)
+        fid = self._gen_fidelity(r1, r2)
+        p = float(fidelity_to_werner(fid))
+        ec = int(min(self._cutoff[r1], self._cutoff[r2]))
+        self._set_link(r1, q1, r2, q2, p, 0, ec)
+        self._set_link(r2, q2, r1, q1, p, 0, ec)
+        result.update(success=True, fidelity=float(fid), reason="ok")
+        return result
 
     def swap(self, r: int) -> dict:
         raise NotImplementedError("swap lands in Task 4")
@@ -119,8 +171,26 @@ class NetSquidBackend(PhysicsBackend):
         return {"success": False, "reason": "not_implemented_m1",
                 "old_fidelity": 0.0, "new_fidelity": 0.0}
 
+    # ---- ACTION 4: advance one tick ----
     def advance(self) -> dict:
-        raise NotImplementedError("advance lands in Task 3")
+        self._resolved_this_advance = 0
+        # 1) age occupied slots; collect expiry candidates (do not expire yet)
+        occ = self._occupied.copy()
+        self._age[occ] += 1
+        expired = occ & (self._age >= self._link_cutoff)
+        # 2) run the engine one tick -> fires due deferred resolutions (Task 4)
+        self._clock.advance()
+        # 3) expire aged-out links still occupied
+        n_destroyed = 0
+        for node, q in zip(*np.nonzero(expired)):
+            node, q = int(node), int(q)
+            if self._occupied[node, q]:
+                self._break_link(node, q)
+                n_destroyed += 1
+        return {"expired": n_destroyed,
+                "resolved": self._resolved_this_advance,
+                "pending": self.n_pending,
+                "time": float(self._clock.tick)}
 
     def reset(self) -> None:
         self._occupied[:] = False

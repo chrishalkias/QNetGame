@@ -100,3 +100,41 @@ def test_backend_reset_clears_state():
     be.reset()
     assert be.time == 0.0
     assert be.n_pending == 0
+
+
+def test_entangle_creates_link_with_expected_fidelity():
+    be = _chain_backend(N=3, n_ch=4, F0=0.9, channel_loss=0.0, p_gen=1.0)
+    res = be.entangle(0, 1)
+    assert res["success"] is True
+    ns0, ns1 = be.node_state(0), be.node_state(1)
+    q0 = int(np.flatnonzero(ns0.occupied)[0])
+    q1 = int(np.flatnonzero(ns1.occupied)[0])
+    assert int(ns0.partner_node[q0]) == 1
+    assert int(ns1.partner_node[q1]) == 0
+    assert abs(float(ns0.fidelity[q0]) - 0.9) < 1e-9
+
+
+def test_entangle_non_adjacent_fails():
+    be = _chain_backend(N=3)
+    assert be.entangle(0, 2)["success"] is False
+
+
+def test_advance_ages_and_decoheres_link():
+    be = _chain_backend(N=3, n_ch=4, F0=1.0, channel_loss=0.0,
+                        p_gen=1.0, cutoff=10)
+    be.entangle(0, 1)
+    f0 = float(be.node_state(0).fidelity.max())
+    be.advance()
+    f1 = float(be.node_state(0).fidelity.max())
+    assert f1 < f0
+    assert be.time == 1.0
+
+
+def test_advance_expires_link_at_cutoff():
+    be = _chain_backend(N=3, n_ch=4, F0=1.0, channel_loss=0.0,
+                        p_gen=1.0, cutoff=3)
+    be.entangle(0, 1)
+    for _ in range(3):
+        be.advance()
+    assert not be.node_state(0).occupied.any()
+    assert not be.node_state(1).occupied.any()
