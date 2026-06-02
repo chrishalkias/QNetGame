@@ -169,8 +169,8 @@ class QRNEnv:
                 feats[i, 5] = 0.0
                 feats[i, 6] = 0.0
             else:
-                feats[i, 5] = 1.0 if self._can_swap_at(i) else 0.0
-                feats[i, 6] = 1.0 if self._can_purify_at(i) else 0.0
+                feats[i, 5] = 1.0 if self._can_swap_from(ns) else 0.0
+                feats[i, 6] = 1.0 if self._can_purify_from(ns) else 0.0
             feats[i, 7] = (self.max_steps - self.steps) / self.max_steps
         src, dst = np.nonzero(self._topo.adjacency)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
@@ -184,9 +184,8 @@ class QRNEnv:
 #       ▀▀
 
 
-    def _can_swap_at(self, r: int) -> bool:
-        """True if node r has ≥2 available qubits linked to *distinct* partners."""
-        ns = self.backend.node_state(r)
+    def _can_swap_from(self, ns) -> bool:
+        """True if ns has ≥2 available qubits linked to *distinct* partners."""
         avail = ns.occupied & (~ns.locked)
         if int(avail.sum()) < 2:
             return False
@@ -194,9 +193,8 @@ class QRNEnv:
         unique = np.unique(partners[partners != NO_PARTNER])
         return len(unique) >= 2
 
-    def _can_purify_at(self, r: int) -> bool:
-        """True if node r has ≥2 available qubits linked to the *same* partner."""
-        ns = self.backend.node_state(r)
+    def _can_purify_from(self, ns) -> bool:
+        """True if ns has ≥2 available qubits linked to the *same* partner."""
         avail = ns.occupied & (~ns.locked)
         if int(avail.sum()) < 2:
             return False
@@ -204,6 +202,14 @@ class QRNEnv:
         _, counts = np.unique(partners[partners != NO_PARTNER],
                               return_counts=True)
         return bool(np.any(counts >= 2))
+
+    def _can_swap_at(self, r: int) -> bool:
+        """True if node r has ≥2 available qubits linked to *distinct* partners."""
+        return self._can_swap_from(self.backend.node_state(r))
+
+    def _can_purify_at(self, r: int) -> bool:
+        """True if node r has ≥2 available qubits linked to the *same* partner."""
+        return self._can_purify_from(self.backend.node_state(r))
 
 
 # ▄▄▄      ▄▄▄
@@ -221,9 +227,10 @@ class QRNEnv:
         for i in range(self.N):
             if self.is_target(i):
                 continue
-            if self._can_swap_at(i):
+            ns = self.backend.node_state(i)
+            if self._can_swap_from(ns):
                 mask[i, SWAP] = True
-            if self._can_purify_at(i):
+            if self._can_purify_from(ns):
                 mask[i, PURIFY] = True
         return mask
 
