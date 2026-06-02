@@ -12,8 +12,8 @@ import numpy as np
 
 
 def _freeze(a: np.ndarray) -> np.ndarray:
-    """Return a read-only, contiguous copy-safe view of *a*."""
-    a = np.ascontiguousarray(a)
+    """Return an independent read-only copy of *a* (never mutates the caller's array)."""
+    a = np.ascontiguousarray(a).copy()
     a.flags.writeable = False
     return a
 
@@ -32,9 +32,17 @@ class NodeState:
     fidelity: np.ndarray       # float (n_ch,)  F-domain, 0.0 if free
     age: np.ndarray            # int32 (n_ch,)
 
+    def __post_init__(self):
+        for field in ("occupied", "locked", "partner_node",
+                      "partner_qubit", "fidelity", "age"):
+            arr = getattr(self, field)
+            if arr.flags.writeable:
+                object.__setattr__(self, field, _freeze(arr))
+
 
 @dataclass(frozen=True)
 class LinkState:
+    """Immutable snapshot of one entanglement link."""
     node_a: int
     qubit_a: int
     node_b: int
@@ -45,9 +53,16 @@ class LinkState:
 
 @dataclass(frozen=True)
 class Topology:
+    """Immutable network topology: adjacency + node positions."""
     N: int
     adjacency: np.ndarray   # (N, N) float, 0/weight
     positions: np.ndarray   # (N, 2)  float
+
+    def __post_init__(self):
+        for field in ("adjacency", "positions"):
+            arr = getattr(self, field)
+            if arr.flags.writeable:
+                object.__setattr__(self, field, _freeze(arr))
 
 
 class PhysicsBackend(ABC):
