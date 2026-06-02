@@ -37,7 +37,22 @@ def make_backend(
                 rep.p_swap = rng.uniform(0.3, 1.0)
         return LegacyBackend(net)
     if backend == "netsquid":
-        raise NotImplementedError("NetSquidBackend lands in M1")
+        if fidelity_mode != "analytic":
+            raise NotImplementedError(
+                f"NetSquid fidelity_mode={fidelity_mode!r} not in M1 "
+                "(full_dm lands in M3)")
+        if topology != "chain":
+            raise NotImplementedError(
+                f"NetSquid topology={topology!r} not in M1 (grid/geant in M2)")
+        from .netsquid.backend import NetSquidBackend
+        be = NetSquidBackend(
+            N=n_repeaters, n_ch=n_ch, spacing=spacing, p_gen=p_gen,
+            p_swap=p_swap, cutoff=cutoff, F0=F0, channel_loss=channel_loss,
+            dt_seconds=dt_seconds, distance_dep_gen=True, rng=rng)
+        if heterogeneous:
+            be._p_gen[:] = rng.uniform(0.3, 1.0, size=be._N)
+            be._p_swap[:] = rng.uniform(0.3, 1.0, size=be._N)
+        return be
     raise ValueError(f"Unknown backend {backend!r}")
 
 

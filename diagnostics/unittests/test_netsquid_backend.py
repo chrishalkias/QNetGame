@@ -188,3 +188,31 @@ def test_swap_stale_remote_expiry_is_safe():
         be.advance()
     ns0 = be.node_state(0)
     assert 2 not in [int(p) for p in ns0.partner_node[ns0.occupied]]
+
+
+from quantum_repeater_sim.backends import make_backend
+
+
+def test_factory_builds_netsquid_chain_analytic():
+    be = make_backend("netsquid", topology="chain", n_repeaters=4,
+                      fidelity_mode="analytic", rng=np.random.default_rng(0))
+    assert isinstance(be, NetSquidBackend)
+    assert be.topology().N == 4
+
+
+def test_factory_netsquid_rejects_non_chain():
+    with pytest.raises(NotImplementedError):
+        make_backend("netsquid", topology="grid", n_repeaters=3)
+
+
+def test_factory_netsquid_rejects_full_dm():
+    with pytest.raises(NotImplementedError):
+        make_backend("netsquid", topology="chain", fidelity_mode="full_dm")
+
+
+def test_qrnenv_constructs_on_netsquid():
+    from rl_stack.env_wrapper import QRNEnv
+    env = QRNEnv(n_repeaters=4, topology="chain", backend="netsquid",
+                 dt_seconds=0.0, rng=np.random.default_rng(1))
+    obs = env.reset()
+    assert obs["x"].shape == (env.N, 8)
