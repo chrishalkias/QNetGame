@@ -138,3 +138,53 @@ def test_advance_expires_link_at_cutoff():
         be.advance()
     assert not be.node_state(0).occupied.any()
     assert not be.node_state(1).occupied.any()
+
+
+def test_swap_perfect_links_resolves_to_e2e():
+    # 3-node chain, perfect gen/swap, no loss, no CC delay (dt=0)
+    be = _chain_backend(N=3, n_ch=4, F0=1.0, channel_loss=0.0,
+                        p_gen=1.0, p_swap=1.0, cutoff=50, dt_seconds=0.0)
+    be.entangle(0, 1)
+    be.entangle(1, 2)
+    res = be.swap(1)
+    assert res["success"] is True
+    be.advance()   # resolution fires (dt=0 -> next advance)
+    ns0 = be.node_state(0)
+    partners = [int(p) for p in ns0.partner_node[ns0.occupied]]
+    assert 2 in partners
+    assert be.node_state(1).occupied.sum() == 0
+
+
+def test_swap_insufficient_qubits_fails():
+    be = _chain_backend(N=3)
+    assert be.swap(1)["success"] is False
+
+
+def test_swap_product_rule_fidelity():
+    be = _chain_backend(N=3, n_ch=4, F0=1.0, channel_loss=0.0,
+                        p_gen=1.0, p_swap=1.0, cutoff=1000, dt_seconds=0.0)
+    be.entangle(0, 1); be.entangle(1, 2)
+    occ1 = np.flatnonzero(be._occupied[1])
+    p_a = be._current_werner(1, int(occ1[0]))
+    p_b = be._current_werner(1, int(occ1[1]))
+    be.swap(1); be.advance()
+    ns0 = be.node_state(0)
+    q = int(np.flatnonzero(ns0.occupied)[0])
+    # Product rule applies to the *initial* werner (p0); current fidelity is
+    # decohered by the one tick the locked remote qubits age during the CC
+    # delay before resolution (matches legacy network age_links/_resolve_swap).
+    assert abs(float(be._p0[0, q]) - p_a * p_b) < 1e-6
+
+
+def test_swap_stale_remote_expiry_is_safe():
+    # remote link expires during the CC delay -> resolution must drop cleanly
+    be = _chain_backend(N=3, n_ch=4, F0=1.0, channel_loss=0.0, p_gen=1.0,
+                        p_swap=1.0, cutoff=2, spacing=5000.0, dt_seconds=1e-4)
+    be.entangle(0, 1); be.entangle(1, 2)
+    res = be.swap(1)
+    assert res["success"] is True            # deferred (nonzero CC delay)
+    assert be.n_pending >= 1
+    for _ in range(6):                        # outlast cutoff and the delay
+        be.advance()
+    ns0 = be.node_state(0)
+    assert 2 not in [int(p) for p in ns0.partner_node[ns0.occupied]]

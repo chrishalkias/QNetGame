@@ -140,7 +140,9 @@ class NetSquidBackend(PhysicsBackend):
 
     def _break_link(self, node, q):
         pn, pq = int(self._partner_node[node, q]), int(self._partner_qubit[node, q])
-        if pn != NO_PARTNER:
+        # only free the partner if it still points back at us (ghost-link guard)
+        if pn != NO_PARTNER and int(self._partner_node[pn, pq]) == node \
+                and int(self._partner_qubit[pn, pq]) == q:
             self._free_qubit(pn, pq)
         self._free_qubit(node, q)
 
@@ -164,8 +166,93 @@ class NetSquidBackend(PhysicsBackend):
         result.update(success=True, fidelity=float(fid), reason="ok")
         return result
 
+    def _available(self, node):
+        return np.flatnonzero(self._occupied[node] & (~self._locked[node]))
+
+    def _select_swap_pair(self, node):
+        """Pick two available qubits linked to DISTINCT partners (simple, correct).
+
+        M1 uses the farthest-partner pair to mirror the default FARTHEST policy
+        intent; ties broken by index.
+        """
+        avail = self._available(node)
+        if len(avail) < 2:
+            return None
+        best = None
+        best_d = -1.0
+        for i in range(len(avail)):
+            for j in range(i + 1, len(avail)):
+                qa, qb = int(avail[i]), int(avail[j])
+                ra = int(self._partner_node[node, qa])
+                rb = int(self._partner_node[node, qb])
+                if ra == NO_PARTNER or rb == NO_PARTNER or ra == rb:
+                    continue
+                d = float(np.linalg.norm(self._positions[ra] - self._positions[rb]))
+                if d > best_d:
+                    best_d, best = d, (qa, qb)
+        return best
+
+    # ---- ACTION 2: swap (deferred via pydynaa) ----
     def swap(self, r: int) -> dict:
-        raise NotImplementedError("swap lands in Task 4")
+        result = {"success": False, "new_fidelity": 0.0,
+                  "partners": None, "reason": ""}
+        if len(self._available(r)) < 2:
+            result["reason"] = "insufficient_qubits"; return result
+        pair = self._select_swap_pair(r)
+        if pair is None:
+            result["reason"] = "no_valid_pair"; return result
+        qa, qb = pair
+        if self._rng.random() > self._p_swap[r]:
+            self._break_link(r, qa)
+            self._break_link(r, qb)
+            result["reason"] = "swap_failed"; return result
+
+        ra, qa_r = int(self._partner_node[r, qa]), int(self._partner_qubit[r, qa])
+        rb, qb_r = int(self._partner_node[r, qb]), int(self._partner_qubit[r, qb])
+        p_new = self._current_werner(r, qa) * self._current_werner(r, qb)
+
+        # BSM consumes local qubits immediately
+        self._free_qubit(r, qa)
+        self._free_qubit(r, qb)
+
+        # lock remote qubits, clear stale back-pointers (they wait for the msg)
+        self._locked[ra, qa_r] = True
+        self._locked[rb, qb_r] = True
+        self._partner_node[ra, qa_r] = NO_PARTNER
+        self._partner_qubit[ra, qa_r] = NO_PARTNER
+        self._partner_node[rb, qb_r] = NO_PARTNER
+        self._partner_qubit[rb, qb_r] = NO_PARTNER
+
+        gen_a = int(self._generation[ra, qa_r])
+        gen_b = int(self._generation[rb, qb_r])
+        d_max = max(self._distance(r, ra), self._distance(r, rb))
+        delay = self._clock.delay_ticks(d_max)
+
+        ec = int(min(self._cutoff[ra], self._cutoff[rb]))
+
+        def _resolve():
+            self._resolved_this_advance += 1
+            a_alive = (self._occupied[ra, qa_r]
+                       and int(self._generation[ra, qa_r]) == gen_a)
+            b_alive = (self._occupied[rb, qb_r]
+                       and int(self._generation[rb, qb_r]) == gen_b)
+            if not (a_alive and b_alive):
+                if a_alive:
+                    self._free_qubit(ra, qa_r)
+                if b_alive:
+                    self._free_qubit(rb, qb_r)
+                return
+            inherited = max(int(self._age[ra, qa_r]), int(self._age[rb, qb_r]))
+            self._set_link(ra, qa_r, rb, qb_r, p_new, inherited, ec)
+            self._set_link(rb, qb_r, ra, qa_r, p_new, inherited, ec)
+            self._locked[ra, qa_r] = False
+            self._locked[rb, qb_r] = False
+
+        self._clock.schedule(delay, _resolve)
+        result.update(success=True,
+                      new_fidelity=float(werner_to_fidelity(p_new)),
+                      partners=(ra, rb), reason="pending")
+        return result
 
     def purify(self, r1: int, r2: int) -> dict:
         return {"success": False, "reason": "not_implemented_m1",
@@ -174,17 +261,19 @@ class NetSquidBackend(PhysicsBackend):
     # ---- ACTION 4: advance one tick ----
     def advance(self) -> dict:
         self._resolved_this_advance = 0
-        # 1) age occupied slots; collect expiry candidates (do not expire yet)
+        # 1) age occupied slots; snapshot expiry candidates + their generation
         occ = self._occupied.copy()
         self._age[occ] += 1
         expired = occ & (self._age >= self._link_cutoff)
-        # 2) run the engine one tick -> fires due deferred resolutions (Task 4)
+        exp_gen = self._generation.copy()
+        # 2) run the engine one tick -> fires due deferred resolutions
         self._clock.advance()
-        # 3) expire aged-out links still occupied
+        # 3) expire aged-out links still occupied AND not reallocated this tick
         n_destroyed = 0
         for node, q in zip(*np.nonzero(expired)):
             node, q = int(node), int(q)
-            if self._occupied[node, q]:
+            if (self._occupied[node, q]
+                    and int(self._generation[node, q]) == int(exp_gen[node, q])):
                 self._break_link(node, q)
                 n_destroyed += 1
         return {"expired": n_destroyed,
