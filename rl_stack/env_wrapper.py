@@ -31,7 +31,7 @@ from typing import Dict, Tuple, Optional
 import numpy as np
 
 from quantum_repeater_sim.backends import make_backend
-from quantum_repeater_sim.repeater import SwapPolicy, NO_PARTNER
+from quantum_repeater_sim.repeater import NO_PARTNER
 
 # --- action constants ----------------------------------------------------
 NOOP    = 0
@@ -202,14 +202,6 @@ class QRNEnv:
         _, counts = np.unique(partners[partners != NO_PARTNER],
                               return_counts=True)
         return bool(np.any(counts >= 2))
-
-    def _can_swap_at(self, r: int) -> bool:
-        """True if node r has ≥2 available qubits linked to *distinct* partners."""
-        return self._can_swap_from(self.backend.node_state(r))
-
-    def _can_purify_at(self, r: int) -> bool:
-        """True if node r has ≥2 available qubits linked to the *same* partner."""
-        return self._can_purify_from(self.backend.node_state(r))
 
 
 # ▄▄▄      ▄▄▄
