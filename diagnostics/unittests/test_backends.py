@@ -65,3 +65,58 @@ def test_topology_autofreezes_arrays():
     assert topo.positions.flags.writeable is False
     with pytest.raises(ValueError):
         topo.adjacency[0, 0] = 9.0
+
+
+from quantum_repeater_sim.backends.legacy import LegacyBackend
+from quantum_repeater_sim.network import build_chain
+
+
+def _legacy_chain():
+    net = build_chain(3, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
+                      cutoff=20, F0=0.95, channel_loss=0.0,
+                      dt_seconds=1e-4, distance_dep_gen=True,
+                      rng=np.random.default_rng(0))
+    return LegacyBackend(net)
+
+
+def test_legacy_topology():
+    be = _legacy_chain()
+    topo = be.topology()
+    assert topo.N == 3
+    assert topo.adjacency.shape == (3, 3)
+    assert topo.positions.shape == (3, 2)
+    assert topo.adjacency.flags.writeable is False
+
+
+def test_legacy_node_state_reflects_entanglement():
+    be = _legacy_chain()
+    be.entangle(0, 1)
+    ns = be.node_state(0)
+    assert ns.n_ch == 4
+    assert ns.occupied.any()
+    qi = int(np.flatnonzero(ns.occupied)[0])
+    assert int(ns.partner_node[qi]) == 1
+    assert ns.fidelity[qi] > 0.0
+    assert ns.occupied.flags.writeable is False
+
+
+def test_legacy_node_state_free_qubit_zero_fidelity():
+    be = _legacy_chain()
+    ns = be.node_state(2)
+    assert not ns.occupied.any()
+    assert float(ns.fidelity.max()) == 0.0
+
+
+def test_legacy_advance_returns_contract_dict():
+    be = _legacy_chain()
+    out = be.advance()
+    assert set(out) == {"expired", "resolved", "pending", "time"}
+    assert out["time"] == 1.0
+
+
+def test_legacy_pending_increments_on_deferred_swap():
+    be = _legacy_chain()
+    be.entangle(0, 1)
+    be.entangle(1, 2)
+    be.swap(1)            # nonzero channel delay -> deferred
+    assert be.n_pending >= 1
