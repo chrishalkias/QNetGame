@@ -52,3 +52,51 @@ def test_reset_clears_pending_and_tick():
     for _ in range(8):
         clk.advance()
     assert fired == []
+
+
+from quantum_repeater_sim.backends.netsquid.backend import NetSquidBackend
+from quantum_repeater_sim.backends.base import NodeState, Topology
+
+
+def _chain_backend(N=3, n_ch=4, **kw):
+    params = dict(n_ch=n_ch, spacing=50.0, p_gen=1.0, p_swap=1.0, cutoff=20,
+                  F0=0.95, channel_loss=0.0, dt_seconds=0.0,
+                  distance_dep_gen=True, rng=np.random.default_rng(0))
+    params.update(kw)
+    return NetSquidBackend(N=N, **params)
+
+
+def test_backend_topology_chain():
+    be = _chain_backend(N=3)
+    topo = be.topology()
+    assert isinstance(topo, Topology)
+    assert topo.N == 3
+    assert topo.adjacency.shape == (3, 3)
+    assert topo.adjacency[0, 1] != 0 and topo.adjacency[1, 2] != 0
+    assert topo.adjacency[0, 2] == 0
+    assert topo.positions.shape == (3, 2)
+    assert topo.adjacency.flags.writeable is False
+
+
+def test_backend_empty_node_state():
+    be = _chain_backend(N=3, n_ch=4)
+    ns_ = be.node_state(0)
+    assert isinstance(ns_, NodeState)
+    assert ns_.n_ch == 4
+    assert not ns_.occupied.any()
+    assert float(ns_.fidelity.max()) == 0.0
+    assert ns_.occupied.flags.writeable is False
+
+
+def test_backend_time_and_pending_start_zero():
+    be = _chain_backend()
+    assert be.time == 0.0
+    assert be.n_pending == 0
+    assert be.all_links() == []
+
+
+def test_backend_reset_clears_state():
+    be = _chain_backend()
+    be.reset()
+    assert be.time == 0.0
+    assert be.n_pending == 0
