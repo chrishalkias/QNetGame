@@ -26,14 +26,32 @@ _TICK_EPS_NS: float = 1e-6
 
 
 class _Scheduler(pydynaa.Entity):
-    """pydynaa entity that fires an independent one-shot callback per event."""
+    """pydynaa entity that fires an independent one-shot callback per event.
+
+    SINGLE-USE PER ENGINE EPOCH. The ``_n_pending`` count is only correct
+    because an instance is DISCARDED on ``ns.sim_reset()`` and a fresh
+    ``_Scheduler`` is created in its place (see ``SimClock.reset``). After a
+    reset the engine drops all previously-scheduled events, so the orphaned
+    events belonging to a stale scheduler will NEVER fire — their ``_on_fire``
+    handlers never run, and the decrements that would balance the increments
+    done in ``schedule`` never happen. Reusing a scheduler across a
+    ``sim_reset`` would therefore leave ``_n_pending`` permanently inflated.
+    Never reuse an instance across engine epochs; always create a new one.
+    """
 
     EV = pydynaa.EventType("RESOLVE", "a deferred operation is due")
 
     def __init__(self):
+        # pydynaa.Entity is a C-extension base that needs no super().__init__():
+        # instances expose _schedule_after/_wait_once without init-time setup.
+        # Do not "fix" this by adding super().__init__().
         self._n_pending = 0
 
     def schedule(self, delay_ns: float, callback: Callable[[], None]) -> None:
+        # Floor a non-positive delay to a tiny POSITIVE value: a 0-tick event
+        # computes a slightly-negative scheduled time (0*TICK_NS - _TICK_EPS_NS),
+        # so it is clamped here to fire on the very next advance(). Any value far
+        # below TICK_NS works.
         ev = self._schedule_after(max(delay_ns, 1e-9), self.EV)
         self._n_pending += 1
 

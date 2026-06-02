@@ -1,4 +1,3 @@
-import math
 import numpy as np
 import pytest
 
@@ -42,9 +41,14 @@ def test_delay_zero_fires_on_next_advance():
 def test_reset_clears_pending_and_tick():
     clk = SimClock(c_fiber=200_000.0, dt_seconds=1e-4)
     clk.reset()
-    clk.schedule(delay_ticks=5, callback=lambda: None)
+    fired = []
+    clk.schedule(delay_ticks=5, callback=lambda: fired.append(True))
     assert clk.n_pending == 1
     clk.advance()
     clk.reset()
     assert clk.n_pending == 0
     assert clk.tick == 0
+    # orphaned callback from before reset must never fire
+    for _ in range(8):
+        clk.advance()
+    assert fired == []
