@@ -48,6 +48,23 @@ class FullDMBackend(NetSquidBackend):
     def _discard(self, node, q):
         self._qubits[node, q] = None
 
+    def _decohere_tick(self):
+        # Depolarize EVERY occupied qubit each tick with q = 1 - exp(-1/(2*cutoff)).
+        # A two-ended pair then decays by (1-q)^2 = exp(-1/cutoff) per tick (matches
+        # analytic), with NO dedup needed and no double-count for post-swap pairs
+        # (whose two qubits are both occupied). A transient locked singleton gets
+        # the half-rate (1-q); once it pairs into the e2e link both halves apply.
+        for node in range(self._N):
+            for q in np.flatnonzero(self._occupied[node]):
+                q = int(q)
+                qubit = self._qubits[node, q]
+                if qubit is None:
+                    continue
+                cutoff = max(int(self._link_cutoff[node, q]), 1)
+                q_tick = 1.0 - np.exp(-1.0 / (2.0 * cutoff))
+                if q_tick > 0:
+                    qapi.depolarize(qubit, prob=q_tick)
+
     def reset(self) -> None:
         super().reset()                    # clears arrays + ns.sim_reset via clock
         self._qubits[:] = None

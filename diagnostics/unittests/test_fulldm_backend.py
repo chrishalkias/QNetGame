@@ -35,3 +35,25 @@ def test_fulldm_reset_clears_qubits():
     be.reset()
     assert not be.node_state(0).occupied.any()
     assert be.time == 0.0
+
+
+def test_fulldm_decoherence_matches_analytic_decay():
+    cutoff = 20
+    be = _fulldm(N=3, n_ch=4, F0=1.0, channel_loss=0.0, p_gen=1.0, cutoff=cutoff)
+    be.entangle(0, 1)
+    from quantum_repeater_sim.repeater import fidelity_to_werner
+    for k in range(1, 11):
+        be.advance()
+        f = float(be.node_state(0).fidelity.max())
+        w_meas = fidelity_to_werner(f)
+        # calibration #2: real-qubit Werner decays as exp(-k/cutoff)
+        assert abs(w_meas - np.exp(-k / cutoff)) < 1e-6
+
+
+def test_fulldm_link_expires_at_cutoff():
+    be = _fulldm(N=3, n_ch=4, F0=1.0, channel_loss=0.0, p_gen=1.0, cutoff=3)
+    be.entangle(0, 1)
+    for _ in range(3):
+        be.advance()
+    assert not be.node_state(0).occupied.any()
+    assert not be.node_state(1).occupied.any()
