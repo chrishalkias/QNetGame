@@ -186,3 +186,37 @@ def test_run_phase1_skip_compare(tmp_path):
           "--save_dir", str(save_dir), "--skip_compare"])
     assert (save_dir / "policy.pth").is_file()
     assert not (save_dir / "optimal_comparison.json").exists()
+
+
+def test_load_optimal_pickle_config_mismatch_raises(tmp_path):
+    import os, pickle, pytest
+    from game.compare_optimal import load_optimal_pickle
+    # Write a pickle whose filename says N=4 but whose stored config says N=99.
+    fname = "optimal_policy_N4_ch2_co5_h30_pg0.90_ps0.90.pkl"
+    payload = {"config": dict(N=99, n_ch=2, cutoff=5, horizon=30, p_gen=0.9, p_swap=0.9),
+               "acts": [[0, 0, 0, 0]], "policy": {}}
+    with open(os.path.join(str(tmp_path), fname), "wb") as f:
+        pickle.dump(payload, f)
+    with pytest.raises(ValueError):
+        load_optimal_pickle(str(tmp_path), N=4, n_ch=2, cutoff=5,
+                            horizon=30, p_gen=0.9, p_swap=0.9)
+
+
+def test_compare_to_optimal_degrades_without_pickle(tmp_path):
+    import sys, os, math
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    repo_root = os.path.dirname(repo_root)
+    sys.path.append(os.path.join(repo_root, "train-test"))
+    import optimal_baseline as ob
+    from game.phases import PHASE1
+    from game.compare_optimal import compare_to_optimal
+    # Empty policy_dir -> no pickles -> swap-asap-only rows with NaN optimal gap.
+    report = compare_to_optimal(
+        ckpt=None, cfg=PHASE1, policy_dir=str(tmp_path),
+        mc_eps=100, horizon=30, compare_N=(3,), agent_fn=ob.swap_asap_fn,
+    )
+    assert len(report["rows"]) == 1
+    row = report["rows"][0]
+    assert row["T_opt"] is None
+    assert math.isnan(row["gap_to_optimal_pct"])
+    assert math.isfinite(row["agent_vs_swap_pct"])

@@ -275,7 +275,8 @@ class QRNAgent:
                 else:
                     pool = n_range
                 n_nodes = int(self.rng.choice(pool))
-                n_ch_ep = int(self.rng.choice(n_ch_pool))
+                # single-element pool (int n_ch) draws no RNG -> stream identical to pre-change
+                n_ch_ep = int(self.rng.choice(n_ch_pool)) if len(n_ch_pool) > 1 else n_ch_pool[0]
 
                 args = {
                     'n_repeaters': n_nodes,

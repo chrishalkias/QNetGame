@@ -9,10 +9,10 @@ import os
 import numpy as np
 
 from rl_stack import QRNAgent
-from .phases import PHASE1
-from .runner import run_phase
-from .compare_optimal import compare_to_optimal
-from .report import format_report
+from game.phases import PHASE1
+from game.runner import run_phase
+from game.compare_optimal import compare_to_optimal
+from game.report import format_report
 
 
 def parse_args(argv=None):

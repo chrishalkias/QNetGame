@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import sys
 import pickle
+import numpy as np
 from typing import Dict, Optional, Sequence
 
 from .phases import PhaseConfig
@@ -21,7 +22,7 @@ def _repo_root() -> str:
 def _import_optimal_baseline():
     tt = os.path.join(_repo_root(), "train-test")
     if tt not in sys.path:
-        sys.path.insert(0, tt)
+        sys.path.append(tt)
     import optimal_baseline  # noqa: E402
     return optimal_baseline
 
@@ -81,7 +82,6 @@ def compare_to_optimal(ckpt: Optional[str], cfg: PhaseConfig, policy_dir: str,
             rows.append(_report.gaps(N, in_dist, None, T_swap, T_agent))
             continue
 
-        import numpy as np
         acts = [np.asarray(a, dtype=int) for a in payload["acts"]]
         opt_fn = ob.optimal_policy_fn(payload["policy"], acts)
         T_opt, _ = ob.mc_eval(opt_fn, N, n_ch, pg, ps, cutoff, horizon, mc_eps)
