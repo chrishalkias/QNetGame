@@ -47,3 +47,20 @@ def test_normalize_n_ch_rejects_bad_input():
         QRNAgent._normalize_n_ch([1, 2])    # n_ch < 2
     with pytest.raises(ValueError):
         QRNAgent._normalize_n_ch([2, 2.5])  # non-int
+
+
+def test_run_phase_trains_and_saves(tmp_path):
+    import dataclasses
+    import numpy as np
+    from rl_stack import QRNAgent
+    from game.phases import PHASE1
+    from game.runner import run_phase
+
+    tiny = dataclasses.replace(PHASE1, episodes=12, max_steps=8)
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    save_dir = tmp_path / "phase1"
+    metrics = run_phase(agent, tiny, str(save_dir), plot=False)
+
+    assert (save_dir / "policy.pth").is_file()
+    assert set(metrics.keys()) >= {"reward", "loss", "steps", "success"}
+    assert len(metrics["reward"]) == 12
