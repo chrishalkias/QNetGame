@@ -25,3 +25,25 @@ def test_phaseconfig_is_frozen():
     import dataclasses
     with pytest.raises(dataclasses.FrozenInstanceError):
         PHASE1.episodes = 1  # type: ignore[misc]
+
+
+def test_normalize_n_ch_int_unchanged():
+    from rl_stack.agent import QRNAgent
+    assert QRNAgent._normalize_n_ch(4) == [4]
+    assert QRNAgent._normalize_n_ch(2) == [2]
+
+
+def test_normalize_n_ch_list_pool():
+    from rl_stack.agent import QRNAgent
+    assert QRNAgent._normalize_n_ch([2, 3]) == [2, 3]
+    assert QRNAgent._normalize_n_ch((2, 3, 4)) == [2, 3, 4]
+
+
+def test_normalize_n_ch_rejects_bad_input():
+    from rl_stack.agent import QRNAgent
+    with pytest.raises(ValueError):
+        QRNAgent._normalize_n_ch([])        # empty
+    with pytest.raises(ValueError):
+        QRNAgent._normalize_n_ch([1, 2])    # n_ch < 2
+    with pytest.raises(ValueError):
+        QRNAgent._normalize_n_ch([2, 2.5])  # non-int

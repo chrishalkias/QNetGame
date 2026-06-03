@@ -217,8 +217,24 @@ class QRNAgent:
 
 
 
-    def train(self, 
-              episodes = 3000, 
+    @staticmethod
+    def _normalize_n_ch(n_ch):
+        """Resolve n_ch (int or sequence) to a non-empty list of ints >= 2.
+
+        Int -> single-element pool (backward compatible). List/tuple -> the
+        pool the training loop samples from uniformly per episode."""
+        pool = list(n_ch) if isinstance(n_ch, (list, tuple)) else [n_ch]
+        if not pool:
+            raise ValueError("n_ch list must be non-empty")
+        for c in pool:
+            if isinstance(c, bool) or not isinstance(c, (int, np.integer)):
+                raise ValueError(f"n_ch values must be ints, got {c!r}")
+            if int(c) < 2:
+                raise ValueError(f"n_ch values must be >= 2, got {c}")
+        return [int(c) for c in pool]
+
+    def train(self,
+              episodes = 3000,
               max_steps = 50,
               n_range = [4, 5, 6, 7],
               n_ch = 4,
@@ -246,6 +262,7 @@ class QRNAgent:
         metrics = {"reward": [], "loss": [], "steps": [], "success": []}
         eps_init, eps_fin = 1.0, 0.05
         n_min, n_max = min(n_range), max(n_range)
+        n_ch_pool = self._normalize_n_ch(n_ch)
 
         try:
             for ep in range(episodes):
@@ -258,10 +275,11 @@ class QRNAgent:
                 else:
                     pool = n_range
                 n_nodes = int(self.rng.choice(pool))
+                n_ch_ep = int(self.rng.choice(n_ch_pool))
 
                 args = {
                     'n_repeaters': n_nodes,
-                    'n_ch': n_ch,
+                    'n_ch': n_ch_ep,
                     'spacing': 50,
                     'p_gen': p_gen,
                     'p_swap': p_swap,
