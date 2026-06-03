@@ -150,3 +150,39 @@ def test_compare_to_optimal_with_injected_agent(tmp_path):
     for r in report["rows"]:
         assert "T_agent" in r and "T_swap" in r and "T_opt" in r
         assert math.isfinite(r["T_agent"])
+
+
+def test_run_phase1_main_end_to_end(tmp_path):
+    """Tiny end-to-end: train a few episodes, run comparison against synthetic
+    pickles, write checkpoint + optimal_comparison.json."""
+    import os, json
+    save_dir = tmp_path / "phase1"
+    policy_dir = tmp_path / "policies"
+    _write_synthetic_pickle(str(policy_dir), 3, 2, 5, 30, 0.9, 0.9)
+    _write_synthetic_pickle(str(policy_dir), 4, 2, 5, 30, 0.9, 0.9)
+
+    from game.run_phase1 import main
+    main([
+        "--episodes", "12",
+        "--max_steps", "8",
+        "--save_dir", str(save_dir),
+        "--policy_dir", str(policy_dir),
+        "--mc_eps", "100",
+        "--seed", "0",
+    ])
+
+    assert (save_dir / "policy.pth").is_file()
+    out = save_dir / "optimal_comparison.json"
+    assert out.is_file()
+    report = json.loads(out.read_text())
+    assert report["config"]["n_ch"] == 2
+    assert len(report["rows"]) == 2
+
+
+def test_run_phase1_skip_compare(tmp_path):
+    from game.run_phase1 import main
+    save_dir = tmp_path / "p1"
+    main(["--episodes", "8", "--max_steps", "6",
+          "--save_dir", str(save_dir), "--skip_compare"])
+    assert (save_dir / "policy.pth").is_file()
+    assert not (save_dir / "optimal_comparison.json").exists()
