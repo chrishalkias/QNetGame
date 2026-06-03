@@ -356,6 +356,8 @@ class QRNAgent:
                  plot_actions=True,
                  topology = 'chain',
                  heterogeneous = False,
+                 backend = 'legacy',
+                 fidelity_mode = 'analytic',
                  verbose = 0,
                  save_dir="."
                 ):
@@ -392,9 +394,11 @@ class QRNAgent:
             'dt_seconds': dt_seconds,
             'max_steps' : max_steps,
             'heterogeneous' : heterogeneous,
-            'topology' : topology
+            'topology' : topology,
+            'backend' : backend,
+            'fidelity_mode' : fidelity_mode,
             }
-        
+
         action_rng = np.random.default_rng()
         seed_rng = np.random.default_rng(42)
         ep_seeds = seed_rng.integers(0, 2**32, size=n_episodes)

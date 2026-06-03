@@ -16,6 +16,12 @@ def parse_args():
     parser.add_argument("--cutoff", type=int, default=100)
     parser.add_argument("--heterogeneous", action="store_true")
     parser.add_argument("--topology", type=str, default='chain')
+    parser.add_argument("--backend", type=str, default='legacy',
+                        choices=['legacy', 'netsquid'],
+                        help="physics engine: legacy (numpy) or netsquid")
+    parser.add_argument("--fidelity_mode", type=str, default='analytic',
+                        choices=['analytic', 'full_dm'],
+                        help="netsquid mode: analytic (fast) or full_dm (slow, real density matrices)")
 
     # CC variables
     parser.add_argument("--F0", type=float, default=1.0)
@@ -50,5 +56,7 @@ if __name__ == "__main__":
         plot_actions=args.plot_actions,
         save_dir=args.path,
         topology=args.topology,
+        backend=args.backend,
+        fidelity_mode=args.fidelity_mode,
         verbose=args.verbose,
     )
