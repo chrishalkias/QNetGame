@@ -230,7 +230,9 @@ class QRNAgent:
               dt_seconds = 1e-3,
               heterogeneous = True, 
               curriculum = True,
-              topology = 'chain', 
+              topology = 'chain',
+              backend = 'legacy',
+              fidelity_mode = 'analytic',
               save_path = None,
               plot = True) -> Dict[str, list]:
         """
@@ -269,7 +271,9 @@ class QRNAgent:
                     'dt_seconds': dt_seconds,
                     'max_steps' : max_steps,
                     'heterogeneous' : heterogeneous,
-                    'topology' : topology
+                    'topology' : topology,
+                    'backend' : backend,
+                    'fidelity_mode' : fidelity_mode,
                     }
                 
                 env = QRNEnv(**args)
