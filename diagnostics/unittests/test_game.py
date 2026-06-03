@@ -49,6 +49,50 @@ def test_normalize_n_ch_rejects_bad_input():
         QRNAgent._normalize_n_ch([2, 2.5])  # non-int
 
 
+def test_sample_rate_scalar_is_constant_and_draws_no_rng():
+    from rl_stack.agent import QRNAgent
+    rng = np.random.default_rng(0)
+    state_before = rng.bit_generator.state
+    assert QRNAgent._sample_rate(rng, 0.7) == 0.7
+    # scalar must not consume RNG (keeps existing runs reproducible)
+    assert rng.bit_generator.state == state_before
+
+
+def test_sample_rate_range_samples_in_bounds():
+    from rl_stack.agent import QRNAgent
+    rng = np.random.default_rng(0)
+    vals = [QRNAgent._sample_rate(rng, (0.3, 0.9)) for _ in range(500)]
+    assert all(0.3 <= v <= 0.9 for v in vals)
+    assert min(vals) < 0.45 and max(vals) > 0.75   # actually varies across range
+
+
+def _tiny_train(tmp_path, name, save_best, episodes=120):
+    import numpy as np
+    from rl_stack import QRNAgent
+    sd = str(tmp_path / name)
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    agent.train(episodes=episodes, max_steps=6, n_range=[3], n_ch=2,
+                p_gen=0.9, p_swap=0.9, cutoff=5, F0=0.95, channel_loss=0.0,
+                dt_seconds=0.0, heterogeneous=False, curriculum=False,
+                topology="chain", backend="legacy", save_path=sd,
+                save_best=save_best, best_window=20, plot=False)
+    return sd
+
+
+def test_train_save_best_writes_best_and_final(tmp_path):
+    import os
+    sd = _tiny_train(tmp_path, "best", save_best=True)
+    assert os.path.isfile(os.path.join(sd, "policy.pth"))        # best
+    assert os.path.isfile(os.path.join(sd, "policy_final.pth"))  # final, for ref
+
+
+def test_train_save_best_false_only_writes_policy(tmp_path):
+    import os
+    sd = _tiny_train(tmp_path, "nobest", save_best=False, episodes=40)
+    assert os.path.isfile(os.path.join(sd, "policy.pth"))
+    assert not os.path.isfile(os.path.join(sd, "policy_final.pth"))
+
+
 def test_run_phase_trains_and_saves(tmp_path):
     import dataclasses
     import numpy as np
@@ -68,18 +112,32 @@ def test_run_phase_trains_and_saves(tmp_path):
 
 def test_gaps_computes_percentages():
     from game.report import gaps
-    row = gaps(N=4, in_distribution=True, T_opt=10.0, T_swap=12.0, T_agent=11.0)
+    row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,
+               T_agent=11.0, T_agent_swaponly=10.5)
     assert row["N"] == 4
     assert row["in_distribution"] is True
-    assert row["gap_to_optimal_pct"] == pytest.approx(10.0)   # (11-10)/10
+    assert row["T_opt_swaponly"] == 10.0
+    assert row["gap_full_pct"] == pytest.approx(10.0)            # (11-10)/10
+    assert row["scheduling_gap_pct"] == pytest.approx(5.0)       # (10.5-10)/10
     assert row["agent_vs_swap_pct"] == pytest.approx(100 * (12 - 11) / 12)
 
 
 def test_gaps_handles_missing_optimal():
     from game.report import gaps
-    row = gaps(N=5, in_distribution=False, T_opt=None, T_swap=20.0, T_agent=19.0)
-    assert math.isnan(row["gap_to_optimal_pct"])
+    row = gaps(N=5, in_distribution=False, T_opt_swaponly=None, T_swap=20.0,
+               T_agent=19.0, T_agent_swaponly=19.5)
+    assert math.isnan(row["gap_full_pct"])
+    assert math.isnan(row["scheduling_gap_pct"])
     assert row["agent_vs_swap_pct"] == pytest.approx(5.0)
+
+
+def test_gaps_without_swaponly_agent():
+    from game.report import gaps
+    row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,
+               T_agent=11.0)  # T_agent_swaponly defaults to None
+    assert row["T_agent_swaponly"] is None
+    assert math.isnan(row["scheduling_gap_pct"])
+    assert row["gap_full_pct"] == pytest.approx(10.0)
 
 
 def test_format_report_has_columns():
@@ -87,14 +145,17 @@ def test_format_report_has_columns():
     report = {
         "config": {"n_ch": 2, "cutoff": 5, "p_gen": 0.9, "p_swap": 0.9, "horizon": 30},
         "rows": [
-            {"N": 3, "in_distribution": False, "T_opt": 7.1, "T_swap": 7.1,
-             "T_agent": 7.3, "gap_to_optimal_pct": 2.8, "agent_vs_swap_pct": -2.8},
-            {"N": 4, "in_distribution": True, "T_opt": 19.9, "T_swap": 20.9,
-             "T_agent": 20.1, "gap_to_optimal_pct": 1.0, "agent_vs_swap_pct": 3.8},
+            {"N": 3, "in_distribution": False, "T_opt_swaponly": 7.1, "T_swap": 7.1,
+             "T_agent": 7.3, "T_agent_swaponly": 7.15, "gap_full_pct": 2.8,
+             "scheduling_gap_pct": 0.7, "agent_vs_swap_pct": -2.8},
+            {"N": 4, "in_distribution": True, "T_opt_swaponly": 19.9, "T_swap": 20.9,
+             "T_agent": 20.1, "T_agent_swaponly": 20.5, "gap_full_pct": 1.0,
+             "scheduling_gap_pct": 3.0, "agent_vs_swap_pct": 3.8},
         ],
     }
     text = format_report(report)
-    assert "T_opt" in text and "gap_to_optimal" in text and "agent_vs_swap" in text
+    assert "T_opt" in text and "gap_full" in text and "sched_gap" in text
+    assert "ag_vs_swap" in text
     assert "N=3" in text or " 3 " in text
 
 
@@ -143,12 +204,13 @@ def test_compare_to_optimal_with_injected_agent(tmp_path):
     report = compare_to_optimal(
         ckpt=None, cfg=PHASE1, policy_dir=str(tmp_path),
         mc_eps=200, horizon=30, compare_N=(3, 4),
-        agent_fn=ob.swap_asap_fn,
+        agent_fn=ob.swap_asap_fn, agent_fn_swaponly=ob.swap_asap_fn,
     )
     assert report["config"]["n_ch"] == 2
     assert len(report["rows"]) == 2
     for r in report["rows"]:
-        assert "T_agent" in r and "T_swap" in r and "T_opt" in r
+        assert "T_agent" in r and "T_swap" in r and "T_opt_swaponly" in r
+        assert "T_agent_swaponly" in r
         assert math.isfinite(r["T_agent"])
 
 
@@ -213,10 +275,11 @@ def test_compare_to_optimal_degrades_without_pickle(tmp_path):
     # Empty policy_dir -> no pickles -> swap-asap-only rows with NaN optimal gap.
     report = compare_to_optimal(
         ckpt=None, cfg=PHASE1, policy_dir=str(tmp_path),
-        mc_eps=100, horizon=30, compare_N=(3,), agent_fn=ob.swap_asap_fn,
+        mc_eps=100, horizon=30, compare_N=(3,),
+        agent_fn=ob.swap_asap_fn, agent_fn_swaponly=ob.swap_asap_fn,
     )
     assert len(report["rows"]) == 1
     row = report["rows"][0]
-    assert row["T_opt"] is None
-    assert math.isnan(row["gap_to_optimal_pct"])
+    assert row["T_opt_swaponly"] is None
+    assert math.isnan(row["gap_full_pct"])
     assert math.isfinite(row["agent_vs_swap_pct"])

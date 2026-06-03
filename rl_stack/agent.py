@@ -233,6 +233,17 @@ class QRNAgent:
                 raise ValueError(f"n_ch values must be >= 2, got {c}")
         return [int(c) for c in pool]
 
+    @staticmethod
+    def _sample_rate(rng, val):
+        """Resolve a rate (p_gen/p_swap): scalar -> constant; (lo, hi) tuple/list
+        -> uniform per-episode sample. A scalar draws NO RNG, so the stream stays
+        identical to the pre-change int/scalar path (domain randomization only
+        consumes RNG when a range is given)."""
+        if isinstance(val, (tuple, list)):
+            lo, hi = float(val[0]), float(val[1])
+            return float(rng.uniform(lo, hi))
+        return float(val)
+
     def train(self,
               episodes = 3000,
               max_steps = 50,
@@ -250,6 +261,8 @@ class QRNAgent:
               backend = 'legacy',
               fidelity_mode = 'analytic',
               save_path = None,
+              save_best = True,
+              best_window = 200,
               plot = True) -> Dict[str, list]:
         """
         Train with curriculum over chain sizes.
@@ -257,12 +270,20 @@ class QRNAgent:
         Curriculum linearly expands the maximum chain size from n_range[0]
         to n_range[-1] over the first 80% of training, then holds the full
         range for the final 20%.
+
+        With save_best=True, `policy.pth` holds the checkpoint with the best
+        rolling-mean reward (window = best_window episodes), not the final
+        episode — late-training degradation (the curriculum/epsilon end can
+        destabilise the policy) therefore does not clobber the best agent. The
+        final-episode weights are also written to `policy_final.pth` for
+        reference.
         """
         #TODO: Add wandb logging
         metrics = {"reward": [], "loss": [], "steps": [], "success": []}
         eps_init, eps_fin = 1.0, 0.05
         n_min, n_max = min(n_range), max(n_range)
         n_ch_pool = self._normalize_n_ch(n_ch)
+        best_metric, best_ep, best_saved = -math.inf, -1, False
 
         try:
             for ep in range(episodes):
@@ -277,13 +298,16 @@ class QRNAgent:
                 n_nodes = int(self.rng.choice(pool))
                 # single-element pool (int n_ch) draws no RNG -> stream identical to pre-change
                 n_ch_ep = int(self.rng.choice(n_ch_pool)) if len(n_ch_pool) > 1 else n_ch_pool[0]
+                # scalar p_gen/p_swap draw no RNG; (lo,hi) -> per-episode domain randomization
+                p_gen_ep = self._sample_rate(self.rng, p_gen)
+                p_swap_ep = self._sample_rate(self.rng, p_swap)
 
                 args = {
                     'n_repeaters': n_nodes,
                     'n_ch': n_ch_ep,
                     'spacing': 50,
-                    'p_gen': p_gen,
-                    'p_swap': p_swap,
+                    'p_gen': p_gen_ep,
+                    'p_swap': p_swap_ep,
                     'cutoff': cutoff,
                     'F0' : F0,
                     'channel_loss' : channel_loss,
@@ -333,6 +357,16 @@ class QRNAgent:
                 metrics["success"].append(
                     1.0 if info.get("fidelity", 0) > 0 else 0.0)
 
+                # -- Best-checkpoint tracking (rolling-mean reward) --
+                if (save_best and save_path and ep + 1 >= best_window
+                        and (ep % 50 == 0 or ep == episodes - 1)):
+                    roll = float(np.mean(metrics["reward"][-best_window:]))
+                    if roll > best_metric:
+                        best_metric, best_ep, best_saved = roll, ep, True
+                        os.makedirs(save_path, exist_ok=True)
+                        torch.save(self.policy_net.state_dict(),
+                                   os.path.join(save_path, "policy.pth"))
+
                 if ep % 200 == 0 or (ep == episodes - 1 and ep > 0):
                     avg_r = np.mean(metrics["reward"][-200:])
                     avg_s = np.mean(metrics["success"][-200:])
@@ -344,8 +378,14 @@ class QRNAgent:
 
         if save_path:
             os.makedirs(save_path, exist_ok=True)
-            torch.save(self.policy_net.state_dict(),
-                       os.path.join(save_path, "policy.pth"))
+            final_path = os.path.join(save_path, "policy.pth")
+            if save_best and best_saved:
+                # policy.pth already holds the best agent; keep the final weights
+                # separately for reference.
+                final_path = os.path.join(save_path, "policy_final.pth")
+                print(f"[best] policy.pth = best rolling reward "
+                      f"{best_metric:.3f} @ ep {best_ep}; final -> policy_final.pth")
+            torch.save(self.policy_net.state_dict(), final_path)
 
         if plot:
             self._plot_training(metrics, save_path)

@@ -50,23 +50,55 @@ def load_optimal_pickle(policy_dir: str, N: int, n_ch: int, cutoff: int,
     return payload
 
 
+def make_agent_fns(ckpt: str, hidden: int = 64):
+    """Return (full_fn, swaponly_fn): two policy_fn(env, obs) closures over one
+    loaded agent. `swaponly_fn` masks PURIFY off so the agent is a pure
+    swap-scheduler, for an apples-to-apples comparison against the swap-only DP
+    optimum (which also cannot purify)."""
+    import torch
+    from rl_stack.agent import QRNAgent
+    from rl_stack.env_wrapper import PURIFY
+
+    agent = QRNAgent(hidden=hidden)
+    agent.policy_net.load_state_dict(
+        torch.load(ckpt, map_location="cpu", weights_only=True))
+    agent.policy_net.eval()
+    agent.epsilon = 0.0
+
+    def full(env, obs):
+        return agent.select_actions(obs, env.get_action_mask(), training=False)
+
+    def swaponly(env, obs):
+        mask = env.get_action_mask()
+        mask[:, PURIFY] = False
+        return agent.select_actions(obs, mask, training=False)
+
+    return full, swaponly
+
+
 def compare_to_optimal(ckpt: Optional[str], cfg: PhaseConfig, policy_dir: str,
                        mc_eps: int = 2000, horizon: int = 30,
                        compare_N: Sequence[int] = (3, 4),
-                       hidden: int = 64, agent_fn=None) -> Dict:
+                       hidden: int = 64, agent_fn=None,
+                       agent_fn_swaponly=None) -> Dict:
     """Build the optimal-comparison report at n_ch=2 for each N in compare_N.
 
-    `agent_fn` overrides the agent policy (used in tests); otherwise the trained
-    checkpoint at `ckpt` is loaded via optimal_baseline.make_agent_fn."""
+    The DP optimum is purify-free, reported as `T_opt_swaponly`. The agent is
+    evaluated both with its full action set (`T_agent`) and with PURIFY masked
+    (`T_agent_swaponly`). `agent_fn` / `agent_fn_swaponly` override the policies
+    (used in tests); otherwise both are built from the checkpoint at `ckpt`."""
     ob = _import_optimal_baseline()
     n_ch = 2  # the only exact-optimal-comparable channel count
     pg, ps, cutoff = cfg.p_gen, cfg.p_swap, cfg.cutoff
     trained_sizes = set(cfg.n_range)
 
-    if agent_fn is None:
+    if agent_fn is None or agent_fn_swaponly is None:
         if ckpt is None:
-            raise ValueError("compare_to_optimal needs a checkpoint path or agent_fn")
-        agent_fn = ob.make_agent_fn(ckpt, hidden=hidden)
+            raise ValueError("compare_to_optimal needs a checkpoint path or "
+                             "both agent_fn and agent_fn_swaponly")
+        full, swaponly = make_agent_fns(ckpt, hidden=hidden)
+        agent_fn = agent_fn or full
+        agent_fn_swaponly = agent_fn_swaponly or swaponly
 
     rows = []
     for N in compare_N:
@@ -74,18 +106,20 @@ def compare_to_optimal(ckpt: Optional[str], cfg: PhaseConfig, policy_dir: str,
         payload = load_optimal_pickle(policy_dir, N, n_ch, cutoff, horizon, pg, ps)
 
         T_agent, _ = ob.mc_eval(agent_fn, N, n_ch, pg, ps, cutoff, horizon, mc_eps)
+        T_agent_so, _ = ob.mc_eval(agent_fn_swaponly, N, n_ch, pg, ps, cutoff,
+                                   horizon, mc_eps)
         T_swap, _ = ob.mc_eval(ob.swap_asap_fn, N, n_ch, pg, ps, cutoff, horizon, mc_eps)
 
         if payload is None:
             print(f"[warn] no optimal pickle for N={N} n_ch={n_ch} "
                   f"(pg={pg} ps={ps} co={cutoff}); swap-asap only")
-            rows.append(_report.gaps(N, in_dist, None, T_swap, T_agent))
+            rows.append(_report.gaps(N, in_dist, None, T_swap, T_agent, T_agent_so))
             continue
 
         acts = [np.asarray(a, dtype=int) for a in payload["acts"]]
         opt_fn = ob.optimal_policy_fn(payload["policy"], acts)
         T_opt, _ = ob.mc_eval(opt_fn, N, n_ch, pg, ps, cutoff, horizon, mc_eps)
-        rows.append(_report.gaps(N, in_dist, T_opt, T_swap, T_agent))
+        rows.append(_report.gaps(N, in_dist, T_opt, T_swap, T_agent, T_agent_so))
 
     return {
         "config": {"n_ch": n_ch, "cutoff": cutoff, "p_gen": pg,
