@@ -57,3 +57,39 @@ def test_fulldm_link_expires_at_cutoff():
         be.advance()
     assert not be.node_state(0).occupied.any()
     assert not be.node_state(1).occupied.any()
+
+
+def test_fulldm_swap_perfect_gives_unit_e2e_fidelity():
+    # huge cutoff -> the one resolution-tick decoherence is negligible, so a
+    # perfect chain yields a near-perfect e2e link (validates the BSM + Pauli
+    # correction mapping without tripping on per-tick decoherence).
+    be = _fulldm(N=3, n_ch=4, F0=1.0, channel_loss=0.0, p_gen=1.0, p_swap=1.0,
+                 cutoff=100000, dt_seconds=0.0)
+    be.entangle(0, 1)
+    be.entangle(1, 2)
+    res = be.swap(1)
+    assert res["success"] is True
+    be.advance()
+    ns0 = be.node_state(0)
+    q = int(np.flatnonzero(ns0.occupied)[0])
+    assert int(ns0.partner_node[q]) == 2
+    # calibration #3: perfect inputs -> near-perfect e2e link
+    assert float(ns0.fidelity[q]) > 0.999
+    assert be.node_state(1).occupied.sum() == 0   # local qubits consumed
+
+
+def test_fulldm_swap_product_rule():
+    # swap immediately (age 0, no decoherence yet) -> e2e Werner == product of the
+    # two link Werners. cutoff huge so the single resolution-tick decoherence is
+    # negligible. Exact product rule for depolarizing Werner inputs.
+    be = _fulldm(N=3, n_ch=4, F0=0.9, channel_loss=0.0, p_gen=1.0, p_swap=1.0,
+                 cutoff=100000, dt_seconds=0.0)
+    be.entangle(0, 1); be.entangle(1, 2)
+    from quantum_repeater_sim.repeater import fidelity_to_werner
+    w_left = fidelity_to_werner(float(be.node_state(0).fidelity.max()))
+    w_right = fidelity_to_werner(float(be.node_state(2).fidelity.max()))
+    be.swap(1); be.advance()
+    ns0 = be.node_state(0)
+    q = int(np.flatnonzero(ns0.occupied)[0])
+    w_e2e = fidelity_to_werner(float(ns0.fidelity[q]))
+    assert abs(w_e2e - w_left * w_right) < 1e-3

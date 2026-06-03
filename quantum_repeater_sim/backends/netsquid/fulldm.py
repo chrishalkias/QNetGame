@@ -48,6 +48,33 @@ class FullDMBackend(NetSquidBackend):
     def _discard(self, node, q):
         self._qubits[node, q] = None
 
+    def _swap_measure(self, r, qa, qb):
+        # real Bell-state measurement on the node's two local qubits
+        q_a = self._qubits[r, qa]
+        q_b = self._qubits[r, qb]
+        qapi.operate([q_a, q_b], ns.CNOT)
+        qapi.operate(q_a, ns.H)
+        m1, _ = qapi.measure(q_a)
+        m2, _ = qapi.measure(q_b)
+        # local qubits consumed by measurement; base frees the slots next
+        self._qubits[r, qa] = None
+        self._qubits[r, qb] = None
+        # reported new_fidelity is informational; e2e F is read after corrections
+        return (int(m1), int(m2)), 0.0
+
+    def _swap_resolve(self, ra, qa_r, rb, qb_r, payload, age, ec):
+        m1, m2 = payload
+        # apply Pauli correction to one remote qubit so ra<->rb is |Phi+> up to noise
+        rem = self._qubits[rb, qb_r]
+        if rem is not None:
+            if m2 == 1:
+                qapi.operate(rem, ns.X)
+            if m1 == 1:
+                qapi.operate(rem, ns.Z)
+        # bookkeeping: the two remote qubits are now the entangled pair
+        self._set_link(ra, qa_r, rb, qb_r, 0.0, age, ec)
+        self._set_link(rb, qb_r, ra, qa_r, 0.0, age, ec)
+
     def _decohere_tick(self):
         # Depolarize EVERY occupied qubit each tick with q = 1 - exp(-1/(2*cutoff)).
         # A two-ended pair then decays by (1-q)^2 = exp(-1/cutoff) per tick (matches
