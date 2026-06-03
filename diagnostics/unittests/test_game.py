@@ -96,3 +96,57 @@ def test_format_report_has_columns():
     text = format_report(report)
     assert "T_opt" in text and "gap_to_optimal" in text and "agent_vs_swap" in text
     assert "N=3" in text or " 3 " in text
+
+
+def _write_synthetic_pickle(policy_dir, N, n_ch, cutoff, horizon, pg, ps):
+    """A trivial all-NOOP optimal policy: single action [0]*N, empty policy map
+    (every lookup falls back to index 0 = all-NOOP)."""
+    import os, pickle
+    os.makedirs(policy_dir, exist_ok=True)
+    fname = (f"optimal_policy_N{N}_ch{n_ch}_co{cutoff}_h{horizon}"
+             f"_pg{pg:.2f}_ps{ps:.2f}.pkl")
+    payload = {
+        "config": dict(N=N, n_ch=n_ch, cutoff=cutoff, horizon=horizon,
+                       p_gen=pg, p_swap=ps),
+        "acts": [[0] * N],
+        "policy": {},
+    }
+    with open(os.path.join(policy_dir, fname), "wb") as f:
+        pickle.dump(payload, f)
+
+
+def test_load_optimal_pickle_match_and_mismatch(tmp_path):
+    from game.compare_optimal import load_optimal_pickle
+    _write_synthetic_pickle(str(tmp_path), 4, 2, 5, 30, 0.9, 0.9)
+    # exact match loads
+    payload = load_optimal_pickle(str(tmp_path), N=4, n_ch=2, cutoff=5,
+                                  horizon=30, p_gen=0.9, p_swap=0.9)
+    assert payload is not None and payload["config"]["N"] == 4
+    # absent file -> None
+    assert load_optimal_pickle(str(tmp_path), N=3, n_ch=2, cutoff=5,
+                               horizon=30, p_gen=0.9, p_swap=0.9) is None
+
+
+def test_compare_to_optimal_with_injected_agent(tmp_path):
+    # Use swap_asap as a stand-in "agent_fn" so the test needs no torch checkpoint.
+    import sys, os
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    repo_root = os.path.dirname(repo_root)  # diagnostics/unittests -> repo root
+    sys.path.insert(0, os.path.join(repo_root, "train-test"))
+    import optimal_baseline as ob
+    from game.phases import PHASE1
+    from game.compare_optimal import compare_to_optimal
+
+    _write_synthetic_pickle(str(tmp_path), 3, 2, 5, 30, 0.9, 0.9)
+    _write_synthetic_pickle(str(tmp_path), 4, 2, 5, 30, 0.9, 0.9)
+
+    report = compare_to_optimal(
+        ckpt=None, cfg=PHASE1, policy_dir=str(tmp_path),
+        mc_eps=200, horizon=30, compare_N=(3, 4),
+        agent_fn=ob.swap_asap_fn,
+    )
+    assert report["config"]["n_ch"] == 2
+    assert len(report["rows"]) == 2
+    for r in report["rows"]:
+        assert "T_agent" in r and "T_swap" in r and "T_opt" in r
+        assert math.isfinite(r["T_agent"])
