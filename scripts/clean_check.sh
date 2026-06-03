@@ -1,7 +1,7 @@
 #!/bin/bash -l
-#SBATCH --job-name=qrn_partial_val
-#SBATCH --output=slurm_logs/partial_val_%j.out
-#SBATCH --error=slurm_logs/partial_val_%j.err
+#SBATCH --job-name=qrn_clean_check
+#SBATCH --output=slurm_logs/clean_check_%j.out
+#SBATCH --error=slurm_logs/clean_check_%j.err
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 
 mkdir -p slurm_logs
-mkdir -p results/batch_validate
+mkdir -p results/clean_check
 
 eval "$(/usr/bin/modulecmd bash purge)" 2>/dev/null || true
 eval "$(/usr/bin/modulecmd bash load ALICE/default)"
@@ -26,16 +26,16 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:$PYTHONPATH"
 echo "Job $SLURM_JOB_ID started at $(date)"
 echo "Node: $(hostname), GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 
-# Resume sweep 2 (p_gen x cutoff): completes only the missing p_gen columns of
-# results/batch_validate/sweep_pgen_cutoff.csv (formerly partial_validate.py,
-# now batch_validate --sweep pgen_cutoff --resume). Re-submit if it times out.
+# Fixed-cutoff p_gen x p_swap sweep (formerly clean_check.py, now a
+# batch_validate sweep mode). --resume skips columns already in the CSV.
 python -u train-test/batch_validate.py \
     --model checkpoints/cluster_004/policy.pth \
-    --sweep pgen_cutoff \
-    --resume \
+    --sweep pgen_pswap_fixed_cutoff \
+    --cutoffs 20,80 \
     --sweep2_nodes 8 \
     --episodes 200 \
     --seed 42 \
-    --save_dir results/batch_validate
+    --resume \
+    --save_dir results/clean_check
 
 echo "Job completed at $(date)"

@@ -326,17 +326,35 @@ def sweep_pgen_cutoff(
     rng: np.random.Generator,
     n_nodes: int = SWEEP2_N,
     save_dir: str = ".",
+    resume: bool = False,
 ) -> pd.DataFrame:
     """Return a DataFrame with columns [p_gen, cutoff, delta_pct].
 
     Saves incrementally after each p_gen row so partial results
-    survive job timeouts.
+    survive job timeouts.  With *resume* = True, reads any existing
+    sweep_pgen_cutoff.csv and computes only the p_gen values still
+    missing, appending to it (replaces the old partial_validate.py).
     """
+    csv_path = os.path.join(save_dir, "sweep_pgen_cutoff.csv")
+    if resume and os.path.exists(csv_path):
+        df_existing = pd.read_csv(csv_path)
+        pgens_done = set(df_existing["p_gen"].unique())
+        print(f"[resume] {len(df_existing)} existing rows; "
+              f"p_gen done: {sorted(pgens_done)}")
+    else:
+        df_existing = pd.DataFrame(columns=["p_gen", "cutoff", "delta_pct"])
+        pgens_done = set()
+
+    pgens_todo = [p for p in PGEN_GRID_SWEEP2 if p not in pgens_done]
     rows: list[dict] = []
-    total = len(PGEN_GRID_SWEEP2) * len(CUTOFF_GRID)
+    total = len(pgens_todo) * len(CUTOFF_GRID)
     done_count = 0
 
-    for p_gen in PGEN_GRID_SWEEP2:
+    if total == 0:
+        print("[resume] sweep2 already complete.")
+        return df_existing
+
+    for p_gen in pgens_todo:
         for cutoff in CUTOFF_GRID:
             done_count += 1
             _log_progress("sweep2", done_count, total, n_nodes, p_gen, 1.0)
@@ -362,13 +380,98 @@ def sweep_pgen_cutoff(
             })
 
         # ── incremental save after each p_gen ──
-        df_partial = pd.DataFrame(rows)
-        df_partial.to_csv(
-            os.path.join(save_dir, "sweep_pgen_cutoff.csv"), index=False,
-        )
-        print(f"\n[checkpoint] saved sweep2 through p_gen={p_gen}")
+        df_partial = pd.concat(
+            [df_existing, pd.DataFrame(rows)], ignore_index=True)
+        df_partial.to_csv(csv_path, index=False)
+        print(f"\n[checkpoint] saved sweep2 through p_gen={p_gen} "
+              f"({len(df_partial)} rows)")
 
-    return pd.DataFrame(rows)
+    return pd.concat([df_existing, pd.DataFrame(rows)], ignore_index=True)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Sweep 3: p_gen × p_swap at FIXED cutoff(s)   (the old clean_check)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Disentangles p_swap from cutoff: sweep 1 auto-estimates a cutoff per cell
+# (confounding the two), whereas this holds the memory cutoff FIXED and sweeps
+# p_gen × p_swap, one panel per cutoff value.  Tests the literature prediction
+# (Inesta & Wehner, npj QI 2023) that the agent's advantage over swap-ASAP
+# grows as p_swap drops.
+
+def sweep_pgen_pswap_fixed_cutoff(
+    agent: QRNAgent,
+    n_episodes: int,
+    rng: np.random.Generator,
+    cutoffs: Sequence[int],
+    n_nodes: int = SWEEP2_N,
+    save_dir: str = ".",
+    resume: bool = False,
+) -> pd.DataFrame:
+    """Return a DataFrame with columns [cutoff, p_gen, p_swap, delta_pct].
+
+    Sweeps p_gen × p_swap (COARSE_GRID) at each fixed cutoff.  Saves
+    incrementally after each (cutoff, p_gen) column; with *resume* = True,
+    skips columns already present in sweep_fixed_cutoff.csv.
+    """
+    csv_path = os.path.join(save_dir, "sweep_fixed_cutoff.csv")
+    if resume and os.path.exists(csv_path):
+        df_existing = pd.read_csv(csv_path)
+        done = {(int(c), float(pg))
+                for c, pg in zip(df_existing["cutoff"], df_existing["p_gen"])}
+        print(f"[resume] {len(df_existing)} existing rows.")
+    else:
+        df_existing = pd.DataFrame(
+            columns=["cutoff", "p_gen", "p_swap", "delta_pct"])
+        done = set()
+
+    todo = [(c, float(pg)) for c in cutoffs for pg in COARSE_GRID
+            if (c, float(pg)) not in done]
+    rows: list[dict] = []
+    total = len(todo) * len(COARSE_GRID)
+    done_count = 0
+
+    if total == 0:
+        print("[resume] all (cutoff, p_gen) columns already complete.")
+        return df_existing
+
+    for cutoff, p_gen in todo:
+        for p_swap in COARSE_GRID:
+            done_count += 1
+            _log_progress(f"fixed(c={cutoff})", done_count, total,
+                          n_nodes, p_gen, p_swap)
+
+            # cutoff is fixed; estimate only max_steps from a swap-ASAP pilot
+            pilot_cap = 800
+            pilot_times = _pilot_swap_asap(
+                n_nodes, p_gen, p_swap, cutoff,
+                max_steps=pilot_cap, n_ch=4, n_episodes=15, rng=rng,
+            )
+            succ = [t for t in pilot_times if t < pilot_cap]
+            if len(succ) >= 4:
+                max_steps = min(int(np.percentile(succ, 95) * 1.2) + 5, pilot_cap)
+            else:
+                max_steps = pilot_cap
+
+            cfg = RunConfig(n_nodes, float(p_gen), float(p_swap),
+                            cutoff, max_steps)
+            res = run_comparison(agent, cfg, n_episodes, rng)
+            rows.append({
+                "cutoff": cutoff,
+                "p_gen": float(p_gen),
+                "p_swap": float(p_swap),
+                "delta_pct": relative_improvement(
+                    res["agent"], res["swap_asap"]),
+            })
+
+        # incremental save after each (cutoff, p_gen) column
+        df_partial = pd.concat(
+            [df_existing, pd.DataFrame(rows)], ignore_index=True)
+        df_partial.to_csv(csv_path, index=False)
+        print(f"\n[checkpoint] saved fixed-cutoff through cutoff={cutoff}, "
+              f"p_gen={p_gen} ({len(df_partial)} rows)")
+
+    return pd.concat([df_existing, pd.DataFrame(rows)], ignore_index=True)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -580,6 +683,41 @@ def plot_pgen_cutoff(df: pd.DataFrame, save_dir: str) -> None:
     print(f"[plot] saved {path}")
 
 
+def plot_fixed_cutoff(
+    df: pd.DataFrame,
+    cutoffs: Sequence[int],
+    n_nodes: int,
+    save_dir: str,
+) -> None:
+    """One panel per cutoff: p_gen (x) vs p_swap (y) heatmap of delta_pct."""
+    abs_bound = max(abs(df["delta_pct"].quantile(0.02)),
+                    abs(df["delta_pct"].quantile(0.98)))
+    fig, axes = plt.subplots(
+        1, len(cutoffs), figsize=(7 * len(cutoffs), 6), squeeze=False,
+    )
+    for idx, c in enumerate(cutoffs):
+        ax = axes[0][idx]
+        sub = df[df["cutoff"] == c]
+        if sub.empty:
+            ax.set_visible(False)
+            continue
+        _draw_heatmap(ax, sub, abs_bound,
+                      index_col="p_swap", columns_col="p_gen")
+        ax.set_title(f"cutoff = {c}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("$p_{gen}$")
+        ax.set_ylabel("$p_{swap}$")
+    fig.suptitle(
+        f"Agent vs Swap-ASAP at FIXED cutoff (N = {n_nodes})\n"
+        "positive (blue) = agent faster; p_swap decreases top→bottom",
+        fontsize=13, y=1.02,
+    )
+    plt.tight_layout()
+    path = os.path.join(save_dir, "heatmap_pgen_pswap_fixed_cutoff.png")
+    fig.savefig(path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[plot] saved {path}")
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Helpers
 # ═══════════════════════════════════════════════════════════════════
@@ -634,12 +772,23 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--sweep", type=str, default="both",
-        choices=["both", "pgen_pswap", "pgen_cutoff"],
-        help="Which sweep(s) to run",
+        choices=["both", "pgen_pswap", "pgen_cutoff", "pgen_pswap_fixed_cutoff"],
+        help="Which sweep(s) to run. 'pgen_pswap_fixed_cutoff' is the old "
+             "clean_check (p_gen × p_swap at fixed cutoff(s)).",
     )
     p.add_argument(
         "--sweep2_nodes", type=int, default=SWEEP2_N,
-        help="Chain length for the p_gen × cutoff sweep",
+        help="Chain length for the pgen_cutoff and pgen_pswap_fixed_cutoff sweeps",
+    )
+    p.add_argument(
+        "--cutoffs", type=str, default="20,80",
+        help="Comma-separated fixed cutoffs for the pgen_pswap_fixed_cutoff sweep",
+    )
+    p.add_argument(
+        "--resume", action="store_true",
+        help="Skip work already present in the sweep CSV and append "
+             "(applies to pgen_cutoff and pgen_pswap_fixed_cutoff; "
+             "replaces the old partial_validate.py).",
     )
     return p.parse_args()
 
@@ -680,7 +829,8 @@ def main() -> None:
         global SWEEP2_N
         SWEEP2_N = args.sweep2_nodes
         print(f"\n══ Sweep 2: p_gen × cutoff (N = {SWEEP2_N}, p_swap = 1) ══")
-        df2 = sweep_pgen_cutoff(agent, args.episodes, rng, n_nodes=SWEEP2_N, save_dir=args.save_dir)
+        df2 = sweep_pgen_cutoff(agent, args.episodes, rng, n_nodes=SWEEP2_N,
+                                save_dir=args.save_dir, resume=args.resume)
         csv2 = os.path.join(args.save_dir, "sweep_pgen_cutoff.csv")
         df2.to_csv(csv2, index=False)
         print(f"[data] saved {csv2}")
@@ -690,6 +840,27 @@ def main() -> None:
             "description": f"p_gen x cutoff sweep (N = {SWEEP2_N}, p_swap = 1)",
             "n_nodes": SWEEP2_N,
             "results": df2.to_dict(orient="records"),
+        }
+
+    if args.sweep == "pgen_pswap_fixed_cutoff":
+        cutoffs = [int(c) for c in args.cutoffs.split(",") if c.strip()]
+        n_nodes = args.sweep2_nodes
+        print(f"\n══ Sweep 3: p_gen × p_swap at FIXED cutoff(s) {cutoffs} "
+              f"(N = {n_nodes}) ══")
+        dff = sweep_pgen_pswap_fixed_cutoff(
+            agent, args.episodes, rng, cutoffs, n_nodes=n_nodes,
+            save_dir=args.save_dir, resume=args.resume)
+        csvf = os.path.join(args.save_dir, "sweep_fixed_cutoff.csv")
+        dff.to_csv(csvf, index=False)
+        print(f"[data] saved {csvf}")
+        plot_fixed_cutoff(dff, cutoffs, n_nodes, args.save_dir)
+
+        results_json["sweeps"]["pgen_pswap_fixed_cutoff"] = {
+            "description": f"p_gen x p_swap at fixed cutoff(s) {cutoffs} "
+                           f"(N = {n_nodes})",
+            "cutoffs": cutoffs,
+            "n_nodes": n_nodes,
+            "results": dff.to_dict(orient="records"),
         }
 
     json_path = os.path.join(args.save_dir, "results.json")
