@@ -117,3 +117,70 @@ def test_qrnenv_constructs_on_fulldm():
                  rng=np.random.default_rng(1))
     obs = env.reset()
     assert obs["x"].shape == (env.N, 8)
+
+
+def test_fulldm_env_rollout_is_valid():
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.strategies import swap_asap
+    env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7, cutoff=20,
+                 max_steps=40, topology="chain", backend="netsquid",
+                 fidelity_mode="full_dm", dt_seconds=0.0,
+                 rng=np.random.default_rng(2024))
+    obs = env.reset()
+    assert obs["x"].shape == (env.N, 8)
+    for _ in range(40):
+        mask = env.get_action_mask()
+        a = swap_asap(env)
+        for i in range(env.N):
+            assert mask[i, a[i]]
+        obs, r, done, info = env.step(a)
+        assert np.isfinite(r)
+        assert np.all(obs["x"] >= -1e-6) and np.all(obs["x"] <= 1.0 + 1e-6)
+        if done:
+            break
+
+
+def test_fulldm_e2e_reachable_perfect_chain():
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.strategies import swap_asap
+    env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=50,
+                 max_steps=80, topology="chain", backend="netsquid",
+                 fidelity_mode="full_dm", dt_seconds=0.0,
+                 rng=np.random.default_rng(7))
+    env.reset()
+    ok = False
+    for _ in range(80):
+        _, _, done, info = env.step(swap_asap(env))
+        if done and info["fidelity"] > 0.0:
+            ok = True
+            break
+    assert ok
+
+
+def test_fulldm_parity_with_analytic():
+    """full_dm reproduces analytic e2e fidelity (depolarizing ⇒ Werner-exact).
+    Built one engine at a time (NetSquid global sim state)."""
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.strategies import swap_asap
+
+    def run(mode):
+        env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=50,
+                     max_steps=80, topology="chain", backend="netsquid",
+                     fidelity_mode=mode, dt_seconds=0.0,
+                     rng=np.random.default_rng(11))
+        env.reset()
+        for _ in range(80):
+            _, _, done, info = env.step(swap_asap(env))
+            if done:
+                return info["fidelity"]
+        return 0.0
+
+    f_analytic = run("analytic")
+    f_fulldm = run("full_dm")
+    assert f_analytic > 0.0 and f_fulldm > 0.0     # both reach e2e
+    # Same rng drives identical control flow; depolarizing keeps states Werner, so
+    # the two engines agree closely. NOT required to be bit-identical: analytic's
+    # inherited-age swap bookkeeping double-counts decoherence by one extra
+    # exp(-max_age/cutoff) factor vs full_dm's real per-tick depolarization.
+    # swap_asap swaps at age 0, so the gap is small; allow 2e-2.
+    assert abs(f_fulldm - f_analytic) < 2e-2
