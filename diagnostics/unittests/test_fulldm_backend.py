@@ -93,3 +93,27 @@ def test_fulldm_swap_product_rule():
     q = int(np.flatnonzero(ns0.occupied)[0])
     w_e2e = fidelity_to_werner(float(ns0.fidelity[q]))
     assert abs(w_e2e - w_left * w_right) < 1e-3
+
+
+from quantum_repeater_sim.backends import make_backend
+
+
+def test_factory_builds_fulldm_chain():
+    be = make_backend("netsquid", topology="chain", n_repeaters=4,
+                      fidelity_mode="full_dm", rng=np.random.default_rng(0))
+    assert isinstance(be, FullDMBackend)
+    assert be.topology().N == 4
+
+
+def test_factory_fulldm_rejects_non_chain():
+    with pytest.raises(NotImplementedError):
+        make_backend("netsquid", topology="grid", fidelity_mode="full_dm")
+
+
+def test_qrnenv_constructs_on_fulldm():
+    from rl_stack.env_wrapper import QRNEnv
+    env = QRNEnv(n_repeaters=3, topology="chain", backend="netsquid",
+                 fidelity_mode="full_dm", dt_seconds=0.0,
+                 rng=np.random.default_rng(1))
+    obs = env.reset()
+    assert obs["x"].shape == (env.N, 8)

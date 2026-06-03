@@ -206,8 +206,9 @@ def test_factory_netsquid_rejects_non_chain():
 
 
 def test_factory_netsquid_rejects_full_dm():
+    # full_dm is supported on chain (M3); grid/geant remain guarded.
     with pytest.raises(NotImplementedError):
-        make_backend("netsquid", topology="chain", fidelity_mode="full_dm")
+        make_backend("netsquid", topology="grid", fidelity_mode="full_dm")
 
 
 def test_qrnenv_constructs_on_netsquid():

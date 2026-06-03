@@ -37,15 +37,19 @@ def make_backend(
                 rep.p_swap = rng.uniform(0.3, 1.0)
         return LegacyBackend(net)
     if backend == "netsquid":
-        if fidelity_mode != "analytic":
+        if fidelity_mode not in ("analytic", "full_dm"):
             raise NotImplementedError(
-                f"NetSquid fidelity_mode={fidelity_mode!r} not in M1 "
-                "(full_dm lands in M3)")
+                f"NetSquid fidelity_mode={fidelity_mode!r} unsupported "
+                "(analytic, full_dm)")
         if topology != "chain":
             raise NotImplementedError(
-                f"NetSquid topology={topology!r} not in M1 (grid/geant in M2)")
-        from .netsquid.backend import NetSquidBackend
-        be = NetSquidBackend(
+                f"NetSquid topology={topology!r} not yet supported (grid/geant in M2)")
+        if fidelity_mode == "full_dm":
+            from .netsquid.fulldm import FullDMBackend
+            cls = FullDMBackend
+        else:
+            from .netsquid.backend import NetSquidBackend as cls
+        be = cls(
             N=n_repeaters, n_ch=n_ch, spacing=spacing, p_gen=p_gen,
             p_swap=p_swap, cutoff=cutoff, F0=F0, channel_loss=channel_loss,
             dt_seconds=dt_seconds, distance_dep_gen=True, rng=rng)
