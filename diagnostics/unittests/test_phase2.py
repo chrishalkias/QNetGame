@@ -35,12 +35,27 @@ def test_path_progress_disconnected_midlink():
     assert phi == pytest.approx(7 / 9)
 
 
-def test_path_progress_chained_links():
+def test_path_progress_chained_links_uses_longest_single():
+    # Single-longest-link potential: a chain of links is credited by its LONGEST
+    # single link, not the union. (0,3) spans 3, (3,7) spans 4 -> 4/9. This
+    # deliberately under-credits chained links: crediting their union let blobs
+    # of adjacent links from background auto-entanglement game the reward.
     from rl_stack.potential import bfs_hops, path_progress
     adj = _chain_adj(10)
     d_src, d_dst = bfs_hops(adj, 0), bfs_hops(adj, 9)
-    phi = path_progress(d_src, d_dst, d_src[9], [(0, 3), (3, 7)])  # chained
-    assert phi == pytest.approx(7 / 9)
+    phi = path_progress(d_src, d_dst, d_src[9], [(0, 3), (3, 7)])
+    assert phi == pytest.approx(4 / 9)
+
+
+def test_path_progress_adjacent_blob_not_gamed():
+    # The bug fixed by reverting to single-longest-link: a full path of ADJACENT
+    # links (what auto-entanglement creates for free) must NOT score high. Each
+    # adjacent link spans only 1 hop -> Φ = 1/9, not 1.0.
+    from rl_stack.potential import bfs_hops, path_progress
+    adj = _chain_adj(10)
+    d_src, d_dst = bfs_hops(adj, 0), bfs_hops(adj, 9)
+    chain_edges = [(i, i + 1) for i in range(9)]
+    assert path_progress(d_src, d_dst, d_src[9], chain_edges) == pytest.approx(1 / 9)
 
 
 def test_path_progress_source_connected_matches_chain_formula():

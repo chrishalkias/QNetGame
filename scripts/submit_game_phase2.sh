@@ -2,7 +2,7 @@
 #SBATCH --job-name=qrn_game_p2
 #SBATCH --output=slurm_logs/game_p2_%j.out
 #SBATCH --error=slurm_logs/game_p2_%j.err
-#SBATCH --time=04:00:00
+#SBATCH --time=01:20:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
