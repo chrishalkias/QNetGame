@@ -283,26 +283,42 @@ class QRNAgent:
               save_path = None,
               save_best = True,
               best_window = 200,
+              eval_fn = None,
+              eval_every = 0,
+              eval_patience = 0,
+              eval_mode = 'min',
+              disable_actions = (),
               plot = True) -> Dict[str, list]:
         """
         Train with curriculum over chain sizes.
 
-        Curriculum linearly expands the maximum chain size from n_range[0]
-        to n_range[-1] over the first 80% of training, then holds the full
-        range for the final 20%.
+        Curriculum linearly widens the eligible chain size to the full range
+        over the first `curriculum_frac` of training (see _curriculum_pool).
 
-        With save_best=True, `policy.pth` holds the checkpoint with the best
-        rolling-mean reward (window = best_window episodes), not the final
-        episode — late-training degradation (the curriculum/epsilon end can
-        destabilise the policy) therefore does not clobber the best agent. The
-        final-episode weights are also written to `policy_final.pth` for
-        reference.
+        Checkpointing: `policy.pth` always holds the BEST agent seen, never the
+        final one (late-training degradation therefore can't clobber it); the
+        final weights go to `policy_final.pth`. "Best" is judged by `eval_fn`
+        when given (a held-out greedy policy probe), else by rolling-mean reward.
+
+        Early stopping: when `eval_fn` and `eval_every` are set, the probe runs
+        every `eval_every` episodes; if it fails to improve for `eval_patience`
+        consecutive probes (and patience > 0), training stops — so longer phases
+        self-trim instead of running a fixed, often-too-long budget. The DQN loss
+        is NOT used for stopping (it is a moving-target TD error, decoupled from
+        policy quality).
+
+        `disable_actions`: action indices masked off during BOTH selection and
+        the Double-DQN target (e.g. (PURIFY,) trains a pure swap-scheduler).
+        `eval_mode`: 'min' (lower probe = better, e.g. delivery time) or 'max'.
         """
         #TODO: Add wandb logging
-        metrics = {"reward": [], "loss": [], "steps": [], "success": []}
+        metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": []}
         eps_init, eps_fin = 1.0, 0.05
         n_ch_pool = self._normalize_n_ch(n_ch)
+        disable_actions = tuple(disable_actions)
         best_metric, best_ep, best_saved = -math.inf, -1, False
+        best_eval = math.inf if eval_mode == 'min' else -math.inf
+        eval_stale = 0
 
         try:
             for ep in range(episodes):
@@ -340,10 +356,14 @@ class QRNAgent:
 
                 for _ in range(max_steps):
                     mask    = env.get_action_mask()
+                    if disable_actions:
+                        mask[:, disable_actions] = False
                     actions = self.select_actions(obs=obs, mask=mask, training=True)
 
                     next_obs, reward, done, info = env.step(actions)
                     next_mask = env.get_action_mask()
+                    if disable_actions:
+                        next_mask[:, disable_actions] = False
 
                     self.memory.add(obs, actions, reward,
                                     next_obs, done, next_mask)
@@ -371,8 +391,9 @@ class QRNAgent:
                 metrics["success"].append(
                     1.0 if info.get("fidelity", 0) > 0 else 0.0)
 
-                # -- Best-checkpoint tracking (rolling-mean reward) --
-                if (save_best and save_path and ep + 1 >= best_window
+                # -- Best-checkpoint by rolling reward (only when no eval probe) --
+                if (save_best and eval_fn is None and save_path
+                        and ep + 1 >= best_window
                         and (ep % 50 == 0 or ep == episodes - 1)):
                     roll = float(np.mean(metrics["reward"][-best_window:]))
                     if roll > best_metric:
@@ -380,6 +401,26 @@ class QRNAgent:
                         os.makedirs(save_path, exist_ok=True)
                         torch.save(self.policy_net.state_dict(),
                                    os.path.join(save_path, "policy.pth"))
+
+                # -- Policy probe: best-checkpoint + early stopping --
+                if eval_fn is not None and eval_every > 0 and (ep + 1) % eval_every == 0:
+                    m = float(eval_fn(self))
+                    metrics["eval"].append((ep, m))
+                    improved = m < best_eval if eval_mode == 'min' else m > best_eval
+                    if improved:
+                        best_eval, best_ep, best_saved, eval_stale = m, ep, True, 0
+                        if save_path:
+                            os.makedirs(save_path, exist_ok=True)
+                            torch.save(self.policy_net.state_dict(),
+                                       os.path.join(save_path, "policy.pth"))
+                    else:
+                        eval_stale += 1
+                    print(f"  [probe ep {ep}] eval={m:.4f} best={best_eval:.4f} "
+                          f"stale={eval_stale}/{eval_patience}", flush=True)
+                    if eval_patience > 0 and eval_stale >= eval_patience:
+                        print(f"[early-stop] no eval improvement for "
+                              f"{eval_patience} probes; stopping at ep {ep}")
+                        break
 
                 if ep % 200 == 0 or (ep == episodes - 1 and ep > 0):
                     avg_r = np.mean(metrics["reward"][-200:])
@@ -393,12 +434,14 @@ class QRNAgent:
         if save_path:
             os.makedirs(save_path, exist_ok=True)
             final_path = os.path.join(save_path, "policy.pth")
-            if save_best and best_saved:
+            if best_saved:
                 # policy.pth already holds the best agent; keep the final weights
                 # separately for reference.
                 final_path = os.path.join(save_path, "policy_final.pth")
-                print(f"[best] policy.pth = best rolling reward "
-                      f"{best_metric:.3f} @ ep {best_ep}; final -> policy_final.pth")
+                crit = (f"eval {best_eval:.4f}" if eval_fn is not None
+                        else f"rolling reward {best_metric:.3f}")
+                print(f"[best] policy.pth = best ({crit}) @ ep {best_ep}; "
+                      f"final -> policy_final.pth")
             torch.save(self.policy_net.state_dict(), final_path)
 
         if plot:

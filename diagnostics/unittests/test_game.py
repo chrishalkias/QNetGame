@@ -126,6 +126,57 @@ def test_train_save_best_false_only_writes_policy(tmp_path):
     assert not os.path.isfile(os.path.join(sd, "policy_final.pth"))
 
 
+def _es_train(tmp_path, name, eval_fn, episodes, patience):
+    import numpy as np
+    from rl_stack import QRNAgent
+    sd = str(tmp_path / name)
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    metrics = agent.train(
+        episodes=episodes, max_steps=6, n_range=[3], n_ch=2, p_gen=0.9, p_swap=0.9,
+        cutoff=5, F0=0.95, channel_loss=0.0, dt_seconds=0.0, heterogeneous=False,
+        curriculum=False, topology="chain", backend="legacy", save_path=sd,
+        eval_fn=eval_fn, eval_every=10, eval_patience=patience, eval_mode='min',
+        plot=False)
+    return sd, metrics
+
+
+def test_early_stopping_stops_on_no_improvement(tmp_path):
+    calls = {"n": 0}
+    def bad_eval(agent):
+        calls["n"] += 1
+        return 5.0  # constant -> only the first probe "improves"
+    sd, metrics = _es_train(tmp_path, "es", bad_eval, episodes=1000, patience=3)
+    assert len(metrics["reward"]) < 1000      # stopped early
+    assert calls["n"] <= 5                     # ~4 probes (set best, 3 stale) then stop
+    assert len(metrics["eval"]) >= 1
+
+
+def test_early_stopping_improving_runs_full_and_saves_best(tmp_path):
+    import os
+    seq = {"i": 0}
+    def improving_eval(agent):
+        seq["i"] += 1
+        return 10.0 - seq["i"]  # strictly decreasing -> always improves
+    sd, metrics = _es_train(tmp_path, "imp", improving_eval, episodes=60, patience=3)
+    assert len(metrics["reward"]) == 60        # never early-stops
+    assert os.path.isfile(os.path.join(sd, "policy.pth"))         # best (by eval)
+    assert os.path.isfile(os.path.join(sd, "policy_final.pth"))   # final
+
+
+def test_disable_actions_trains(tmp_path):
+    import os
+    import numpy as np
+    from rl_stack import QRNAgent
+    from rl_stack.env_wrapper import PURIFY
+    sd = str(tmp_path / "da")
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    agent.train(episodes=40, max_steps=6, n_range=[3], n_ch=2, p_gen=0.9, p_swap=0.9,
+                cutoff=5, F0=0.95, channel_loss=0.0, dt_seconds=0.0, heterogeneous=False,
+                curriculum=False, topology="chain", backend="legacy", save_path=sd,
+                disable_actions=(PURIFY,), save_best=False, plot=False)
+    assert os.path.isfile(os.path.join(sd, "policy.pth"))
+
+
 def test_run_phase_trains_and_saves(tmp_path):
     import dataclasses
     import numpy as np
