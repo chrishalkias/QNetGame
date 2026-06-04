@@ -100,3 +100,28 @@ def test_env_chain_progress_matches_potential():
     d_src, d_dst = bfs_hops(adj, env.source), bfs_hops(adj, env.dest)
     expected = path_progress(d_src, d_dst, d_src[env.dest], env._entangled_edges())
     assert env._progress() == pytest.approx(expected)
+
+
+def test_phase2_config():
+    from game.phases import PHASE2, PhaseConfig
+    assert isinstance(PHASE2, PhaseConfig)
+    assert PHASE2.topology == "grid"
+    assert tuple(PHASE2.n_range) == (3, 4)
+    assert 2 in PHASE2.n_ch
+    assert PHASE2.backend == "legacy"
+
+
+def test_grid_eval_runs(tmp_path):
+    """grid_eval compares an injected policy vs swap-asap on small grids and
+    returns a well-formed report (uses swap_asap as the 'agent' to avoid torch)."""
+    import numpy as np
+    from rl_stack import strategies
+    from game.grid_eval import evaluate_on_grids
+    agent_fn = lambda env, obs: strategies.swap_asap(env)
+    report = evaluate_on_grids(agent_fn, grid_sides=(3,), n_ch=2,
+                               p_gen=0.9, p_swap=0.9, cutoff=20, max_steps=40,
+                               n_episodes=20, seed=0)
+    assert "rows" in report and len(report["rows"]) == 1
+    r = report["rows"][0]
+    assert r["grid"] == 3
+    assert "T_agent" in r and "T_swap_asap" in r and "agent_beats_swap_pct" in r

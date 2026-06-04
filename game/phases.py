@@ -47,3 +47,23 @@ PHASE1 = PhaseConfig(
     max_steps=30,
     heterogeneous=False,
 )
+
+# Phase 2: square grids (n_range = grid side length), random non-adjacent
+# source/dest, topology-general PBRS. Grid training is cluster-only.
+PHASE2 = PhaseConfig(
+    name="phase2",
+    topology="grid",
+    n_range=(3, 4),          # 3x3 and 4x4 grids
+    n_ch=(2, 3),
+    p_gen=(0.5, 0.9),        # (lo, hi) -> per-episode domain randomization
+    p_swap=(0.6, 0.9),
+    cutoff=20,
+    F0=0.95,
+    channel_loss=0.0,
+    dt_seconds=0.0,
+    backend="legacy",
+    fidelity_mode="analytic",
+    episodes=20000,          # cap; early-stopping + best-checkpoint trim it
+    max_steps=60,
+    heterogeneous=False,
+)
