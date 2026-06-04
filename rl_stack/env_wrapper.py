@@ -32,6 +32,7 @@ import numpy as np
 
 from quantum_repeater_sim.backends import make_backend
 from quantum_repeater_sim.repeater import NO_PARTNER
+from rl_stack import potential
 
 # --- action constants ----------------------------------------------------
 NOOP    = 0
@@ -119,13 +120,33 @@ class QRNEnv:
     def _pick_targets(self):
         if self.N <= 2 or self.topology == 'chain':
             self.source, self.dest = 0, self.N - 1
-            return
-        while True:
-            s, d = sorted(self.rng.choice(self.N, size=2, replace=False))
-            # Ensure source and dest are not directly adjacent
-            if not self._topo.adjacency[s, d]:
-                self.source, self.dest = int(s), int(d)
-                return
+        else:
+            while True:
+                s, d = sorted(self.rng.choice(self.N, size=2, replace=False))
+                # Ensure source and dest are not directly adjacent
+                if not self._topo.adjacency[s, d]:
+                    self.source, self.dest = int(s), int(d)
+                    break
+        adj = self._topo.adjacency
+        self._d_src = potential.bfs_hops(adj, self.source)
+        self._d_dst = potential.bfs_hops(adj, self.dest)
+        self._d_total = float(self._d_src[self.dest])
+
+    def _entangled_edges(self):
+        """Undirected (a, b) edges of the current entanglement graph."""
+        edges = set()
+        for i in range(self.N):
+            ns = self.backend.node_state(i)
+            for qi in np.flatnonzero(ns.occupied):
+                p = int(ns.partner_node[qi])
+                if p != NO_PARTNER and p != i:
+                    edges.add((min(i, p), max(i, p)))
+        return edges
+
+    def _progress(self) -> float:
+        """Topology-general PBRS potential in [0, 1]."""
+        return potential.path_progress(
+            self._d_src, self._d_dst, self._d_total, self._entangled_edges())
 
     def is_target(self, node: int) -> bool:
         return node == self.source or node == self.dest
@@ -290,13 +311,10 @@ class QRNEnv:
         # Phase 4: auto-entangle for next step's observation
         self._auto_entangle()
 
-        # PBRS: γΦ(s') - Φ(s)
-        if self.topology == "chain":
-            phi_new = self._compute_chain_progress()
-            shaping = self.gamma * phi_new - self._phi
-            self._phi = phi_new
-        else:
-            shaping = 0
+        # PBRS: γΦ(s') - Φ(s)  (topology-general potential)
+        phi_new = self._progress()
+        shaping = self.gamma * phi_new - self._phi
+        self._phi = phi_new
 
         return self.get_observation(), self.STEP_COST + penalty + shaping, False, info
 
@@ -341,30 +359,6 @@ class QRNEnv:
                 return True, float(ns.fidelity[qi])
         return False, 0.0
 
-    def _compute_chain_progress(self) -> float:
-        """BFS from source through entangled links; return farthest hop / total hops."""
-        if self.topology != 'chain':
-            return 0.0
-        total_hops = self.dest - self.source
-        if total_hops <= 0:
-            return 0.0
-        visited = {self.source}
-        frontier = {self.source}
-        farthest = self.source
-        while frontier:
-            next_frontier = set()
-            for node in frontier:
-                ns = self.backend.node_state(node)
-                for qi in np.flatnonzero(ns.occupied):
-                    partner = int(ns.partner_node[qi])
-                    if partner != NO_PARTNER and partner not in visited:
-                        visited.add(partner)
-                        next_frontier.add(partner)
-                        if partner > farthest:
-                            farthest = partner
-            frontier = next_frontier
-        return min((farthest - self.source) / total_hops, 1.0)
-
 
 # ▄▄▄      ▄▄▄
 # ████▄  ▄████ ▀▀
@@ -381,7 +375,7 @@ class QRNEnv:
         self.steps = 0
         self.done  = False
         self._auto_entangle()
-        self._phi = self._compute_chain_progress()
+        self._phi = self._progress()
         return self.get_observation()
 
     @staticmethod
