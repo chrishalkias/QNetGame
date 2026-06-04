@@ -244,6 +244,25 @@ class QRNAgent:
             return float(rng.uniform(lo, hi))
         return float(val)
 
+    @staticmethod
+    def _curriculum_pool(ep, episodes, n_range,
+                         curriculum=True, curriculum_frac=0.5):
+        """Chain sizes eligible at episode `ep`.
+
+        The cap linearly widens from n_min to n_max over the first
+        `curriculum_frac` of training (round-half-up), then the full range is
+        held. `curriculum=False` (or a degenerate range) always returns the full
+        range. Reaching the full range by mid-training (default 0.5) ensures the
+        LARGEST size is trained for a substantial share of episodes — the old
+        schedule (full range only at 0.8) starved n_max to ~5-10%, which left its
+        policy at the swap-asap default instead of the optimum."""
+        n_min, n_max = min(n_range), max(n_range)
+        if not curriculum or n_min >= n_max:
+            return list(n_range)
+        ramp = min((ep / max(episodes, 1)) / max(curriculum_frac, 1e-9), 1.0)
+        cap = n_min + int(ramp * (n_max - n_min) + 0.5)   # round-half-up
+        return [r for r in n_range if r <= cap]
+
     def train(self,
               episodes = 3000,
               max_steps = 50,
@@ -255,8 +274,9 @@ class QRNAgent:
               F0 = 0.95,
               channel_loss = 0.02, 
               dt_seconds = 1e-3,
-              heterogeneous = True, 
+              heterogeneous = True,
               curriculum = True,
+              curriculum_frac = 0.5,
               topology = 'chain',
               backend = 'legacy',
               fidelity_mode = 'analytic',
@@ -281,20 +301,14 @@ class QRNAgent:
         #TODO: Add wandb logging
         metrics = {"reward": [], "loss": [], "steps": [], "success": []}
         eps_init, eps_fin = 1.0, 0.05
-        n_min, n_max = min(n_range), max(n_range)
         n_ch_pool = self._normalize_n_ch(n_ch)
         best_metric, best_ep, best_saved = -math.inf, -1, False
 
         try:
             for ep in range(episodes):
                 # -- Curriculum: linearly widen max chain size --
-                prog = ep / max(episodes, 1)
-                if curriculum and n_min < n_max:
-                    ramp = min(prog / 0.8, 1.0)  # linear 0→1 over first 80%
-                    cap = n_min + int(ramp * (n_max - n_min))
-                    pool = [r for r in n_range if r <= cap]
-                else:
-                    pool = n_range
+                pool = self._curriculum_pool(
+                    ep, episodes, n_range, curriculum, curriculum_frac)
                 n_nodes = int(self.rng.choice(pool))
                 # single-element pool (int n_ch) draws no RNG -> stream identical to pre-change
                 n_ch_ep = int(self.rng.choice(n_ch_pool)) if len(n_ch_pool) > 1 else n_ch_pool[0]

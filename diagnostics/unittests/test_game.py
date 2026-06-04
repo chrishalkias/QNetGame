@@ -66,6 +66,39 @@ def test_sample_rate_range_samples_in_bounds():
     assert min(vals) < 0.45 and max(vals) > 0.75   # actually varies across range
 
 
+def _n_exposure(n_range, episodes, n_target, **kw):
+    """Expected fraction of episodes the curriculum samples n_target."""
+    from rl_stack.agent import QRNAgent
+    exp = 0.0
+    for ep in range(episodes):
+        pool = QRNAgent._curriculum_pool(ep, episodes, n_range, **kw)
+        if n_target in pool:
+            exp += 1.0 / len(pool)
+    return exp / episodes
+
+
+def test_curriculum_pool_disabled_is_full_range():
+    from rl_stack.agent import QRNAgent
+    assert sorted(QRNAgent._curriculum_pool(0, 100, [3, 4, 5],
+                                            curriculum=False)) == [3, 4, 5]
+
+
+def test_curriculum_pool_starts_small_ends_full():
+    from rl_stack.agent import QRNAgent
+    assert QRNAgent._curriculum_pool(0, 100, [3, 4, 5], curriculum=True) == [3]
+    assert sorted(QRNAgent._curriculum_pool(99, 100, [3, 4, 5],
+                                            curriculum=True)) == [3, 4, 5]
+
+
+def test_curriculum_largest_n_not_starved():
+    # The largest size must get a real share of training, not be crammed into
+    # the final fraction (the old schedule gave n_max only ~10%).
+    # old schedule gave n_max ~0.10 ([3,4]) and ~0.05 ([4,5,6,7]); the fix lifts
+    # both well clear of starvation.
+    assert _n_exposure([3, 4], 2000, 4, curriculum=True) > 0.25
+    assert _n_exposure([4, 5, 6, 7], 2000, 7, curriculum=True) > 0.12
+
+
 def _tiny_train(tmp_path, name, save_best, episodes=120):
     import numpy as np
     from rl_stack import QRNAgent
