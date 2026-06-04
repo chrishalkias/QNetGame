@@ -6,7 +6,7 @@ from typing import Dict, List
 from .phases import PhaseConfig
 
 
-def run_phase(agent, cfg: PhaseConfig, save_dir: str, plot: bool = True) -> Dict[str, List]:
+def run_phase(agent, cfg: PhaseConfig, save_dir: str, plot: bool = True, **train_kwargs) -> Dict[str, List]:
     """Train `agent` for one phase and save the checkpoint under `save_dir`.
 
     Returns the training metrics dict from QRNAgent.train()."""
@@ -29,5 +29,6 @@ def run_phase(agent, cfg: PhaseConfig, save_dir: str, plot: bool = True) -> Dict
         fidelity_mode=cfg.fidelity_mode,
         save_path=save_dir,
         plot=plot,
+        **train_kwargs,
     )
     return metrics

@@ -125,3 +125,16 @@ def test_grid_eval_runs(tmp_path):
     r = report["rows"][0]
     assert r["grid"] == 3
     assert "T_agent" in r and "T_swap_asap" in r and "agent_beats_swap_pct" in r
+
+
+def test_run_phase2_smoke(tmp_path):
+    import json
+    from game.run_phase2 import main
+    save_dir = tmp_path / "p2"
+    main(["--episodes", "60", "--max_steps", "12", "--save_dir", str(save_dir),
+          "--eval_episodes", "20", "--probe_episodes", "20"])
+    assert (save_dir / "policy.pth").is_file()
+    out = save_dir / "grid_eval.json"
+    assert out.is_file()
+    rep = json.loads(out.read_text())
+    assert len(rep["rows"]) >= 1 and "agent_beats_swap_pct" in rep["rows"][0]
