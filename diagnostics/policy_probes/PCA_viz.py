@@ -1,4 +1,5 @@
-"""PCA visualisation of a trained policy's internal representations.
+"""
+PCA visualisation of a trained policy's internal representations.
 
 Sweeps synthetic observations across (fidelity, occupancy, time_remaining)
 for the middle node of a chain, captures the post-conv3 embeddings
@@ -44,7 +45,15 @@ RESOLUTION    = 25         # grid points per axis (25³ = 15 625 observations)
 DEFAULT_T_REM = 0.5        # fixed time-remaining for neighbour nodes
 
 
-# ── helpers ────────────────────────────────────────────────────────────────
+                                           
+# ▄▄▄   ▄▄▄       ▄▄                         
+# ███   ███       ██                         
+# █████████ ▄█▀█▄ ██ ████▄ ▄█▀█▄ ████▄ ▄█▀▀▀ 
+# ███▀▀▀███ ██▄█▀ ██ ██ ██ ██▄█▀ ██ ▀▀ ▀███▄ 
+# ███   ███ ▀█▄▄▄ ██ ████▀ ▀█▄▄▄ ██    ▄▄▄█▀ 
+#                    ██                      
+#                    ▀▀           
+           
 def load_model(path: str, hidden: int = 64, device: str = "cpu") -> QNetwork:
     model = QNetwork(node_dim=8, hidden=hidden, n_actions=N_ACTIONS)
     model.load_state_dict(
@@ -138,7 +147,14 @@ def collect_embeddings(
             np.array(best_actions, dtype=np.int32))
 
 
-# ── plotting ───────────────────────────────────────────────────────────────
+                         
+# ▄▄▄▄▄▄▄   ▄▄             
+# ███▀▀███▄ ██        ██   
+# ███▄▄███▀ ██ ▄███▄ ▀██▀▀ 
+# ███▀▀▀▀   ██ ██ ██  ██   
+# ███       ██ ▀███▀  ██   
+                         
+                         
 def plot_pca(
     model_path: str,
     save_dir: str = ".",
@@ -248,7 +264,14 @@ def plot_pca(
     print(f"Saved {var_path}")
 
 
-# ── entry point ────────────────────────────────────────────────────────────
+                             
+# ▄▄▄      ▄▄▄                 
+# ████▄  ▄████       ▀▀        
+# ███▀████▀███  ▀▀█▄ ██  ████▄ 
+# ███  ▀▀  ███ ▄█▀██ ██  ██ ██ 
+# ███      ███ ▀█▄██ ██▄ ██ ██ 
+                             
+                             
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model",      default="checkpoints/cluster_004/policy.pth")

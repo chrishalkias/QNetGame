@@ -1,4 +1,6 @@
-"""LegacyBackend — wraps the existing numpy RepeaterNetwork engine."""
+"""
+LegacyBackend — wraps the existing numpy RepeaterNetwork engine.
+"""
 from __future__ import annotations
 import numpy as np
 

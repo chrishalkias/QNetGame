@@ -53,6 +53,14 @@ def make_chain(probe: int, occ: float, fid: float, t_rem: float,
     return feats
 
 
+                                        
+#  ▄▄▄▄▄▄▄ ▄▄                             
+# ███▀▀▀▀▀ ██                ▄▄           
+# ███      ████▄ ▄█▀█▄ ▄████ ██ ▄█▀ ▄█▀▀▀ 
+# ███      ██ ██ ██▄█▀ ██    ████   ▀███▄ 
+# ▀███████ ██ ██ ▀█▄▄▄ ▀████ ██ ▀█▄ ▄▄▄█▀ 
+                                                                             
+
 def run_checks(model_path: str, hidden: int = 64):
     model = load_model(model_path, hidden)
     probe = 2

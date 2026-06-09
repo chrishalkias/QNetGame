@@ -1,4 +1,5 @@
-"""Full density-matrix NetSquid backend (M3): real qubits, real BSM swap,
+"""
+Full density-matrix NetSquid backend (M3): real qubits, real BSM swap,
 depolarizing decoherence. Subclasses the analytic NetSquidBackend and overrides
 only the physics hooks; all slot bookkeeping / timing / stale-guard is inherited.
 Chain only, swap only (no purify). One instance per process (global sim state).

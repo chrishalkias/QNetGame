@@ -16,18 +16,16 @@ from .repeater import (
 )
 
                                                                                            
-
-
-class RepeaterNetwork:
-    """                                                           
+"""                                                           
   ▄▄▄▄▄   ▄▄▄    ▄▄▄                                        
 ▄███████▄ ████▄  ███        ██                       ▄▄     
 ███   ███ ███▀██▄███ ▄█▀█▄ ▀██▀▀ ██   ██ ▄███▄ ████▄ ██ ▄█▀ 
 ███▄█▄███ ███  ▀████ ██▄█▀  ██   ██ █ ██ ██ ██ ██ ▀▀ ████   
  ▀█████▀  ███    ███ ▀█▄▄▄  ██    ██▀██  ▀███▀ ██    ██ ▀█▄ 
       ▀▀                                                    
-    """
+ """
 
+class RepeaterNetwork:
     __slots__ = (
         "N",                # The total number of repeaters in the network
         "repeaters",        # A list of `Repeater` instances
@@ -114,7 +112,7 @@ class RepeaterNetwork:
 # ████████ ██▄ ██ ██ ██ ▀█▄   ▀██████▀  ▀█▄▄▄ ██ ██ ▀█▄▄▄ ██    ▀█▄██  ██   ██▄ ▀███▀ ██ ██ 
                                                                                            
 
-    # ── ACTION 1: entangle (instantaneous) ──────────────
+    # -- ACTION 1: entangle (instantaneous) --------------
     def entangle(self, r1: int, r2: int) -> Dict[str, Any]:
         """                                                                                                 
         Instantaneous EG between adjecent stations
@@ -161,7 +159,7 @@ class RepeaterNetwork:
 #                        ██                 ██ 
 #                        ▀▀               ▀▀▀  
 
-    # ── ACTION 2: swap (deferred via event queue) ─────────────────
+    # -- ACTION 2: swap (deferred via event queue) ------------
     def swap(self, r: int) -> Dict[str, Any]:
         """                                     
         Perform BSM at repeater r. On success, lock qubits and queue event.
@@ -241,7 +239,8 @@ class RepeaterNetwork:
 # ███▀▀▀▀   ██ ██ ██ ▀▀ ██  ██  ██  ██    ▄█▀██  ██   ██  ██ ██ ██ ██ 
 # ███       ▀██▀█ ██    ██▄ ██  ██▄ ▀████ ▀█▄██  ██   ██▄ ▀███▀ ██ ██ 
 
-    # ── ACTION 3: purify (deferred via event queue) ───────────────
+
+    # -- ACTION 3: purify (deferred via event queue) ------------
     def purify(self, r1: int, r2: int) -> Dict[str, Any]:
         """                                                                                                                                     
         BBPSSW purification. Lock all 4 qubits, queue event.
@@ -301,7 +300,8 @@ class RepeaterNetwork:
 # ███  ███ ▀████ ██▄ ██ ██ ▀████ 
 #             ██              ██ 
 #           ▀▀▀             ▀▀▀  
-    # ── ACTION 4: age_links (+ event resolution) ─────────────────
+
+    # -- ACTION 4: age_links (+ event resolution) -------------------
 
     def age_links(self, discard_expired: bool = True) -> Dict[str, Any]:
         """                              
@@ -495,7 +495,6 @@ class RepeaterNetwork:
                                   int(rep.age[qi])])
         return np.array(links, dtype=np.float64) if links else np.empty((0, 6), dtype=np.float64)
     
-
                                                                              
 #   ▄▄▄▄                                 ▄▄▄      ▄▄▄                          
 # ▄██▀▀██▄        ██   ▀▀                ████▄  ▄████             ▄▄           
@@ -530,7 +529,6 @@ class RepeaterNetwork:
                 if pr != NO_PARTNER and cnt >= 2:
                     mask[rep.rid, int(pr)] = True
         return mask
-    
                              
 # ▄▄▄      ▄▄▄                 
 # ████▄  ▄████ ▀▀              
@@ -557,13 +555,6 @@ class RepeaterNetwork:
             lines.append(f"    R{int(l[0])}:q{int(l[1])}<->R{int(l[2])}:q{int(l[3])} "
                          f"F={l[4]:.4f} age={int(l[5])}")
         return "\n".join(lines)
-
-
-                                                                                                        
-                                                                                         
-# ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
-
-
 
 
 #  ▄▄▄▄▄▄▄                         ▄▄                  
@@ -632,7 +623,7 @@ class RepeaterNetwork:
         G_adj  = nx.from_numpy_array(self.adj)
         pos_nx = {i: tuple(pos[i]) for i in range(N)}
 
-        # ── Geometry constants ────────────────────────────────────────────────
+        # -- Geometry constants ------------------------------
         if N > 1:
             nonzero = self._dist_matrix[self._dist_matrix > 0]
             scale   = float(nonzero.min()) if len(nonzero) else 1.0
@@ -654,7 +645,7 @@ class RepeaterNetwork:
         GLOW_COLOR  = "#FFD700"
         GLOW_ALPHA  = 0.18
 
-        # ── Qubit dot positions ───────────────────────────────────────────────
+        # -- Qubit dot positions ------------------------------------------
         qubit_xy = {}
         for rep in self.repeaters:
             cx, cy = rep.position
@@ -664,7 +655,7 @@ class RepeaterNetwork:
                     cy - BOX_H * 0.10,
                 )
 
-        # ── PASS 1: compute all arc geometry ─────────────────────────────────
+        # -- PASS 1: compute all arc geometry ------------------------------
         # A quadratic Bézier is always within its control-point convex hull,
         # so max(P0, ctrl, P2) gives a tight bound on the arc extent.
         # We collect every control point here so we can size the figure
@@ -741,7 +732,7 @@ class RepeaterNetwork:
                 fid=fid,
             ))
 
-        # ── Figure extent — driven by repeater positions AND arc control pts ──
+        # -- Figure extent — driven by repeater positions AND arc control pts --
         all_x = list(pos[:, 0]) + ctrl_pts_x
         all_y = list(pos[:, 1]) + ctrl_pts_y
 
@@ -767,7 +758,7 @@ class RepeaterNetwork:
         ax.set_aspect("equal")
         ax.axis("off")
 
-        # ── Yellow glow halos ─────────────────────────────────────────────────
+        # -- Yellow glow halos ------------
         if source_dest is not None:
             for rid in set(source_dest):
                 cx, cy = self.repeaters[rid].position
@@ -783,12 +774,12 @@ class RepeaterNetwork:
                         facecolor=GLOW_COLOR, edgecolor="none",
                         alpha=alpha, zorder=1, linewidth=0))
 
-        # ── Adjacency edges (dashed) ──────────────────────────────────────────
+        # -- Adjacency edges (dashed) -------------------------------
         nx.draw_networkx_edges(
             G_adj, pos_nx, ax=ax,
             style="dashed", width=0.7, edge_color=C_ADJ, alpha=0.75)
 
-        # ── PASS 2: draw entanglement arcs ────────────────────────────────────
+        # -- PASS 2: draw entanglement arcs --------------------------
         cmap     = plt.cm.RdYlGn
         norm_col = plt.Normalize(vmin=0.25, vmax=1.0)
 
@@ -816,7 +807,7 @@ class RepeaterNetwork:
                     bbox=dict(facecolor="white", edgecolor="none",
                             alpha=0.88, pad=0.8))
 
-        # ── Repeater boxes ────────────────────────────────────────────────────
+        # -- Repeater boxes ---------------------------------
         for rep in self.repeaters:
             cx, cy = rep.position
             is_hl    = source_dest is not None and rep.rid in source_dest
@@ -830,7 +821,7 @@ class RepeaterNetwork:
             ax.text(cx, cy + BOX_H/2 + Q_RADIUS*2.5, f"$R_{{{rep.rid}}}$",
                     ha="center", va="bottom", fontsize=9, zorder=6)
 
-        # ── Qubit dots + labels ───────────────────────────────────────────────
+        #  Qubit dots + labels ---------------------
         for rep in self.repeaters:
             for qi in range(n_ch):
                 qx, qy = qubit_xy[(rep.rid, qi)]
@@ -847,7 +838,7 @@ class RepeaterNetwork:
                         ha="center", va="bottom", fontsize=5.5,
                         color="#444444", zorder=6)
 
-        # ── Legend & title ────────────────────────────────────────────────────
+        # -- Legend & title -----------------------------------------
         legend_items = [
             mpatches.Patch(fc=C_FREE, ec=C_FREE_E, lw=0.6, label="Free"),
             mpatches.Patch(fc=C_OCC,  ec=C_OCC_E,  lw=0.6, label="Occupied"),
@@ -876,7 +867,6 @@ class RepeaterNetwork:
             fig.savefig(filepath, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         return fig
-# ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
 
 # ▄▄▄▄▄▄▄▄▄                ▄▄                     ▄▄              ▄▄    ▄▄                   
 # ▀▀▀███▀▀▀                ██                     ██          ▀▀  ██    ██                   

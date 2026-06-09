@@ -1,4 +1,5 @@
-"""Pure gap math + human-readable formatting for the optimal-comparison report.
+"""
+Pure gap math + human-readable formatting for the optimal-comparison report.
 
 The DP baseline is optimal only among purify-free {NOOP, SWAP} policies, so it is
 reported as `T_opt_swaponly`. The agent is evaluated twice: with its full action

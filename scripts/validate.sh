@@ -2,12 +2,12 @@
 #SBATCH --job-name=qrn_batch_val
 #SBATCH --output=slurm_logs/batch_val_%j.out
 #SBATCH --error=slurm_logs/batch_val_%j.err
-#SBATCH --time=24:00:00
+#SBATCH --time=04:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --partition=gpu-l4-24g
+#SBATCH --partition=gpu-short
 #SBATCH --gres=gpu:1
 
 set -euo pipefail
@@ -31,7 +31,7 @@ python -u train-test/batch_validate.py \
     --episodes 200 \
     --seed 42 \
     --save_dir results/batch_validate \
-    --sweep both \
+    --sweep pgen_cutoff \
     --sweep2_nodes 8
 
 echo "Job completed at $(date)"

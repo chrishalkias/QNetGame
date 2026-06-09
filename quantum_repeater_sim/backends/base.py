@@ -1,4 +1,5 @@
-"""PhysicsBackend interface + immutable state snapshots.
+"""
+PhysicsBackend interface + immutable state snapshots.
 
 The environment depends only on this module: it issues mutating ops and reads
 immutable snapshots, never touching a concrete engine's internals. All values

@@ -1,4 +1,6 @@
-"""Deeper probes into the failed physics checks to diagnose root causes."""
+"""
+Deeper probes into the failed physics checks to diagnose root causes.
+"""
 
 from __future__ import annotations
 import numpy as np

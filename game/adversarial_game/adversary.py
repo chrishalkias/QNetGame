@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
+from numbers import Real
 import operator
 from typing import Mapping, Optional
 
@@ -203,8 +204,12 @@ def greedy_action_tensor(
     k = _positive_integer(k, "k")
     if not isinstance(q_values, torch.Tensor):
         raise TypeError("q_values must be a torch.Tensor")
-    if q_values.ndim < 1 or q_values.shape[-1] != 2:
+    if q_values.ndim != 3:
+        raise ValueError("q_values must be rank-3 [nodes, targets, 2]")
+    if q_values.shape[-1] != 2:
         raise ValueError("q_values shape must end with an action dimension of 2")
+    if destroy_mask.ndim != 2:
+        raise ValueError("destroy_mask must be rank-2 [nodes, targets]")
     if tuple(destroy_mask.shape) != tuple(q_values.shape[:-1]):
         raise ValueError("destroy_mask shape must match q_values.shape[:-1]")
 
@@ -315,6 +320,101 @@ class AdversaryAgent:
     def decode(self, node, slot) -> SabotageTarget:
         return decode_target(self.flavor, node, slot, self.n_ch)
 
+    def _validate_transition(self, transition):
+        if not isinstance(transition, Mapping):
+            raise TypeError("transition must be a mapping")
+
+        def normalize_observation(key, name):
+            try:
+                observation = transition[key]
+            except KeyError:
+                raise ValueError(f"transition is missing {name}") from None
+            if not isinstance(observation, Mapping):
+                raise TypeError(f"{name} must be an observation mapping")
+            try:
+                data = obs_to_data(observation, device="cpu")
+            except KeyError as exc:
+                raise ValueError(f"{name} is missing {exc.args[0]}") from None
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise TypeError(
+                    f"{name} must be accepted by obs_to_data: {exc}"
+                ) from None
+            if data.x.ndim != 2:
+                raise ValueError(f"{name} x must be rank 2")
+            if data.edge_index.ndim != 2 or data.edge_index.shape[0] != 2:
+                raise ValueError(f"{name} edge_index must have shape [2, E]")
+            return {
+                "x": data.x.numpy(),
+                "edge_index": data.edge_index.numpy(),
+            }
+
+        state = normalize_observation("s", "state")
+        next_state = normalize_observation("s_", "next state")
+        node_count = state["x"].shape[0]
+        next_node_count = next_state["x"].shape[0]
+        if node_count != next_node_count:
+            raise ValueError(
+                "state and next state x must have the same node count"
+            )
+
+        try:
+            action = np.asarray(transition["a"])
+        except KeyError:
+            raise ValueError("transition is missing action") from None
+        expected_action_shape = (node_count, self.target_count)
+        if action.shape != expected_action_shape:
+            raise ValueError(
+                f"action must have shape {expected_action_shape}, got {action.shape}"
+            )
+        if action.dtype == np.bool_ or not np.issubdtype(action.dtype, np.integer):
+            raise TypeError("action must have an integer dtype and cannot be boolean")
+        if not np.isin(action, (NOOP, DESTROY)).all():
+            raise ValueError("action values must be NOOP or DESTROY")
+        destroy_count = int(np.count_nonzero(action == DESTROY))
+        if destroy_count > self.k:
+            raise ValueError(
+                f"action has {destroy_count} DESTROY values, exceeding k={self.k}"
+            )
+
+        try:
+            next_mask = np.asarray(transition["m_"])
+        except KeyError:
+            raise ValueError("transition is missing successor mask") from None
+        expected_mask_shape = (next_node_count, self.target_count)
+        if next_mask.shape != expected_mask_shape:
+            raise ValueError(
+                "successor mask must have shape "
+                f"{expected_mask_shape}, got {next_mask.shape}"
+            )
+        if next_mask.dtype != np.bool_:
+            raise TypeError("successor mask must have a boolean dtype")
+
+        try:
+            reward = transition["r"]
+        except KeyError:
+            raise ValueError("transition is missing reward") from None
+        if isinstance(reward, (bool, np.bool_)) or not isinstance(reward, Real):
+            raise TypeError("reward must be a finite scalar real")
+        reward = float(reward)
+        if not np.isfinite(reward):
+            raise ValueError("reward must be finite")
+
+        try:
+            done = transition["d"]
+        except KeyError:
+            raise ValueError("transition is missing done") from None
+        if not isinstance(done, (bool, np.bool_)):
+            raise TypeError("done must be bool or np.bool_")
+
+        return {
+            "s": state,
+            "a": action.astype(np.int64, copy=False),
+            "r": reward,
+            "s_": next_state,
+            "d": bool(done),
+            "m_": next_mask,
+        }
+
     def _random_actions(self, valid: np.ndarray) -> np.ndarray:
         valid = np.asarray(valid, dtype=np.bool_)
         actions = np.full(valid.shape, NOOP, dtype=np.int64)
@@ -352,7 +452,10 @@ class AdversaryAgent:
         if self.memory.size() < self.batch_size:
             return None
 
-        transitions = self.memory.sample(self.batch_size)
+        transitions = [
+            self._validate_transition(transition)
+            for transition in self.memory.sample(self.batch_size)
+        ]
         states = Batch.from_data_list(
             [obs_to_data(transition["s"], device="cpu") for transition in transitions]
         ).to(self.device)

@@ -1,10 +1,12 @@
 .DS_Store
 .env
 .venv
+.venv311
 .vscode
 .pytest_cache
 __pycache__/
 *.pyc
+.docs
 docs/
 review.md
 task_plan.md
@@ -12,7 +14,12 @@ TODO.md
 tester.ipynb
 .mutmut*
 graph_builder.py
-# Large binaries — use rsync to move these, not git
+# Large binaries / run artifacts — code-only main; these move via rsync, not git
 *.zip
-checkpoints/*/visual/
+checkpoints/
+results/
 slurm_logs/
+
+#trash
+.codex-statusline-graph_builder
+.omx

@@ -27,14 +27,14 @@ import matplotlib.patches as mpatches
 from rl_stack.model import QNetwork
 from rl_stack.env_wrapper import NOOP, SWAP, PURIFY, N_ACTIONS
 
-# ── action labels / colours ────────────────────────────────────────────────
+# -- action labels / colours ----------------------------
 _ANAMES  = {NOOP: "Wait", SWAP: "Swap", PURIFY: "Purify"}
 _ACOLORS = {NOOP: "#aaaaaa", SWAP: "#cc4444", PURIFY: "#44aa44"}
 
 T_REM = 0.5   # mid-episode time remaining used for all neutral nodes
 
 
-# ── shared helpers ─────────────────────────────────────────────────────────
+# -- shared helpers -----------------------------------
 
 def _make_obs(n_nodes: int, features: np.ndarray) -> dict:
     src, dst = [], []
@@ -87,8 +87,16 @@ def _tag(n_nodes: int, probe: int) -> str:
     """Filename suffix to distinguish runs."""
     return f"_n{n_nodes}_p{probe}"
 
-
-# ── Diagnostic 1: swap preference f(F_left, F_right) ──────────────────────
+                                                                 
+# ▄▄▄▄▄▄                                                           
+# ███▀▀██▄ ▀▀                                 ██   ▀▀              
+# ███  ███ ██   ▀▀█▄ ▄████ ████▄ ▄███▄ ▄█▀▀▀ ▀██▀▀ ██  ▄████ ▄█▀▀▀ 
+# ███  ███ ██  ▄█▀██ ██ ██ ██ ██ ██ ██ ▀███▄  ██   ██  ██    ▀███▄ 
+# ██████▀  ██▄ ▀█▄██ ▀████ ██ ██ ▀███▀ ▄▄▄█▀  ██   ██▄ ▀████ ▄▄▄█▀ 
+#                       ██                                         
+#                     ▀▀▀       
+#                                   
+# -- Diagnostic 1: swap preference f(F_left, F_right) -------------------
 
 def plot_swap_preference(model, save_dir=".", resolution=40, device="cpu",
                          n_nodes=5, probe=2):
@@ -139,7 +147,7 @@ def plot_swap_preference(model, save_dir=".", resolution=40, device="cpu",
     print(f"  Saved {fname}")
 
 
-# ── Diagnostic 2: purify preference f(F1, F2) ─────────────────────────────
+# -- Diagnostic 2: purify preference f(F1, F2) --------------------
 
 def plot_purify_preference(model, save_dir=".", resolution=40, device="cpu",
                            n_nodes=5, probe=2):
@@ -179,7 +187,7 @@ def plot_purify_preference(model, save_dir=".", resolution=40, device="cpu",
     print(f"  Saved {fname}")
 
 
-# ── Diagnostic 3: best action map f(occupancy, fidelity) ──────────────────
+# -- Diagnostic 3: best action map f(occupancy, fidelity) ---------------
 
 def plot_best_action_map(model, save_dir=".", resolution=30, device="cpu",
                          n_nodes=5, probe=2):
@@ -226,7 +234,7 @@ def plot_best_action_map(model, save_dir=".", resolution=30, device="cpu",
     print(f"  Saved {fname}")
 
 
-# ── Diagnostic 4: swap vs wait boundary f(avail, fidelity) ────────────────
+# -- Diagnostic 4: swap vs wait boundary f(avail, fidelity) ------------
 
 def plot_swap_vs_wait(model, save_dir=".", resolution=40, device="cpu",
                       n_nodes=5, probe=2):
@@ -268,7 +276,14 @@ def plot_swap_vs_wait(model, save_dir=".", resolution=40, device="cpu",
     print(f"  Saved {fname}")
 
 
-# ── entry point ────────────────────────────────────────────────────────────
+                             
+# ▄▄▄      ▄▄▄                 
+# ████▄  ▄████       ▀▀        
+# ███▀████▀███  ▀▀█▄ ██  ████▄ 
+# ███  ▀▀  ███ ▄█▀██ ██  ██ ██ 
+# ███      ███ ▀█▄██ ██▄ ██ ██ 
+                             
+                             
 
 def run_all(model_path: str, save_dir: str = "diagnostics",
             device: str = "cpu", n_nodes: int = 5, probe: int = 2):

@@ -1,4 +1,5 @@
-"""Generate an interactive HTML policy explorer from a trained QRN model.
+"""
+Generate an interactive HTML policy explorer from a trained QRN model.
 
 Exports the GNN weights into a self-contained HTML file that runs the
 forward pass in JavaScript, letting the user sweep observation features
@@ -31,6 +32,15 @@ def _export_weights(model_path: str, hidden: int = 64) -> dict:
             weights[name] = [round(v.item(), 6) for v in t]
     return weights
 
+
+                                                 
+# ▄▄▄▄▄▄▄▄▄                   ▄▄                   
+# ▀▀▀███▀▀▀                   ██        ██         
+#    ███ ▄█▀█▄ ███▄███▄ ████▄ ██  ▀▀█▄ ▀██▀▀ ▄█▀█▄ 
+#    ███ ██▄█▀ ██ ██ ██ ██ ██ ██ ▄█▀██  ██   ██▄█▀ 
+#    ███ ▀█▄▄▄ ██ ██ ██ ████▀ ██ ▀█▄██  ██   ▀█▄▄▄ 
+#                       ██                         
+#                       ▀▀                         
 
 _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -472,6 +482,14 @@ update();
 </body>
 </html>"""
 
+
+                             
+# ▄▄▄      ▄▄▄                 
+# ████▄  ▄████       ▀▀        
+# ███▀████▀███  ▀▀█▄ ██  ████▄ 
+# ███  ▀▀  ███ ▄█▀██ ██  ██ ██ 
+# ███      ███ ▀█▄██ ██▄ ██ ██ 
+                                                  
 
 def generate(model_path: str, output_path: str, hidden: int = 64) -> None:
     weights = _export_weights(model_path, hidden)

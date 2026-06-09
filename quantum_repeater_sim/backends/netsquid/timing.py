@@ -1,4 +1,5 @@
-"""pydynaa-driven simulation clock for the analytic NetSquid backend.
+"""
+pydynaa-driven simulation clock for the analytic NetSquid backend.
 
 Replaces the bespoke ``pending_events`` queue: deferred operations are scheduled
 as pydynaa events and fire (via per-event one-shot callbacks) when ``advance``

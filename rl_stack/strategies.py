@@ -13,7 +13,6 @@ import numpy as np
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY
 
 
-
 def swap_asap(env: QRNEnv) -> np.ndarray:
     """Swap at every interior node that can, immediately.
 

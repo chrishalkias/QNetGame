@@ -1,5 +1,5 @@
 """
-mutmut_config.py  –  mutation filtering hooks
+mutmut_config.py  -  mutation filtering hooks
 ==============================================
 
 mutmut discovers this file via the ``MUTMUT_CONFIG`` environment variable
@@ -16,7 +16,7 @@ mutated.  Use ``pre_mutation_ast`` for AST-level filtering.
 from __future__ import annotations
 
 
-# ── Lines containing any of these substrings are never mutated ───────────
+# === Lines containing any of these substrings are never mutated ===
 SKIP_LINE_PATTERNS: tuple[str, ...] = (
     # Explicit opt-out marker — add ``# pragma: no mutate`` to any line
     "pragma: no mutate",
@@ -48,7 +48,7 @@ SKIP_LINE_PATTERNS: tuple[str, ...] = (
 )
 
 
-# ── Lines containing these patterns in the context of the quantum sim ────
+# === Lines containing these patterns in the context of the quantum sim ===
 # These are physics-documentation comments that mutmut may try to mutate
 # as string constants.
 PHYSICS_COMMENT_PATTERNS: tuple[str, ...] = (
@@ -66,9 +66,9 @@ def pre_mutation(context) -> None:  # noqa: ANN001
     Set ``context.skip = True`` to skip the mutant entirely.
 
     Available attributes on *context*:
-        filename       – path of the file being mutated
-        current_line   – source line that will be mutated
-        mutation_id    – internal mutation counter
+        filename       - path of the file being mutated
+        current_line   - source line that will be mutated
+        mutation_id    - internal mutation counter
     """
     line = context.current_line.strip()
 

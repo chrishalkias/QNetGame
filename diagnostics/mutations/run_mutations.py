@@ -122,12 +122,14 @@ TARGETS: list[MutationTarget] = [
         tests=_SIM_TESTS,
     ),
 ]
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
+                                           
+# ▄▄▄   ▄▄▄       ▄▄                         
+# ███   ███       ██                         
+# █████████ ▄█▀█▄ ██ ████▄ ▄█▀█▄ ████▄ ▄█▀▀▀ 
+# ███▀▀▀███ ██▄█▀ ██ ██ ██ ██▄█▀ ██ ▀▀ ▀███▄ 
+# ███   ███ ▀█▄▄▄ ██ ████▀ ▀█▄▄▄ ██    ▄▄▄█▀ 
+#                    ██                      
+#                    ▀▀                      
 def _run(
     cmd: list[str],
     *,
@@ -163,12 +165,14 @@ def _validate_target(target: MutationTarget) -> list[str]:
     if not tst.exists():
         errors.append(f"  tests  not found: {tst}")
     return errors
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Core mutation run
-# ═══════════════════════════════════════════════════════════════════════════
-
+                           
+#  ▄▄▄▄▄▄▄                   
+# ███▀▀▀▀▀                   
+# ███      ▄███▄ ████▄ ▄█▀█▄ 
+# ███      ██ ██ ██ ▀▀ ██▄█▀ 
+# ▀███████ ▀███▀ ██    ▀█▄▄▄ 
+                           
+                           
 def run_mutmut(target: MutationTarget, *, dry_run: bool = False) -> int:
     """Run mutmut against *target*.  Returns the process exit code."""
     errors = _validate_target(target)
@@ -199,11 +203,14 @@ def run_mutmut(target: MutationTarget, *, dry_run: bool = False) -> int:
 
     result = _run(cmd)
     return result.returncode
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Reporting helpers
-# ═══════════════════════════════════════════════════════════════════════════
+                                                        
+# ▄▄▄▄▄▄▄                                                 
+# ███▀▀███▄                          ██   ▀▀              
+# ███▄▄███▀ ▄█▀█▄ ████▄ ▄███▄ ████▄ ▀██▀▀ ██  ████▄ ▄████ 
+# ███▀▀██▄  ██▄█▀ ██ ██ ██ ██ ██ ▀▀  ██   ██  ██ ██ ██ ██ 
+# ███  ▀███ ▀█▄▄▄ ████▀ ▀███▀ ██     ██   ██▄ ██ ██ ▀████ 
+#                 ██                                   ██ 
+#                 ▀▀                                 ▀▀▀  
 
 def show_results() -> None:
     """Print survived mutants from the last run."""
@@ -254,9 +261,13 @@ def _print_summary_table(results: dict[str, dict]) -> None:
     print()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════
+                        
+#  ▄▄▄▄▄▄▄ ▄▄▄      ▄▄▄▄▄ 
+# ███▀▀▀▀▀ ███       ███  
+# ███      ███       ███  
+# ███      ███       ███  
+# ▀███████ ████████ ▄███▄ 
+                                             
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(

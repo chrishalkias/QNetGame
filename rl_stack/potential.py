@@ -21,8 +21,10 @@ import numpy as np
 
 
 def bfs_hops(adjacency: np.ndarray, start: int) -> np.ndarray:
-    """Shortest-path hop distance from `start` to every node over the unweighted
-    graph (edge where adjacency != 0). Unreachable nodes are np.inf."""
+    """
+    Shortest-path hop distance from `start` to every node over the unweighted
+    graph (edge where adjacency != 0). Unreachable nodes are np.inf.
+    """
     n = adjacency.shape[0]
     dist = np.full(n, np.inf)
     dist[start] = 0.0
@@ -38,9 +40,11 @@ def bfs_hops(adjacency: np.ndarray, start: int) -> np.ndarray:
 
 def path_progress(d_src: np.ndarray, d_dst: np.ndarray, d_total: float,
                   entangled_edges) -> float:
-    """PBRS potential Phi in [0, 1] (see module docstring): the single entangled
+    """
+    PBRS potential Phi in [0, 1] (see module docstring): the single entangled
     link offering the largest source->dest shortcut. 0 if no edges or d_total is
-    non-positive / non-finite."""
+    non-positive / non-finite.
+    """
     if not np.isfinite(d_total) or d_total <= 0:
         return 0.0
     best = 0.0

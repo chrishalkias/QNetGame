@@ -1,4 +1,5 @@
-"""Analytic NetSquid backend (M1): chain topology, scalar-fidelity records,
+"""
+Analytic NetSquid backend (M1): chain topology, scalar-fidelity records,
 pydynaa-driven classical-comm timing. Implements the PhysicsBackend interface.
 """
 from __future__ import annotations
@@ -10,6 +11,15 @@ from .timing import SimClock
 
 NO_PARTNER = -1
 
+"""                                                                                 
+▄▄▄    ▄▄▄              ▄▄▄▄▄▄▄                    ▄▄        ▄▄▄▄▄▄▄              
+████▄  ███        ██   █████▀▀▀             ▀▀     ██       █████▀▀▀ ▀▀           
+███▀██▄███ ▄█▀█▄ ▀██▀▀  ▀████▄  ▄████ ██ ██ ██  ▄████        ▀████▄  ██  ███▄███▄ 
+███  ▀████ ██▄█▀  ██      ▀████ ██ ██ ██ ██ ██  ██ ██ ▀▀▀▀▀    ▀████ ██  ██ ██ ██ 
+███    ███ ▀█▄▄▄  ██   ███████▀ ▀████ ▀██▀█ ██▄ ▀████       ███████▀ ██▄ ██ ██ ██ 
+                                   ██                                             
+                                   ▀▀                                             
+"""
 
 class NetSquidBackend(PhysicsBackend):
     """Analytic-mode physics on NetSquid's pydynaa engine. Chain only (M1)."""
@@ -66,7 +76,15 @@ class NetSquidBackend(PhysicsBackend):
         c = max(int(self._link_cutoff[node, q]), 1)
         return float(self._p0[node, q] * np.exp(-int(self._age[node, q]) / c))
 
-    # ---- physics hooks (analytic defaults; FullDMBackend overrides) ----
+                                                                                 
+# ▄▄▄▄▄▄▄   ▄▄                                  ▄▄▄   ▄▄▄                          
+# ███▀▀███▄ ██                ▀▀                ███   ███             ▄▄           
+# ███▄▄███▀ ████▄ ██ ██ ▄█▀▀▀ ██  ▄████ ▄█▀▀▀   █████████ ▄███▄ ▄███▄ ██ ▄█▀ ▄█▀▀▀ 
+# ███▀▀▀▀   ██ ██ ██▄██ ▀███▄ ██  ██    ▀███▄   ███▀▀▀███ ██ ██ ██ ██ ████   ▀███▄ 
+# ███       ██ ██  ▀██▀ ▄▄▄█▀ ██▄ ▀████ ▄▄▄█▀   ███   ███ ▀███▀ ▀███▀ ██ ▀█▄ ▄▄▄█▀ 
+#                   ██                                                             
+#                 ▀▀▀     
+                                                         
     def _create_link(self, a, qa, b, qb, F, ec):
         """Establish a fresh entangled pair's physics + bookkeeping."""
         p = float(fidelity_to_werner(F))
@@ -140,7 +158,14 @@ class NetSquidBackend(PhysicsBackend):
     def time(self) -> float:
         return float(self._clock.tick)
 
-    # ---- slot helpers ----
+                                                                     
+#  ▄▄▄▄▄▄▄ ▄▄               ▄▄▄   ▄▄▄       ▄▄                         
+# █████▀▀▀ ██        ██     ███   ███       ██                         
+#  ▀████▄  ██ ▄███▄ ▀██▀▀   █████████ ▄█▀█▄ ██ ████▄ ▄█▀█▄ ████▄ ▄█▀▀▀ 
+#    ▀████ ██ ██ ██  ██     ███▀▀▀███ ██▄█▀ ██ ██ ██ ██▄█▀ ██ ▀▀ ▀███▄ 
+# ███████▀ ██ ▀███▀  ██     ███   ███ ▀█▄▄▄ ██ ████▀ ▀█▄▄▄ ██    ▄▄▄█▀ 
+#                                              ██                      
+#                                              ▀▀                      
     def _free_slot(self, node):
         free = np.flatnonzero((~self._occupied[node]) & (~self._locked[node]))
         return int(free[0]) if len(free) else -1
@@ -178,6 +203,14 @@ class NetSquidBackend(PhysicsBackend):
             self._free_qubit(pn, pq)
         self._free_qubit(node, q)
 
+                   
+                    #  ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄  
+                    # ███▀▀▀▀▀ ███▀▀▀▀▀  
+                    # ███▄▄    ███       
+                    # ███      ███  ███▀ 
+                    # ▀███████ ▀██████▀  
+                                    
+                   
     # ---- ACTION 1: entangle (instantaneous) ----
     def entangle(self, r1: int, r2: int) -> dict:
         result = {"success": False, "fidelity": 0.0, "reason": ""}
@@ -221,6 +254,16 @@ class NetSquidBackend(PhysicsBackend):
                 if d > best_d:
                     best_d, best = d, (qa, qb)
         return best
+    
+
+                                 
+            #  ▄▄▄▄▄▄▄                     
+            # █████▀▀▀                     
+            #  ▀████▄  ██   ██  ▀▀█▄ ████▄ 
+            #    ▀████ ██ █ ██ ▄█▀██ ██ ██ 
+            # ███████▀  ██▀██  ▀█▄██ ████▀ 
+            #                        ██    
+            #                        ▀▀    
 
     # ---- ACTION 2: swap (deferred via pydynaa) ----
     def swap(self, r: int) -> dict:
@@ -286,6 +329,15 @@ class NetSquidBackend(PhysicsBackend):
         return {"success": False, "reason": "not_implemented_m1",
                 "old_fidelity": 0.0, "new_fidelity": 0.0}
 
+
+                           
+            # ▄▄▄▄▄▄▄▄▄                  
+            # ▀▀▀███▀▀▀ ▀▀        ▄▄     
+            #    ███    ██  ▄████ ██ ▄█▀ 
+            #    ███    ██  ██    ████   
+            #    ███    ██▄ ▀████ ██ ▀█▄ 
+                           
+                           
     # ---- ACTION 4: advance one tick ----
     def advance(self) -> dict:
         self._resolved_this_advance = 0

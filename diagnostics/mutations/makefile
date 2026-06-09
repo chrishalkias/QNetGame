@@ -10,11 +10,11 @@ RUNNER   := $(PYTHON) -m diagnostics.mutations.run_mutations
         mutate-rl-env mutate-sim-repeater mutate-sim-network \
         results html dry-run clean
 
-help:  ## Show this help
+help:  ## Show help
 	@grep -E '^[a-z_-]+:.*##' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN {FS = ":.*##"}; {printf "  %-22s %s\n", $$1, $$2}'
 
-# ── Run targets ──────────────────────────────────────────────────
+# === Run targets ==========================
 mutate-all:  ## Mutation-test ALL targets
 	$(RUNNER)
 
@@ -36,7 +36,7 @@ mutate-sim-repeater:  ## Mutate quantum_repeater_sim/repeater.py
 mutate-sim-network:  ## Mutate quantum_repeater_sim/network.py
 	$(RUNNER) -t sim_network
 
-# ── Reporting ────────────────────────────────────────────────────
+# === Reporting ==========================
 results:  ## Show surviving mutants from the last run
 	$(RUNNER) --results
 
@@ -46,7 +46,7 @@ html:  ## Generate HTML mutation report
 dry-run:  ## List mutations without running tests
 	$(RUNNER) --dry-run
 
-# ── Housekeeping ─────────────────────────────────────────────────
+# == Housekeeping ==========================
 clean:  ## Remove mutmut caches
 	rm -rf .mutmut-cache diagnostics/mutations/.mutmut-cache
 	@echo "Cache cleared."
