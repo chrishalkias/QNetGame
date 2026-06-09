@@ -3,30 +3,6 @@ import numpy as np
 import pytest
 
 
-def test_phase1_config_invariants():
-    from game.phases import PHASE1, PhaseConfig
-    assert isinstance(PHASE1, PhaseConfig)
-    assert PHASE1.name == "phase1"
-    assert PHASE1.topology == "chain"
-    assert tuple(PHASE1.n_range) == (4, 5)
-    assert tuple(PHASE1.n_ch) == (2, 3)
-    # all n_ch values are ints >= 2 (exact-optimal comparison needs n_ch=2 present)
-    assert all(isinstance(c, int) and c >= 2 for c in PHASE1.n_ch)
-    assert 2 in PHASE1.n_ch
-    # cutoff must match the optimal-policy pickle naming the comparator loads
-    assert PHASE1.cutoff == 5
-    assert PHASE1.p_gen == 0.9 and PHASE1.p_swap == 0.9
-    assert PHASE1.backend == "legacy"
-    assert PHASE1.dt_seconds == 0.0
-
-
-def test_phaseconfig_is_frozen():
-    from game.phases import PHASE1
-    import dataclasses
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        PHASE1.episodes = 1  # type: ignore[misc]
-
-
 def test_normalize_n_ch_int_unchanged():
     from rl_stack.agent import QRNAgent
     assert QRNAgent._normalize_n_ch(4) == [4]
@@ -236,23 +212,6 @@ def test_disable_actions_trains(tmp_path):
     assert os.path.isfile(os.path.join(sd, "policy.pth"))
 
 
-def test_run_phase_trains_and_saves(tmp_path):
-    import dataclasses
-    import numpy as np
-    from rl_stack import QRNAgent
-    from game.phases import PHASE1
-    from game.runner import run_phase
-
-    tiny = dataclasses.replace(PHASE1, episodes=12, max_steps=8)
-    agent = QRNAgent(rng=np.random.default_rng(0))
-    save_dir = tmp_path / "phase1"
-    metrics = run_phase(agent, tiny, str(save_dir), plot=False)
-
-    assert (save_dir / "policy.pth").is_file()
-    assert set(metrics.keys()) >= {"reward", "loss", "steps", "success"}
-    assert len(metrics["reward"]) == 12
-
-
 def test_gaps_computes_percentages():
     from game.report import gaps
     row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,
@@ -338,14 +297,14 @@ def test_compare_to_optimal_with_injected_agent(tmp_path):
     repo_root = os.path.dirname(repo_root)  # diagnostics/unittests -> repo root
     sys.path.insert(0, os.path.join(repo_root, "train-test"))
     import optimal_baseline as ob
-    from game.phases import PHASE1
     from game.compare_optimal import compare_to_optimal
 
     _write_synthetic_pickle(str(tmp_path), 3, 2, 5, 30, 0.9, 0.9)
     _write_synthetic_pickle(str(tmp_path), 4, 2, 5, 30, 0.9, 0.9)
 
     report = compare_to_optimal(
-        ckpt=None, cfg=PHASE1, policy_dir=str(tmp_path),
+        ckpt=None, policy_dir=str(tmp_path),
+        p_gen=0.9, p_swap=0.9, cutoff=5, n_range=(4, 5),
         mc_eps=200, horizon=30, compare_N=(3, 4),
         agent_fn=ob.swap_asap_fn, agent_fn_swaponly=ob.swap_asap_fn,
     )
@@ -355,42 +314,6 @@ def test_compare_to_optimal_with_injected_agent(tmp_path):
         assert "T_agent" in r and "T_swap" in r and "T_opt_swaponly" in r
         assert "T_agent_swaponly" in r
         assert math.isfinite(r["T_agent"])
-
-
-def test_run_phase1_main_end_to_end(tmp_path):
-    """Tiny end-to-end: train a few episodes, run comparison against synthetic
-    pickles, write checkpoint + optimal_comparison.json."""
-    import os, json
-    save_dir = tmp_path / "phase1"
-    policy_dir = tmp_path / "policies"
-    _write_synthetic_pickle(str(policy_dir), 3, 2, 5, 30, 0.9, 0.9)
-    _write_synthetic_pickle(str(policy_dir), 4, 2, 5, 30, 0.9, 0.9)
-
-    from game.run_phase1 import main
-    main([
-        "--episodes", "12",
-        "--max_steps", "8",
-        "--save_dir", str(save_dir),
-        "--policy_dir", str(policy_dir),
-        "--mc_eps", "100",
-        "--seed", "0",
-    ])
-
-    assert (save_dir / "policy.pth").is_file()
-    out = save_dir / "optimal_comparison.json"
-    assert out.is_file()
-    report = json.loads(out.read_text())
-    assert report["config"]["n_ch"] == 2
-    assert len(report["rows"]) == 2
-
-
-def test_run_phase1_skip_compare(tmp_path):
-    from game.run_phase1 import main
-    save_dir = tmp_path / "p1"
-    main(["--episodes", "8", "--max_steps", "6",
-          "--save_dir", str(save_dir), "--skip_compare"])
-    assert (save_dir / "policy.pth").is_file()
-    assert not (save_dir / "optimal_comparison.json").exists()
 
 
 def test_load_optimal_pickle_config_mismatch_raises(tmp_path):
@@ -413,11 +336,11 @@ def test_compare_to_optimal_degrades_without_pickle(tmp_path):
     repo_root = os.path.dirname(repo_root)
     sys.path.append(os.path.join(repo_root, "train-test"))
     import optimal_baseline as ob
-    from game.phases import PHASE1
     from game.compare_optimal import compare_to_optimal
     # Empty policy_dir -> no pickles -> swap-asap-only rows with NaN optimal gap.
     report = compare_to_optimal(
-        ckpt=None, cfg=PHASE1, policy_dir=str(tmp_path),
+        ckpt=None, policy_dir=str(tmp_path),
+        p_gen=0.9, p_swap=0.9, cutoff=5, n_range=(3,),
         mc_eps=100, horizon=30, compare_N=(3,),
         agent_fn=ob.swap_asap_fn, agent_fn_swaponly=ob.swap_asap_fn,
     )

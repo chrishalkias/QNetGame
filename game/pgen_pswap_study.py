@@ -1,4 +1,5 @@
-"""Scheduling study: train an agent with (p_gen, p_swap) domain randomization on
+"""
+Scheduling study: train an agent with (p_gen, p_swap) domain randomization on
 small n_ch=2 chains (N=3,4, cutoff=5), then heatmap how close its *swap
 scheduling* (PURIFY masked) gets to the exact swap-only optimum across the
 (p_gen, p_swap) plane.
@@ -12,7 +13,6 @@ Run from repo root with the venv active:
 """
 from __future__ import annotations
 import argparse
-import dataclasses
 import json
 import os
 
@@ -24,23 +24,26 @@ import seaborn as sns
 import pandas as pd
 
 from rl_stack import QRNAgent
-from game.phases import PHASE1
-from game.runner import run_phase
 from game.compare_optimal import (
     make_agent_fns, load_optimal_pickle, _import_optimal_baseline,
 )
 
-# Domain-randomized config: one agent over the whole (p_gen, p_swap) regime.
-SCHED_STUDY = dataclasses.replace(
-    PHASE1,
-    name="sched_study",
-    n_range=(3, 4),
-    n_ch=(2,),
+# Domain-randomized training config: one curriculum-trained agent over the whole
+# (p_gen, p_swap) regime, on homogeneous n_ch=2 chains (matching the optimal
+# baseline's assumption). p_gen/p_swap as (lo, hi) -> per-episode uniform sample.
+STUDY_CFG = dict(
+    n_range=[3, 4],
+    n_ch=[2],
     cutoff=5,
-    p_gen=(0.3, 0.9),     # (lo, hi) -> per-episode uniform sample
+    p_gen=(0.3, 0.9),
     p_swap=(0.3, 0.9),
-    heterogeneous=False,  # homogeneous, matching the optimal baseline's assumption
-    episodes=5000,        # N=3,4 converge fast; stop before the late-train loss climb
+    F0=0.95,
+    channel_loss=0.0,
+    dt_seconds=0.0,
+    heterogeneous=False,
+    topology="chain",
+    backend="legacy",
+    fidelity_mode="analytic",
     max_steps=30,
 )
 
@@ -50,12 +53,14 @@ CUTOFF, HORIZON = 5, 30
 
 
 def train_study(save_dir: str, episodes: int, seed: int) -> str:
-    cfg = dataclasses.replace(SCHED_STUDY, episodes=episodes)
+    os.makedirs(save_dir, exist_ok=True)
     agent = QRNAgent(rng=np.random.default_rng(seed))
-    print(f"[study] training {cfg.name}: N={cfg.n_range} n_ch={cfg.n_ch} "
-          f"cutoff={cfg.cutoff} p_gen∈{cfg.p_gen} p_swap∈{cfg.p_swap} "
-          f"episodes={cfg.episodes}")
-    run_phase(agent, cfg, save_dir, plot=True)
+    print(f"[study] training sched_study: N={STUDY_CFG['n_range']} "
+          f"n_ch={STUDY_CFG['n_ch']} cutoff={STUDY_CFG['cutoff']} "
+          f"p_gen∈{STUDY_CFG['p_gen']} p_swap∈{STUDY_CFG['p_swap']} "
+          f"episodes={episodes}")
+    agent.train(episodes=episodes, curriculum=True, save_path=save_dir,
+                plot=True, **STUDY_CFG)
     return os.path.join(save_dir, "policy.pth")
 
 

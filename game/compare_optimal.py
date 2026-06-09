@@ -10,7 +10,6 @@ import pickle
 import numpy as np
 from typing import Dict, Optional, Sequence
 
-from .phases import PhaseConfig
 from . import report as _report
 
 
@@ -29,10 +28,12 @@ def _import_optimal_baseline():
 
 def load_optimal_pickle(policy_dir: str, N: int, n_ch: int, cutoff: int,
                         horizon: int, p_gen: float, p_swap: float) -> Optional[Dict]:
-    """Load the optimal-policy pickle for an exact config, or None if absent.
+    """
+    Load the optimal-policy pickle for an exact config, or None if absent.
 
     Raises ValueError if a file exists but its stored config disagrees (never
-    silently compare against the wrong policy)."""
+    silently compare against the wrong policy).
+    """
     fname = (f"optimal_policy_N{N}_ch{n_ch}_co{cutoff}_h{horizon}"
              f"_pg{p_gen:.2f}_ps{p_swap:.2f}.pkl")
     path = os.path.join(policy_dir, fname)
@@ -51,10 +52,12 @@ def load_optimal_pickle(policy_dir: str, N: int, n_ch: int, cutoff: int,
 
 
 def make_agent_fns(ckpt: str, hidden: int = 64):
-    """Return (full_fn, swaponly_fn): two policy_fn(env, obs) closures over one
+    """
+    Return (full_fn, swaponly_fn): two policy_fn(env, obs) closures over one
     loaded agent. `swaponly_fn` masks PURIFY off so the agent is a pure
     swap-scheduler, for an apples-to-apples comparison against the swap-only DP
-    optimum (which also cannot purify)."""
+    optimum (which also cannot purify).
+    """
     import torch
     from rl_stack.agent import QRNAgent
     from rl_stack.env_wrapper import PURIFY
@@ -76,21 +79,28 @@ def make_agent_fns(ckpt: str, hidden: int = 64):
     return full, swaponly
 
 
-def compare_to_optimal(ckpt: Optional[str], cfg: PhaseConfig, policy_dir: str,
+def compare_to_optimal(ckpt: Optional[str], policy_dir: str, *,
+                       p_gen: float, p_swap: float, cutoff: int,
+                       n_range: Sequence[int] = (),
                        mc_eps: int = 2000, horizon: int = 30,
                        compare_N: Sequence[int] = (3, 4),
                        hidden: int = 64, agent_fn=None,
                        agent_fn_swaponly=None) -> Dict:
-    """Build the optimal-comparison report at n_ch=2 for each N in compare_N.
+    """
+    Build the optimal-comparison report at n_ch=2 for each N in compare_N.
 
-    The DP optimum is purify-free, reported as `T_opt_swaponly`. The agent is
-    evaluated both with its full action set (`T_agent`) and with PURIFY masked
-    (`T_agent_swaponly`). `agent_fn` / `agent_fn_swaponly` override the policies
-    (used in tests); otherwise both are built from the checkpoint at `ckpt`."""
+    The agent's (p_gen, p_swap, cutoff) regime is passed explicitly; `n_range`
+    is the set of sizes the agent trained on (used only to tag each row's
+    `in_distribution`). The DP optimum is purify-free, reported as
+    `T_opt_swaponly`. The agent is evaluated both with its full action set
+    (`T_agent`) and with PURIFY masked (`T_agent_swaponly`). `agent_fn` /
+    `agent_fn_swaponly` override the policies (used in tests); otherwise both
+    are built from the checkpoint at `ckpt`.
+    """
     ob = _import_optimal_baseline()
     n_ch = 2  # the only exact-optimal-comparable channel count
-    pg, ps, cutoff = cfg.p_gen, cfg.p_swap, cfg.cutoff
-    trained_sizes = set(cfg.n_range)
+    pg, ps = p_gen, p_swap
+    trained_sizes = set(n_range)
 
     if agent_fn is None or agent_fn_swaponly is None:
         if ckpt is None:
