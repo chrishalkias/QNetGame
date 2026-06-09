@@ -44,7 +44,7 @@ from matplotlib.colors import to_rgba
                 #                    ██                      
                 #                    ▀▀       
                               
-NODE_DIM = 8   # must match env_wrapper feature count
+NODE_DIM = 10   # must match env_wrapper feature count (8 base + p_gen, p_swap)
 
 def _obs_to_data(obs: Dict[str, np.ndarray], device="cpu") -> Data:
     return Data(
@@ -236,9 +236,12 @@ class QRNAgent:
     @staticmethod
     def _sample_rate(rng, val):
         """Resolve a rate (p_gen/p_swap): scalar -> constant; (lo, hi) tuple/list
-        -> uniform per-episode sample. A scalar draws NO RNG, so the stream stays
-        identical to the pre-change int/scalar path (domain randomization only
-        consumes RNG when a range is given)."""
+        -> uniform per-episode sample; set/frozenset -> uniform DISCRETE choice
+        from its elements (used to land exactly on precomputed-optimal grid
+        points). A scalar draws NO RNG, so the stream stays identical to the
+        pre-change int/scalar path (randomization only consumes RNG otherwise)."""
+        if isinstance(val, (set, frozenset)):
+            return float(rng.choice(sorted(val)))
         if isinstance(val, (tuple, list)):
             lo, hi = float(val[0]), float(val[1])
             return float(rng.uniform(lo, hi))
@@ -263,16 +266,34 @@ class QRNAgent:
         cap = n_min + int(ramp * (n_max - n_min) + 0.5)   # round-half-up
         return [r for r in n_range if r <= cap]
 
+    @staticmethod
+    def _ckpt_window_start(episodes, curriculum=True, curriculum_frac=0.5,
+                           eps_floor_frac=0.9):
+        """First episode eligible for rolling-reward best-checkpoint selection.
+
+        Rolling reward is only comparable once difficulty AND exploration are
+        fixed: the curriculum must have opened the FULL size range
+        (`curriculum_frac*episodes`) AND epsilon must have reached its floor
+        (`eps_floor_frac*episodes`, matching the cosine schedule). Before that,
+        the easy early phase (small chains deliver fast, high reward) would win
+        and freeze the checkpoint at ~ep 300. Returns the later of the two gates;
+        `curriculum=False` drops the curriculum gate but still waits for epsilon."""
+        eps_floor_ep = int(eps_floor_frac * episodes)
+        curr_open_ep = int(curriculum_frac * episodes) if curriculum else 0
+        return max(eps_floor_ep, curr_open_ep)
+
     def train(self,
               episodes = 3000,
               max_steps = 50,
               n_range = [4, 5, 6, 7],
               n_ch = 4,
-              p_gen = 0.8, 
+              p_gen = 0.8,
               p_swap = 0.7,
-              cutoff = 30, 
+              p_gen_std = 0.0,
+              p_swap_std = 0.0,
+              cutoff = 30,
               F0 = 0.95,
-              channel_loss = 0.02, 
+              channel_loss = 0.02,
               dt_seconds = 1e-3,
               heterogeneous = True,
               curriculum = True,
@@ -288,6 +309,8 @@ class QRNAgent:
               eval_patience = 0,
               eval_mode = 'min',
               disable_actions = (),
+              compare = False,
+              compare_extra = None,
               plot = True) -> Dict[str, list]:
         """
         Train with curriculum over chain sizes.
@@ -299,6 +322,10 @@ class QRNAgent:
         final one (late-training degradation therefore can't clobber it); the
         final weights go to `policy_final.pth`. "Best" is judged by `eval_fn`
         when given (a held-out greedy policy probe), else by rolling-mean reward.
+        The rolling-mean path only opens in the settled LATE window (curriculum
+        fully open + epsilon at floor, see _ckpt_window_start): otherwise the easy
+        early curriculum phase — small chains deliver fast, high reward — freezes
+        the checkpoint at ~ep 300 and the harder late policy never replaces it.
 
         Early stopping: when `eval_fn` and `eval_every` are set, the probe runs
         every `eval_every` episodes; if it fails to improve for `eval_patience`
@@ -310,15 +337,48 @@ class QRNAgent:
         `disable_actions`: action indices masked off during BOTH selection and
         the Double-DQN target (e.g. (PURIFY,) trains a pure swap-scheduler).
         `eval_mode`: 'min' (lower probe = better, e.g. delivery time) or 'max'.
+
+        `compare`: each episode, also roll out the GREEDY agent, swap-asap and
+        random on one freshly seeded network and log per-policy return, steps
+        and success to metrics['cmp_{agent,swap,rand}{,_steps,_succ}'] (+ a 3-
+        panel `training_compare.png`). Read crossovers off the STEPS/SUCCESS
+        panels — those are the pure task metrics; return also reflects
+        fidelity-weighted success and failed-action penalties, so a policy can
+        lead on return while only tying on delivery time. Diagnostic only; costs
+        ~3 extra rollouts/episode; default off.
+
+        `compare_extra`: optional dict {name: policy_fn(env, obs) -> actions} of
+        extra baselines to log alongside agent/swap/rand under the SAME per-
+        episode seed (e.g. {'optimal': optimal_dispatch_fn}). Keeps agent.py
+        decoupled from experiment-specific baselines (the DP optimum is wired in
+        by the caller). Each name gets cmp_{name}{,_steps,_succ}.
         """
         #TODO: Add wandb logging
+        compare_extra = dict(compare_extra or {})
+        cmp_names = ['agent', 'swap', 'rand', *compare_extra.keys()]
         metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": []}
+        for nm in cmp_names:
+            metrics[f"cmp_{nm}"] = []
+            metrics[f"cmp_{nm}_steps"] = []
+            metrics[f"cmp_{nm}_succ"] = []
+        # Record the run config so plots can be annotated (sets -> sorted lists
+        # for JSON). p_gen/p_swap may be a scalar, (lo,hi) range, or a grid set.
+        _cfg = lambda v: sorted(v) if isinstance(v, (set, frozenset)) else v
+        metrics["config"] = {
+            "N": _cfg(n_range), "n_ch": _cfg(n_ch),
+            "p_gen": _cfg(p_gen), "p_swap": _cfg(p_swap),
+            "cutoff": cutoff, "max_steps": max_steps, "episodes": episodes,
+            "disable_actions": list(disable_actions),
+        }
         eps_init, eps_fin = 1.0, 0.05
         n_ch_pool = self._normalize_n_ch(n_ch)
         disable_actions = tuple(disable_actions)
         best_metric, best_ep, best_saved = -math.inf, -1, False
         best_eval = math.inf if eval_mode == 'min' else -math.inf
         eval_stale = 0
+        # Rolling-reward best-ckpt is only comparable in the settled late window
+        # (curriculum fully open + epsilon at floor); see _ckpt_window_start.
+        ckpt_start = self._ckpt_window_start(episodes, curriculum, curriculum_frac)
 
         try:
             for ep in range(episodes):
@@ -338,6 +398,8 @@ class QRNAgent:
                     'spacing': 50,
                     'p_gen': p_gen_ep,
                     'p_swap': p_swap_ep,
+                    'p_gen_std': p_gen_std,
+                    'p_swap_std': p_swap_std,
                     'cutoff': cutoff,
                     'F0' : F0,
                     'channel_loss' : channel_loss,
@@ -391,9 +453,29 @@ class QRNAgent:
                 metrics["success"].append(
                     1.0 if info.get("fidelity", 0) > 0 else 0.0)
 
+                # -- Per-episode paired comparison (--compare): run the GREEDY
+                # agent, swap-asap and random on ONE freshly seeded network so
+                # the returns are directly comparable. Reveals the training
+                # phases where the learned policy overtakes random, then
+                # swap-asap. Greedy (not the eps-exploring training rollout) so
+                # the crossover reflects policy quality, not the eps schedule.
+                if compare:
+                    cmp_seed = int(self.rng.integers(0, 2**32))
+                    policies = {'agent': 'agent', 'swap': 'swap', 'rand': 'rand',
+                                **compare_extra}
+                    for nm, pol in policies.items():
+                        ret, st, sc = self._cmp_rollout(
+                            args, cmp_seed, pol, max_steps, disable_actions)
+                        metrics[f"cmp_{nm}"].append(ret)
+                        metrics[f"cmp_{nm}_steps"].append(st)
+                        metrics[f"cmp_{nm}_succ"].append(sc)
+
                 # -- Best-checkpoint by rolling reward (only when no eval probe) --
+                # Gated to the late window so the whole rolling window lies past
+                # ckpt_start (curriculum open + epsilon floor) — never the easy
+                # early curriculum phase.
                 if (save_best and eval_fn is None and save_path
-                        and ep + 1 >= best_window
+                        and ep - best_window + 1 >= ckpt_start
                         and (ep % 50 == 0 or ep == episodes - 1)):
                     roll = float(np.mean(metrics["reward"][-best_window:]))
                     if roll > best_metric:
@@ -443,12 +525,58 @@ class QRNAgent:
                 print(f"[best] policy.pth = best ({crit}) @ ep {best_ep}; "
                       f"final -> policy_final.pth")
             torch.save(self.policy_net.state_dict(), final_path)
+            self._save_metrics(metrics, save_path)
 
         if plot:
             self._plot_training(metrics, save_path)
 
         return metrics
-    
+
+    @staticmethod
+    def _save_metrics(metrics, save_path):
+        """Dump raw per-episode metrics to metrics.json so plots can be
+        regenerated (train-test/replot.py) without retraining."""
+        import json
+        os.makedirs(save_path, exist_ok=True)
+        with open(os.path.join(save_path, "metrics.json"), "w") as f:
+            json.dump(metrics, f, default=float)   # default=float coerces np types
+
+    def _cmp_rollout(self, args, seed, policy, max_steps, disable_actions=()):
+        """One episode on a freshly SEEDED network (so all policies are paired on
+        the same net). Returns (return, steps, success): `steps` = episode length
+        (max_steps if undelivered), `success` = 1.0 if the e2e link was
+        delivered. Return mixes speed/fidelity/action-economy; steps+success are
+        the pure task metrics (delivery time, delivery rate).
+
+        `policy`: 'agent' (greedy, eps-free), 'swap' (swap-asap), 'rand' (random),
+        or a callable(env, obs) -> actions (an extra baseline, e.g. the optimum).
+        Used only by --compare; never touches the agent's training rollout."""
+        env = QRNEnv(**args, rng=np.random.default_rng(seed))
+        obs = env.reset()
+        rand_rng = np.random.default_rng((seed ^ 0x9E3779B9) & 0xFFFFFFFF)
+        ret = 0.0
+        steps = max_steps
+        success = 0.0
+        for t in range(max_steps):
+            mask = env.get_action_mask()
+            if disable_actions:
+                mask[:, disable_actions] = False
+            if policy == 'agent':
+                acts = self.select_actions(obs, mask, training=False)
+            elif policy == 'swap':
+                acts = strategies.swap_asap(env)
+            elif policy == 'rand':
+                acts = strategies.random_policy(env, rand_rng)
+            else:                      # callable extra baseline
+                acts = policy(env, obs)
+            obs, r, done, info = env.step(acts)
+            ret += r
+            if done:
+                steps = t + 1
+                success = 1.0 if info.get("fidelity", 0.0) > 0 else 0.0
+                break
+        return float(ret), int(steps), float(success)
+
 
         # ▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ 
         # ▀▀▀███▀▀▀ ███▀▀▀▀▀ █████▀▀▀ ▀▀▀███▀▀▀ 
@@ -463,12 +591,14 @@ class QRNAgent:
                  max_steps=50,
                  n_repeaters=8, 
                  n_ch = 4,
-                 p_gen=0.8, 
+                 p_gen=0.8,
                  p_swap=0.7,
-                 cutoff=15, 
-                 F0=0.95, 
+                 p_gen_std=0.0,
+                 p_swap_std=0.0,
+                 cutoff=15,
+                 F0=0.95,
                  channel_loss=0.02,
-                 dt_seconds=1e-3, 
+                 dt_seconds=1e-3,
                  plot_actions=True,
                  topology = 'chain',
                  heterogeneous = False,
@@ -504,6 +634,8 @@ class QRNAgent:
             'spacing': 50,
             'p_gen': p_gen,
             'p_swap': p_swap,
+            'p_gen_std': p_gen_std,
+            'p_swap_std': p_swap_std,
             'cutoff': cutoff,
             'F0' : F0,
             'channel_loss' : channel_loss,
@@ -601,25 +733,50 @@ class QRNAgent:
                 # ███       ████████  ▀█████▀     ███    
     
     @staticmethod
-    def _plot_training(metrics, save_path='assets/'):
+    def _config_caption(cfg):
+        """One-line parameter caption for the figures (N, n_ch, p_gen, p_swap,
+        tau=cutoff, H). Returns '' if no config was recorded (older runs)."""
+        if not cfg:
+            return ""
+        def f(v):
+            if isinstance(v, (list, tuple)):
+                u = sorted(set(v))
+                return str(u[0]) if len(u) == 1 else "{" + ",".join(map(str, u)) + "}"
+            return str(v)
+        parts = [f"N={f(cfg.get('N'))}", f"n_ch={f(cfg.get('n_ch'))}",
+                 f"p_gen={f(cfg.get('p_gen'))}", f"p_swap={f(cfg.get('p_swap'))}",
+                 f"τ(cutoff)={cfg.get('cutoff')}", f"max_steps={cfg.get('max_steps')}"]
+        if 2 in (cfg.get("disable_actions") or []):
+            parts.append("swap-only")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _plot_training(metrics, save_path='assets/', window=None):
+        """`window`: rolling-mean window for ALL smoothed curves. None -> the
+        per-panel adaptive defaults; pass an int (e.g. via replot.py --window)
+        to make the figures smoother without retraining."""
+        w_metric = int(window) if window else 30
+        w_steps = int(window) if window else 50
+        caption = QRNAgent._config_caption(metrics.get("config"))
         fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-        fig.suptitle("Training Metrics", fontsize=12, y=0.98)
+        fig.suptitle("Training Metrics" + (f"\n{caption}" if caption else ""),
+                     fontsize=11, y=0.99)
 
         ep = range(len(metrics["reward"]))
         axes[0].fill_between(ep, metrics["reward"], alpha=0.15, color="royalblue")
-        axes[0].plot(_running_avg(metrics["reward"]), color="royalblue", lw=1.2)
+        axes[0].plot(_running_avg(metrics["reward"], w_metric), color="royalblue", lw=1.2)
         axes[0].set_ylabel("Episode Return")
         axes[0].axhline(0, color="grey", ls=":", lw=0.5)
 
         nonzero = [v for v in metrics["loss"] if v > 0]
         if nonzero:
             axes[1].plot(metrics["loss"], alpha=0.2, color="red")
-            axes[1].plot(_running_avg(metrics["loss"]), color="red", lw=1.2)
+            axes[1].plot(_running_avg(metrics["loss"], w_metric), color="red", lw=1.2)
             axes[1].set_ylabel("Loss")
             axes[1].set_yscale("log")
 
         axes[2].fill_between(ep, metrics["steps"], alpha=0.15, color="seagreen")
-        axes[2].plot(_running_avg(metrics["steps"], 50), color="seagreen",
+        axes[2].plot(_running_avg(metrics["steps"], w_steps), color="seagreen",
                      lw=1.4)
         axes[2].set_ylabel("Avg Steps to Termination")
         axes[2].set_xlabel("Episode")
@@ -628,6 +785,67 @@ class QRNAgent:
         fname = os.path.join(save_path, "training_metrics.png") if save_path else "training_metrics.png"
         plt.savefig(fname, dpi=200, bbox_inches="tight")
         plt.close()
+
+        # --compare: dedicated crossover plot, same net/episode, GREEDY agent vs
+        # baselines. Return mixes speed/fidelity/action-economy; the steps and
+        # success panels are the pure TASK metrics — read crossovers off those.
+        if metrics.get("cmp_agent"):
+            # Fixed colour/label per known series; only those present are drawn,
+            # so the optimal line appears automatically when compare_extra
+            # supplies it. Add new named baselines here to colour them.
+            _known = (("rand", "grey", "Random"),
+                      ("swap", "darkorange", "SwapASAP"),
+                      ("optimal", "seagreen", "Optimal (swap-only)"),
+                      ("agent", "royalblue", "Agent (greedy)"))
+            series = tuple(s for s in _known if metrics.get(f"cmp_{s[0]}"))
+            n = len(metrics["cmp_agent"])
+            cep = range(n)
+            # Wide smoothing: per-episode (p_gen,p_swap) randomisation injects huge
+            # raw variance, so a small window can't reveal the trend. No raw fog —
+            # at thousands of episodes it just buries the means. `window` (e.g. via
+            # replot.py --window) overrides the adaptive default.
+            win = int(window) if window else max(50, n // 25)
+
+            # Paired GAP-to-optimal panel (the key readout): because every policy
+            # runs on the SAME seeded net each episode, policy_steps - opt_steps
+            # cancels the param-draw noise. Agent -> 0 means it reached optimal.
+            has_opt = bool(metrics.get("cmp_optimal_steps"))
+            panels = [("cmp_{}", "Episode Return"),
+                      ("cmp_{}_steps", "Steps to Terminate"),
+                      ("cmp_{}_succ", "Success")]
+            nrows = len(panels) + (1 if has_opt else 0)
+            fig2, axes2 = plt.subplots(nrows, 1, figsize=(10, 3 * nrows), sharex=True)
+
+            for i, (tmpl, ylabel) in enumerate(panels):
+                for short, color, label in series:
+                    axes2[i].plot(cep, _running_avg(metrics[tmpl.format(short)], win),
+                                  color=color, lw=1.8, label=(label if i == 0 else None))
+                axes2[i].set_ylabel(ylabel)
+            axes2[0].axhline(0, color="grey", ls=":", lw=0.5)
+
+            if has_opt:
+                gax = axes2[len(panels)]
+                opt = np.asarray(metrics["cmp_optimal_steps"], dtype=float)
+                for short, color, label in series:
+                    if short == "optimal":
+                        continue
+                    gap = (np.asarray(metrics[f"cmp_{short}_steps"], float) - opt).tolist()
+                    gax.plot(cep, _running_avg(gap, win), color=color, lw=1.8)
+                gax.axhline(0, color="seagreen", ls="--", lw=1.4)  # optimal = 0
+                gax.set_ylabel("Steps above Optimal\n(paired; 0 = optimal)")
+
+            _title = (f"Per-episode paired comparison "
+                      f"(same seeded network, rolling mean w={win})")
+            if caption:
+                _title += f"\n{caption}"
+            axes2[0].set_title(_title, fontsize=10)
+            axes2[0].legend(loc="best", fontsize=9)
+            axes2[-1].set_xlabel("Episode")
+            plt.tight_layout()
+            fname2 = (os.path.join(save_path, "training_compare.png")
+                      if save_path else "training_compare.png")
+            plt.savefig(fname2, dpi=200, bbox_inches="tight")
+            plt.close()
 
     @staticmethod
     def _print_results_table(results, N, pg, ps, c):

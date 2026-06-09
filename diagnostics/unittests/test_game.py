@@ -66,6 +66,15 @@ def test_sample_rate_range_samples_in_bounds():
     assert min(vals) < 0.45 and max(vals) > 0.75   # actually varies across range
 
 
+def test_sample_rate_set_is_discrete_choice():
+    from rl_stack.agent import QRNAgent
+    rng = np.random.default_rng(0)
+    grid = {0.3, 0.5, 0.7, 0.9}
+    vals = {QRNAgent._sample_rate(rng, grid) for _ in range(200)}
+    assert vals <= grid          # only ever lands on grid points
+    assert len(vals) >= 3        # genuinely varies across the grid
+
+
 def _n_exposure(n_range, episodes, n_target, **kw):
     """Expected fraction of episodes the curriculum samples n_target."""
     from rl_stack.agent import QRNAgent
@@ -114,7 +123,9 @@ def _tiny_train(tmp_path, name, save_best, episodes=120):
 
 def test_train_save_best_writes_best_and_final(tmp_path):
     import os
-    sd = _tiny_train(tmp_path, "best", save_best=True)
+    # Needs enough episodes to reach the settled late window (curriculum off ->
+    # eps-floor gate at 0.9*episodes; best_window=20 must fit past it).
+    sd = _tiny_train(tmp_path, "best", save_best=True, episodes=300)
     assert os.path.isfile(os.path.join(sd, "policy.pth"))        # best
     assert os.path.isfile(os.path.join(sd, "policy_final.pth"))  # final, for ref
 
@@ -138,6 +149,54 @@ def _es_train(tmp_path, name, eval_fn, episodes, patience):
         eval_fn=eval_fn, eval_every=10, eval_patience=patience, eval_mode='min',
         plot=False)
     return sd, metrics
+
+
+def test_compare_logs_paired_baseline_returns(tmp_path):
+    import numpy as np
+    from rl_stack import QRNAgent
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    m = agent.train(episodes=12, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
+                    dt_seconds=0.0, heterogeneous=False, curriculum=False,
+                    topology="chain", backend="legacy", save_path=None,
+                    save_best=False, plot=False, compare=True)
+    for k in ("cmp_agent", "cmp_swap", "cmp_rand",
+              "cmp_agent_steps", "cmp_swap_steps", "cmp_rand_steps",
+              "cmp_agent_succ", "cmp_swap_succ", "cmp_rand_succ"):
+        assert len(m[k]) == 12, k
+    assert all(isinstance(v, float) for v in m["cmp_swap"])
+    assert all(isinstance(v, int) for v in m["cmp_swap_steps"])
+    assert set(m["cmp_agent_succ"]) <= {0.0, 1.0}
+
+
+def test_compare_extra_logs_named_baseline(tmp_path):
+    import numpy as np
+    from rl_stack import QRNAgent
+    from rl_stack.env_wrapper import NOOP
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    # a trivial extra baseline: always NOOP
+    noop_fn = lambda env, obs: np.full(env.N, NOOP, dtype=int)
+    m = agent.train(episodes=10, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
+                    dt_seconds=0.0, heterogeneous=False, curriculum=False,
+                    topology="chain", backend="legacy", save_path=None,
+                    save_best=False, plot=False, compare=True,
+                    compare_extra={"optimal": noop_fn})
+    for k in ("cmp_optimal", "cmp_optimal_steps", "cmp_optimal_succ"):
+        assert len(m[k]) == 10, k
+
+
+def test_no_compare_leaves_cmp_metrics_empty(tmp_path):
+    import numpy as np
+    from rl_stack import QRNAgent
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    m = agent.train(episodes=8, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
+                    dt_seconds=0.0, heterogeneous=False, curriculum=False,
+                    topology="chain", backend="legacy", save_path=None,
+                    save_best=False, plot=False)
+    assert m["cmp_agent"] == [] and m["cmp_swap"] == [] and m["cmp_rand"] == []
+    assert m["cmp_agent_steps"] == [] and m["cmp_agent_succ"] == []
 
 
 def test_early_stopping_stops_on_no_improvement(tmp_path):

@@ -116,7 +116,7 @@ def test_qrnenv_constructs_on_fulldm():
                  fidelity_mode="full_dm", dt_seconds=0.0,
                  rng=np.random.default_rng(1))
     obs = env.reset()
-    assert obs["x"].shape == (env.N, 8)
+    assert obs["x"].shape == (env.N, 10)
 
 
 def test_fulldm_env_rollout_is_valid():
@@ -127,7 +127,7 @@ def test_fulldm_env_rollout_is_valid():
                  fidelity_mode="full_dm", dt_seconds=0.0,
                  rng=np.random.default_rng(2024))
     obs = env.reset()
-    assert obs["x"].shape == (env.N, 8)
+    assert obs["x"].shape == (env.N, 10)
     for _ in range(40):
         mask = env.get_action_mask()
         a = swap_asap(env)

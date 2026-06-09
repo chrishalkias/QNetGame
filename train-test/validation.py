@@ -1,3 +1,7 @@
+"""
+Validate a trained checkpoint against the heuristics.
+"""
+
 import argparse
 from rl_stack import QRNAgent
 
@@ -11,10 +15,15 @@ def parse_args():
     #System variables
     parser.add_argument("--nodes", type=int, default=6)
     parser.add_argument("--n_ch", type=int, default=4)
-    parser.add_argument("--p_gen", type=float, default=0.1)
-    parser.add_argument("--p_swap", type=float, default=0.85)
+    parser.add_argument("--p_gen", type=float, default=0.1,
+                        help="per-network MEAN link-generation prob.")
+    parser.add_argument("--p_swap", type=float, default=0.85,
+                        help="per-network MEAN BSM success prob.")
+    parser.add_argument("--p_gen_std", type=float, default=0.0,
+                        help="per-repeater spread of p_gen (0 = homogeneous)")
+    parser.add_argument("--p_swap_std", type=float, default=0.0,
+                        help="per-repeater spread of p_swap (0 = homogeneous)")
     parser.add_argument("--cutoff", type=int, default=100)
-    parser.add_argument("--heterogeneous", action="store_true")
     parser.add_argument("--topology", type=str, default='chain')
     parser.add_argument("--backend", type=str, default='legacy',
                         choices=['legacy', 'netsquid'],
@@ -47,9 +56,11 @@ if __name__ == "__main__":
         max_steps=args.steps,
         n_ch=args.n_ch,
         n_repeaters=args.nodes,           
-        p_gen=args.p_gen, 
-        p_swap=args.p_swap,  
-        cutoff=args.cutoff, 
+        p_gen=args.p_gen,
+        p_swap=args.p_swap,
+        p_gen_std=args.p_gen_std,
+        p_swap_std=args.p_swap_std,
+        cutoff=args.cutoff,
         F0=args.F0, 
         channel_loss=args.channel_loss,
         dt_seconds=args.dt_seconds, 

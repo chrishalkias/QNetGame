@@ -84,9 +84,20 @@ def _fill_buffer(buf, n_transitions=100, n_nodes=5):
         buf.add(obs, acts, float(np.random.randn()), nobs, False, mask)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 1.  ARCHITECTURE & LOGIC VALIDATION
-# ═══════════════════════════════════════════════════════════════════════════════
+                                                                        
+#   ▄▄▄▄               ▄▄                                                 
+# ▄██▀▀██▄             ██    ▀▀  ██                ██                     
+# ███  ███ ████▄ ▄████ ████▄ ██ ▀██▀▀ ▄█▀█▄ ▄████ ▀██▀▀ ██ ██ ████▄ ▄█▀█▄ 
+# ███▀▀███ ██ ▀▀ ██    ██ ██ ██  ██   ██▄█▀ ██     ██   ██ ██ ██ ▀▀ ██▄█▀ 
+# ███  ███ ██    ▀████ ██ ██ ██▄ ██   ▀█▄▄▄ ▀████  ██   ▀██▀█ ██    ▀█▄▄▄ 
+                                                                                                                                                                                                        
+#           ▄▄▄                                                           
+#    ▄      ███                  ▀▀                                       
+#    █      ███      ▄███▄ ▄████ ██  ▄████                                
+# ▀▀▀█▀▀▀   ███      ██ ██ ██ ██ ██  ██                                   
+#    █      ████████ ▀███▀ ▀████ ██▄ ▀████                                
+#                             ██                                          
+#                           ▀▀▀                                           
 
 class TestDoubleDQNUpdateRule(unittest.TestCase):
     """
@@ -272,6 +283,23 @@ class TestActionMaskingInTargetComputation(unittest.TestCase):
         self.assertFalse(math.isnan(loss), "Loss must not be NaN with -inf masked Q-values.")
 
 
+class TestCheckpointWindowGate(unittest.TestCase):
+    """The best-checkpoint window must open only after the curriculum has fully
+    opened AND epsilon has reached its floor (0.9*episodes) — otherwise the easy
+    early curriculum phase (small fast-delivering chains) wins on rolling reward."""
+
+    def test_eps_floor_dominates_default_curriculum(self):
+        # frac=0.5 opens curriculum at 15000; eps floor at 0.9*30000=27000 -> 27000.
+        self.assertEqual(QRNAgent._ckpt_window_start(30000, True, 0.5), 27000)
+
+    def test_late_curriculum_dominates_eps_floor(self):
+        # frac=0.95 opens curriculum at 950 > eps floor 900 -> 950.
+        self.assertEqual(QRNAgent._ckpt_window_start(1000, True, 0.95), 950)
+
+    def test_no_curriculum_uses_eps_floor(self):
+        self.assertEqual(QRNAgent._ckpt_window_start(1000, False, 0.5), 900)
+
+
 class TestGraphBatching(unittest.TestCase):
     """
     torch_geometric Batch.from_data_list must correctly concatenate node
@@ -319,9 +347,14 @@ class TestGraphBatching(unittest.TestCase):
         self.assertTrue((rewards_node[4:] == -0.01).all())
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 2.  ENVIRONMENT (QRNEnv)
-# ═══════════════════════════════════════════════════════════════════════════════
+                                                    
+#   ▄▄▄▄▄   ▄▄▄▄▄▄▄   ▄▄▄    ▄▄▄  ▄▄▄▄▄▄▄             
+# ▄███████▄ ███▀▀███▄ ████▄  ███ ███▀▀▀▀▀             
+# ███   ███ ███▄▄███▀ ███▀██▄███ ███▄▄    ████▄ ██ ██ 
+# ███▄█▄███ ███▀▀██▄  ███  ▀████ ███      ██ ██ ██▄██ 
+#  ▀█████▀  ███  ▀███ ███    ███ ▀███████ ██ ██  ▀█▀  
+#       ▀▀                                            
+                                                    
 
 class TestQRNEnvReset(unittest.TestCase):
 
@@ -335,8 +368,8 @@ class TestQRNEnvReset(unittest.TestCase):
 
     def test_reset_node_feature_shape(self):
         obs = self.env.reset()
-        # 8 features per node as documented in env_wrapper.
-        self.assertEqual(obs["x"].shape, (5, 8))
+        # 10 features per node as documented in env_wrapper (8 base + p_gen, p_swap).
+        self.assertEqual(obs["x"].shape, (5, 10))
 
     def test_reset_steps_and_done_reinitialised(self):
         self.env.reset()
@@ -364,9 +397,10 @@ class TestQRNEnvReset(unittest.TestCase):
 
 class TestObservationFeatures(unittest.TestCase):
     """
-    Verify all 8 node features:
+    Verify all 10 node features:
       [0] frac_occupied  [1] mean_fidelity  [2] is_source  [3] is_dest
       [4] frac_available [5] can_swap       [6] can_purify [7] time_remaining
+      [8] p_gen          [9] p_swap
     """
 
     def setUp(self):
@@ -375,10 +409,24 @@ class TestObservationFeatures(unittest.TestCase):
 
     def test_feature_values_in_valid_range(self):
         x = self.obs["x"]
-        # Fractions and flags must lie in [0, 1].
-        for col in range(8):
+        # Fractions, flags and per-repeater rates must all lie in [0, 1].
+        for col in range(10):
             self.assertTrue((x[:, col] >= 0).all() and (x[:, col] <= 1).all(),
                             f"Feature column {col} out of [0,1] range.")
+
+    def test_p_gen_p_swap_features_match_backend(self):
+        # Cols 8/9 must equal each repeater's per-node p_gen / p_swap, and an
+        # inhomogeneous network (std>0) must produce genuinely varying values.
+        env = QRNEnv(n_repeaters=6, n_ch=4, p_gen=0.7, p_swap=0.7,
+                     p_gen_std=0.18, p_swap_std=0.18, cutoff=20, max_steps=40,
+                     topology="chain", rng=np.random.default_rng(99))
+        x = env.reset()["x"]
+        for i in range(env.N):
+            ns = env.backend.node_state(i)
+            self.assertAlmostEqual(float(x[i, 8]), float(ns.p_gen), places=5)
+            self.assertAlmostEqual(float(x[i, 9]), float(ns.p_swap), places=5)
+        self.assertGreater(float(x[:, 8].std()), 0.0)  # inhomogeneous
+        self.assertGreater(float(x[:, 9].std()), 0.0)
 
     def test_source_dest_flags_exclusive(self):
         x = self.obs["x"]
@@ -495,9 +543,14 @@ class TestStepFunction(unittest.TestCase):
         self.assertAlmostEqual(reward, expected)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 3.  AGENT (QRNAgent)
-# ═══════════════════════════════════════════════════════════════════════════════
+                                                                
+#   ▄▄▄▄▄   ▄▄▄▄▄▄▄   ▄▄▄    ▄▄▄   ▄▄▄▄                           
+# ▄███████▄ ███▀▀███▄ ████▄  ███ ▄██▀▀██▄                    ██   
+# ███   ███ ███▄▄███▀ ███▀██▄███ ███  ███ ▄████ ▄█▀█▄ ████▄ ▀██▀▀ 
+# ███▄█▄███ ███▀▀██▄  ███  ▀████ ███▀▀███ ██ ██ ██▄█▀ ██ ██  ██   
+#  ▀█████▀  ███  ▀███ ███    ███ ███  ███ ▀████ ▀█▄▄▄ ██ ██  ██   
+#       ▀▀                                   ██                   
+#                                          ▀▀▀                    
 
 class TestSelectActions(unittest.TestCase):
     """
@@ -615,10 +668,13 @@ class TestTrainStepTensorShapes(unittest.TestCase):
         self.assertEqual(current_q.shape, target.shape,
                          "current_q and target_q must have identical shape for loss.")
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 4.  BUFFER (ReplayBuffer)
-# ═══════════════════════════════════════════════════════════════════════════════
+                                      
+# ▄▄▄▄▄▄▄           ▄▄   ▄▄             
+# ███▀▀███▄        ██   ██              
+# ███▄▄███▀ ██ ██ ▀██▀ ▀██▀ ▄█▀█▄ ████▄ 
+# ███  ███▄ ██ ██  ██   ██  ██▄█▀ ██ ▀▀ 
+# ████████▀ ▀██▀█  ██   ██  ▀█▄▄▄ ██    
+                                                                         
 
 class TestReplayBuffer(unittest.TestCase):
 
@@ -697,9 +753,21 @@ class TestReplayBuffer(unittest.TestCase):
         self.assertTrue(entry["d"])
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5.  EDGE CASES & RL LOOPHOLES
-# ═══════════════════════════════════════════════════════════════════════════════
+                                                                               
+#  ▄▄▄▄▄▄▄    ▄▄                                                                 
+# ███▀▀▀▀▀    ██                                                                 
+# ███▄▄    ▄████ ▄████ ▄█▀█▄   ▄████  ▀▀█▄ ▄█▀▀▀ ▄█▀█▄ ▄█▀▀▀                     
+# ███      ██ ██ ██ ██ ██▄█▀   ██    ▄█▀██ ▀███▄ ██▄█▀ ▀███▄                     
+# ▀███████ ▀████ ▀████ ▀█▄▄▄   ▀████ ▀█▄██ ▄▄▄█▀ ▀█▄▄▄ ▄▄▄█▀                     
+#                   ██                                                           
+#                 ▀▀▀                                                                                                                                        
+#           ▄▄▄▄▄▄▄   ▄▄▄        ▄▄                   ▄▄          ▄▄             
+#    ▄      ███▀▀███▄ ███        ██                   ██          ██             
+#    █      ███▄▄███▀ ███        ██ ▄███▄ ▄███▄ ████▄ ████▄ ▄███▄ ██ ▄█▀█▄ ▄█▀▀▀ 
+# ▀▀▀█▀▀▀   ███▀▀██▄  ███        ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██▄█▀ ▀███▄ 
+#    █      ███  ▀███ ████████   ██ ▀███▀ ▀███▀ ████▀ ██ ██ ▀███▀ ██ ▀█▄▄▄ ▄▄▄█▀ 
+#                                               ██                               
+#                                               ▀▀                               
 
 class TestTargetNodeActionInjection(unittest.TestCase):
     """
@@ -909,7 +977,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                      cutoff=20, max_steps=40, topology="chain",
                      rng=np.random.default_rng(2024))
         obs = env.reset()
-        self.assertEqual(obs["x"].shape, (env.N, 8))
+        self.assertEqual(obs["x"].shape, (env.N, 10))
         self.assertEqual(obs["edge_index"].shape[0], 2)
         for _ in range(40):
             mask = env.get_action_mask()
@@ -918,7 +986,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                 self.assertTrue(mask[i, a[i]])
             obs, r, done, info = env.step(a)
             self.assertTrue(np.isfinite(r))
-            self.assertEqual(obs["x"].shape, (env.N, 8))
+            self.assertEqual(obs["x"].shape, (env.N, 10))
             self.assertTrue(np.all(obs["x"] >= -1e-6))
             self.assertTrue(np.all(obs["x"] <= 1.0 + 1e-6))
             if done:

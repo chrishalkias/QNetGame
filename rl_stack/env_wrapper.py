@@ -68,6 +68,8 @@ class QRNEnv:
                  spacing = 50.0,
                  p_gen = 0.8,
                  p_swap = 0.5,
+                 p_gen_std = 0.0,
+                 p_swap_std = 0.0,
                  cutoff = 20,
                  F0 = 0.95,
                  channel_loss = 0.02,
@@ -91,7 +93,8 @@ class QRNEnv:
 
         self.backend = make_backend(
             backend, topology=topology, n_repeaters=n_repeaters, n_ch=n_ch,
-            spacing=spacing, p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+            spacing=spacing, p_gen=p_gen, p_swap=p_swap,
+            p_gen_std=p_gen_std, p_swap_std=p_swap_std, cutoff=cutoff,
             F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
             heterogeneous=heterogeneous, rng=self.rng, fidelity_mode=fidelity_mode)
 
@@ -162,7 +165,7 @@ class QRNEnv:
     def get_observation(self) -> Dict[str, np.ndarray]:
         """Build size-agnostic node features + topology.
 
-        Features per node (8):
+        Features per node (10):
             [0] frac_occupied     — occupied / n_ch
             [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
             [2] is_source         — 0/1
@@ -171,11 +174,14 @@ class QRNEnv:
             [5] can_swap          — 1.0 if ≥2 available qubits to different partners
             [6] can_purify        — 1.0 if ≥2 available qubits to same partner
             [7] time_remaining    — (max_steps - steps) / max_steps
+            [8] p_gen             — per-repeater link-generation prob. (inhomogeneity)
+            [9] p_swap            — per-repeater BSM success prob. (inhomogeneity)
 
-        Features [5] and [6] are forced to 0 for source / dest.
-        #TODO add p_gen, p_s, tau as features for inhomogenious
+        Features [5] and [6] are forced to 0 for source / dest. Features [8]/[9]
+        are constant across nodes when the network is homogeneous (std=0); they
+        carry node-quality signal only under per-repeater inhomogeneity.
         """
-        feats = np.zeros((self.N, 8), dtype=np.float32)
+        feats = np.zeros((self.N, 10), dtype=np.float32)
         for i in range(self.N):
             ns = self.backend.node_state(i)
             occ = ns.occupied
@@ -193,6 +199,8 @@ class QRNEnv:
                 feats[i, 5] = 1.0 if self._can_swap_from(ns) else 0.0
                 feats[i, 6] = 1.0 if self._can_purify_from(ns) else 0.0
             feats[i, 7] = (self.max_steps - self.steps) / self.max_steps
+            feats[i, 8] = ns.p_gen
+            feats[i, 9] = ns.p_swap
         src, dst = np.nonzero(self._topo.adjacency)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}

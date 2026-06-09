@@ -145,6 +145,57 @@ def test_factory_netsquid_grid_full_dm_not_yet_available():
         make_backend("netsquid", topology="grid", fidelity_mode="full_dm")
 
 
+from quantum_repeater_sim.backends.factory import _sample_matched_uniform
+
+
+def test_sample_matched_uniform_std_zero_is_constant_and_drawless():
+    # std=0 must broadcast the (clipped) mean and consume NO rng (stream-safe).
+    rng_a = np.random.default_rng(123)
+    rng_b = np.random.default_rng(123)
+    out = _sample_matched_uniform(0.7, 0.0, 5, rng_a)
+    assert out.shape == (5,)
+    assert np.allclose(out, 0.7)
+    # rng_a must be untouched -> same next draw as the pristine rng_b
+    assert rng_a.random() == rng_b.random()
+
+
+def test_sample_matched_uniform_std_zero_clips_mean():
+    out = _sample_matched_uniform(1.5, 0.0, 3, np.random.default_rng(0))
+    assert np.allclose(out, 1.0)  # clipped to hi
+
+
+def test_sample_matched_uniform_in_band_and_varies():
+    mean, std = 0.6, 0.15
+    out = _sample_matched_uniform(mean, std, 200, np.random.default_rng(1))
+    hw = np.sqrt(3.0) * std
+    assert out.min() >= max(0.05, mean - hw) - 1e-9
+    assert out.max() <= min(1.0, mean + hw) + 1e-9
+    assert out.std() > 0.0  # genuinely heterogeneous
+
+
+def test_sample_matched_uniform_clips_to_valid_band():
+    out = _sample_matched_uniform(0.95, 0.4, 500, np.random.default_rng(2))
+    assert out.min() >= 0.05
+    assert out.max() <= 1.0
+
+
+def test_factory_std_makes_per_repeater_params_differ():
+    be = make_backend("legacy", topology="chain", n_repeaters=6,
+                      p_gen=0.7, p_swap=0.7, p_swap_std=0.18,
+                      rng=np.random.default_rng(3))
+    ps = np.array([rep.p_swap for rep in be.net.repeaters])
+    assert ps.std() > 0.0          # inhomogeneous
+    assert ps.min() >= 0.05 and ps.max() <= 1.0
+
+
+def test_factory_std_zero_is_homogeneous():
+    be = make_backend("legacy", topology="chain", n_repeaters=6,
+                      p_gen=0.7, p_swap=0.65,
+                      rng=np.random.default_rng(4))
+    assert all(rep.p_gen == 0.7 for rep in be.net.repeaters)
+    assert all(rep.p_swap == 0.65 for rep in be.net.repeaters)
+
+
 def test_fidelity_gated_swap_uses_backend_snapshot():
     from rl_stack.env_wrapper import QRNEnv
     from rl_stack.strategies import fidelity_gated_swap

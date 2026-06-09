@@ -1,3 +1,7 @@
+"""
+Train an RL agent on a specified system topology
+"""
+
 import argparse
 import os
 from rl_stack import QRNAgent
@@ -25,9 +29,14 @@ def parse_args():
                         choices=['analytic', 'full_dm'],
                         help="netsquid mode: analytic (fast, for training) "
                              "or full_dm (slow, validation only)")
-    parser.add_argument("--heterogeneous", action="store_false")
-    parser.add_argument("--p_gen", type=float, default=0.60)
-    parser.add_argument("--p_swap", type=float, default=0.85)
+    parser.add_argument("--p_gen", type=float, default=0.60,
+                        help="per-network MEAN link-generation prob.")
+    parser.add_argument("--p_swap", type=float, default=0.85,
+                        help="per-network MEAN BSM success prob.")
+    parser.add_argument("--p_gen_std", type=float, default=0.0,
+                        help="per-repeater spread of p_gen (0 = homogeneous)")
+    parser.add_argument("--p_swap_std", type=float, default=0.0,
+                        help="per-repeater spread of p_swap (0 = homogeneous)")
     parser.add_argument("--cutoff", type=int, default=6)
 
     # CC Variables
@@ -35,6 +44,9 @@ def parse_args():
     parser.add_argument("--channel_loss", type=float, default=0.00)
     parser.add_argument("--F0", type=float, default=1.0)
     
+    parser.add_argument("--compare", action="store_true",
+                        help="log per-episode greedy-agent vs swap-asap vs random "
+                             "returns on a shared seeded net (+ training_compare.png)")
     parser.add_argument("--save_base_dir", type=str, default="checkpoints")
     return parser.parse_args()
 
@@ -60,9 +72,11 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         n_range=list(range(args.n_lo, args.n_hi+1)),
         curriculum=args.curriculum,
-        heterogeneous=args.heterogeneous,
-        p_gen=args.p_gen, 
+        heterogeneous=False,   # inhomogeneity is now driven by p_gen_std/p_swap_std
+        p_gen=args.p_gen,
         p_swap=args.p_swap,
+        p_gen_std=args.p_gen_std,
+        p_swap_std=args.p_swap_std,
         cutoff=args.cutoff,
         channel_loss=args.channel_loss,
         F0=args.F0,
@@ -71,4 +85,5 @@ if __name__ == "__main__":
         topology=args.topology,
         backend=args.backend,
         fidelity_mode=args.fidelity_mode,
+        compare=args.compare,
         plot=True,)

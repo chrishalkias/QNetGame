@@ -59,9 +59,14 @@ def _entangle_force(net, r1, r2):
     return res
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 1.  PHYSICAL VALIDATION
-# ═══════════════════════════════════════════════════════════════════════════════
+                                            
+# ▄▄▄▄▄▄▄   ▄▄                                
+# ███▀▀███▄ ██                ▀▀              
+# ███▄▄███▀ ████▄ ██ ██ ▄█▀▀▀ ██  ▄████ ▄█▀▀▀ 
+# ███▀▀▀▀   ██ ██ ██▄██ ▀███▄ ██  ██    ▀███▄ 
+# ███       ██ ██  ▀██▀ ▄▄▄█▀ ██▄ ▀████ ▄▄▄█▀ 
+#                   ██                        
+#                 ▀▀▀                         
 
 class TestWernerFidelityConversion(unittest.TestCase):
     """Werner ↔ Fidelity round-trip: F = (3p + 1) / 4  ↔  p = (4F - 1) / 3."""
@@ -292,9 +297,14 @@ class TestDistanceDependency(unittest.TestCase):
         self.assertAlmostEqual(net._gen_prob(0, 1), 1.0, places=9)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 2.  CORE FUNCTIONALITY
-# ═══════════════════════════════════════════════════════════════════════════════
+                           
+#  ▄▄▄▄▄▄▄                   
+# ███▀▀▀▀▀                   
+# ███      ▄███▄ ████▄ ▄█▀█▄ 
+# ███      ██ ██ ██ ▀▀ ██▄█▀ 
+# ▀███████ ▀███▀ ██    ▀█▄▄▄ 
+                           
+                           
 
 class TestEntanglement(unittest.TestCase):
 
@@ -602,9 +612,22 @@ class TestCrossModuleWiring(unittest.TestCase):
         self.assertEqual(net.adj[0, 2], 0.0)   # not directly adjacent
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 3.  EDGE CASES AND RL LOOPHOLE TESTS
-# ═══════════════════════════════════════════════════════════════════════════════
+                                                           
+#  ▄▄▄▄▄▄▄    ▄▄                                             
+# ███▀▀▀▀▀    ██                                             
+# ███▄▄    ▄████ ▄████ ▄█▀█▄   ▄████  ▀▀█▄ ▄█▀▀▀ ▄█▀█▄ ▄█▀▀▀ 
+# ███      ██ ██ ██ ██ ██▄█▀   ██    ▄█▀██ ▀███▄ ██▄█▀ ▀███▄ 
+# ▀███████ ▀████ ▀████ ▀█▄▄▄   ▀████ ▀█▄██ ▄▄▄█▀ ▀█▄▄▄ ▄▄▄█▀ 
+#                   ██                                       
+#                 ▀▀▀                                        
+                                                           
+#           ▄▄▄▄▄▄▄   ▄▄▄                                    
+#    ▄      ███▀▀███▄ ███                                    
+#    █      ███▄▄███▀ ███                                    
+# ▀▀▀█▀▀▀   ███▀▀██▄  ███                                    
+#    █      ███  ▀███ ████████                               
+                                                           
+                                                           
 
 class TestGhostLinkResolution(unittest.TestCase):
     """
@@ -863,9 +886,14 @@ class TestSelfSwapping(unittest.TestCase):
             rep.set_link(0, 5, 1, 0.9)   # partner is itself
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 4.  ADDITIONAL ROBUSTNESS TESTS
-# ═══════════════════════════════════════════════════════════════════════════════
+                                                                                  
+# ▄▄▄▄▄▄▄                                                                           
+# ███▀▀███▄                          ██                                ▄       ▄    
+# ███▄▄███▀ ▄███▄ ████▄ ██ ██ ▄█▀▀▀ ▀██▀▀ ████▄ ▄█▀█▄ ▄█▀▀▀ ▄█▀▀▀      █       █    
+# ███▀▀██▄  ██ ██ ██ ██ ██ ██ ▀███▄  ██   ██ ██ ██▄█▀ ▀███▄ ▀███▄   ▀▀▀█▀▀▀ ▀▀▀█▀▀▀ 
+# ███  ▀███ ▀███▀ ██ ██ ▀██▀█ ▄▄▄█▀  ██   ██ ██ ▀█▄▄▄ ▄▄▄█▀ ▄▄▄█▀      █       █    
+                                                                                  
+                                                                                  
 
 class TestResetBehaviour(unittest.TestCase):
 
@@ -1005,7 +1033,7 @@ class TestEnvWrapper(unittest.TestCase):
         env = QRNEnv(n_repeaters=6, topology="chain")
         obs = env.reset()
         # Expected: (N, 8) node feature matrix.
-        self.assertEqual(obs["x"].shape, (6, 8))
+        self.assertEqual(obs["x"].shape, (6, 10))
 
     def test_action_mask_shape_and_noop_always_true(self):
         env = QRNEnv(n_repeaters=5, topology="chain")
