@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="figs/logo.svg" width="180" alt="QNetGame logo">
+</p>
+
 # QNetGame
 
 ![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)

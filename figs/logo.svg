@@ -1,0 +1,24 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QNetGame">
+  <title>QNetGame</title>
+  <defs>
+    <linearGradient id="qnet-link" x1="53" y1="63" x2="208" y2="204" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#28B8D8"/>
+      <stop offset="1" stop-color="#5B5FEF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- A quantum repeater chain wrapped into a Q-shaped entanglement path. -->
+  <path d="M128 42C80.5 42 42 80.5 42 128C42 175.5 80.5 214 128 214C150.2 214 170.4 205.6 185.7 191.8"
+        stroke="url(#qnet-link)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M185.7 191.8L216 222" stroke="#5B5FEF" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- Entangled end-to-end link crossing the repeater nodes. -->
+  <path d="M74 128C88 103 104 103 128 128C152 153 168 153 182 128"
+        stroke="url(#qnet-link)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M74 128C88 153 104 153 128 128C152 103 168 103 182 128"
+        stroke="url(#qnet-link)" stroke-width="8" stroke-linecap="round" opacity="0.55"/>
+
+  <circle cx="74" cy="128" r="13" fill="#F7FCFF" stroke="#28B8D8" stroke-width="7"/>
+  <circle cx="128" cy="128" r="13" fill="#F7FCFF" stroke="#428CDD" stroke-width="7"/>
+  <circle cx="182" cy="128" r="13" fill="#F7FCFF" stroke="#5B5FEF" stroke-width="7"/>
+</svg>
