@@ -49,7 +49,7 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import Ridge
 from sklearn.model_selection import cross_val_score
 
-from rl_stack.model import QNetwork
+from rl_stack.model import QNetwork, load_qnet
 from rl_stack.env_wrapper import QRNEnv, N_ACTIONS, NOOP
 from rl_stack.agent import _obs_to_data
 
@@ -71,7 +71,6 @@ PARAM_POINT = dict(              # representative parameter point
     p_swap=0.7,
     cutoff=15,
     dt_seconds=0,
-    heterogeneous=False,
     topology="chain",
     n_ch=4,
     F0=0.95,
@@ -79,7 +78,6 @@ PARAM_POINT = dict(              # representative parameter point
 )
 SEED = 12345
 HIDDEN = 64
-NODE_DIM = 8
 FID_COL = 1                      # mean_fidelity feature index
 OCC_COL = 0                      # frac_occupied feature index
 VAR_THRESHOLD = 0.90             # variance target for "#PCs for >=90%"
@@ -92,16 +90,8 @@ STATS_PATH = os.path.join(FIG_DIR, "interpretability_stats.txt")
 
 
 # --------------------------------------------------------------------------- #
-# Model loading + conv3 embedding extraction (forward hook)
+# conv3 embedding extraction (forward hook)
 # --------------------------------------------------------------------------- #
-def load_model(ckpt_path: str, device: str = "cpu") -> QNetwork:
-    model = QNetwork(NODE_DIM, HIDDEN, N_ACTIONS)
-    state = torch.load(ckpt_path, map_location=device, weights_only=True)
-    model.load_state_dict(state)
-    model.eval()
-    model.to(device)
-    return model
-
 
 class Conv3Hook:
     """Capture the post-conv3 (pre-ReLU) output via a forward hook.
@@ -269,7 +259,7 @@ def main():
     np.random.seed(SEED)
 
     print(f"Loading model from {args.ckpt}")
-    model = load_model(args.ckpt, device=args.device)
+    model = load_qnet(args.ckpt, args.device)
 
     results = {}
     embeddings = {}
@@ -323,7 +313,6 @@ def write_stats(results, ckpt):
                  f"p_swap={PARAM_POINT['p_swap']}, "
                  f"cutoff={PARAM_POINT['cutoff']}, "
                  f"dt_seconds={PARAM_POINT['dt_seconds']}, "
-                 f"heterogeneous={PARAM_POINT['heterogeneous']}, "
                  f"topology={PARAM_POINT['topology']}")
     lines.append(f"Embedding  : conv3 output (ReLU), dim={HIDDEN}, "
                  f"pooled over ALL interior nodes and all timesteps")

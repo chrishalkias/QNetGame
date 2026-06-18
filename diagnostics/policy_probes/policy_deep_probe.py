@@ -5,18 +5,13 @@ Deeper probes into the failed physics checks to diagnose root causes.
 from __future__ import annotations
 import numpy as np
 import torch
-from rl_stack.model import QNetwork
+from rl_stack.model import load_qnet
 from rl_stack.env_wrapper import N_ACTIONS, NOOP, SWAP, PURIFY
 from rl_stack.agent import _obs_to_data
 
 ACTION_NAMES = ['Wait', 'Swap', 'Purify']
 
 
-def load_model(path, hidden=64):
-    model = QNetwork(node_dim=8, hidden=hidden, n_actions=N_ACTIONS)
-    model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
-    model.eval()
-    return model
 
 
 def _make_obs(features):
@@ -48,7 +43,7 @@ def make_chain(probe, occ, fid, t_rem, can_swap=0, can_purify=0):
 
 
 def run_probes(model_path):
-    model = load_model(model_path)
+    model = load_qnet(model_path)
     probe = 2
 
     # ---- PROBE A: Does the mask (can_swap / can_purify) actually matter? ----

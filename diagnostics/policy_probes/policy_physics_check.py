@@ -7,18 +7,11 @@ about quantum repeater networks. Prints PASS/FAIL for each check.
 from __future__ import annotations
 import numpy as np
 import torch
-from rl_stack.model import QNetwork
+from rl_stack.model import load_qnet
 from rl_stack.env_wrapper import N_ACTIONS, NOOP, SWAP, PURIFY
 from rl_stack.agent import _obs_to_data
 
 NEIGHBORS = {0: [1], 1: [0, 2], 2: [1, 3], 3: [2, 4], 4: [3]}
-
-
-def load_model(path: str, hidden: int = 64) -> QNetwork:
-    model = QNetwork(node_dim=8, hidden=hidden, n_actions=N_ACTIONS)
-    model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
-    model.eval()
-    return model
 
 
 def _make_obs(features: np.ndarray):
@@ -62,7 +55,7 @@ def make_chain(probe: int, occ: float, fid: float, t_rem: float,
                                                                              
 
 def run_checks(model_path: str, hidden: int = 64):
-    model = load_model(model_path, hidden)
+    model = load_qnet(model_path)
     probe = 2
     results = []
 

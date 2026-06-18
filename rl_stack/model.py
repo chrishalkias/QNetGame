@@ -30,3 +30,25 @@ class QNetwork(nn.Module):
         x = F.relu(self.conv2(x, ei))
         x = F.relu(self.conv3(x, ei))
         return self.head(x)          # [total_nodes_in_batch, n_actions]
+
+
+def load_qnet(path: str, device: str = "cpu") -> QNetwork:
+    """Load a checkpoint, inferring node_dim/hidden from conv1.lin_l.weight."""
+    state = torch.load(path, map_location=device, weights_only=True)
+    hidden, node_dim = state["conv1.lin_l.weight"].shape
+    model = QNetwork(node_dim=node_dim, hidden=hidden)
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
+    return model
+
+
+if __name__ == "__main__":  # ponytail: round-trip self-check
+    import tempfile, os
+    net = QNetwork(node_dim=7, hidden=16)
+    f = os.path.join(tempfile.mkdtemp(), "p.pth")
+    torch.save(net.state_dict(), f)
+    loaded = load_qnet(f)
+    assert loaded.conv1.lin_l.weight.shape == (16, 7)
+    assert not loaded.training
+    print("load_qnet OK")

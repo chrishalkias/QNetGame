@@ -40,7 +40,6 @@ STUDY_CFG = dict(
     F0=0.95,
     channel_loss=0.0,
     dt_seconds=0.0,
-    heterogeneous=False,
     topology="chain",
     backend="legacy",
     fidelity_mode="analytic",

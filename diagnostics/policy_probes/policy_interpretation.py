@@ -24,7 +24,7 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-from rl_stack.model import QNetwork
+from rl_stack.model import load_qnet
 from rl_stack.env_wrapper import NOOP, SWAP, PURIFY, N_ACTIONS
 
 # -- action labels / colours ----------------------------
@@ -72,15 +72,6 @@ def _get_q(model, obs, device: str = "cpu") -> np.ndarray:
     data = _obs_to_data(obs, device)
     with torch.no_grad():
         return model(data).cpu().numpy()
-
-
-def load_model(model_path: str, node_dim: int = 8,
-               hidden: int = 64, device: str = "cpu") -> QNetwork:
-    model = QNetwork(node_dim, hidden, N_ACTIONS)
-    model.load_state_dict(
-        torch.load(model_path, map_location=device, weights_only=True))
-    model.eval()
-    return model
 
 
 def _tag(n_nodes: int, probe: int) -> str:
@@ -289,7 +280,7 @@ def run_all(model_path: str, save_dir: str = "diagnostics",
             device: str = "cpu", n_nodes: int = 5, probe: int = 2):
     os.makedirs(save_dir, exist_ok=True)
     print(f"Loading model from {model_path}")
-    model = load_model(model_path, device=device)
+    model = load_qnet(model_path, device)
     print(f"Running diagnostics — node {probe} of {n_nodes}-chain "
           f"(saving to {save_dir}/)...\n")
 

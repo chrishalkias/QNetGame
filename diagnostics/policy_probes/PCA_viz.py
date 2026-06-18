@@ -32,7 +32,7 @@ from matplotlib.colors import Normalize
 from matplotlib import cm
 from sklearn.decomposition import PCA
 
-from rl_stack.model import QNetwork
+from rl_stack.model import QNetwork, load_qnet
 from rl_stack.env_wrapper import N_ACTIONS, NOOP, SWAP, PURIFY
 from rl_stack.agent import _obs_to_data
 
@@ -54,14 +54,6 @@ DEFAULT_T_REM = 0.5        # fixed time-remaining for neighbour nodes
 #                    ██                      
 #                    ▀▀           
            
-def load_model(path: str, hidden: int = 64, device: str = "cpu") -> QNetwork:
-    model = QNetwork(node_dim=8, hidden=hidden, n_actions=N_ACTIONS)
-    model.load_state_dict(
-        torch.load(path, map_location=device, weights_only=True))
-    model.eval()
-    return model
-
-
 def _make_obs(fid: float, occ: float, t_rem: float,
               n_nodes: int = N_NODES, probe: int = PROBE_NODE) -> dict:
     """Synthetic n_nodes chain; sweep probe node features.
@@ -169,7 +161,7 @@ def plot_pca(
     run_name = os.path.basename(os.path.dirname(os.path.abspath(model_path)))
 
     print(f"Loading model from {model_path}")
-    model = load_model(model_path, device=device)
+    model = load_qnet(model_path, device)
 
     print(f"Collecting embeddings ({resolution}³ = {resolution**3} observations) "
           f"— node {probe} of {n_nodes}-chain…")

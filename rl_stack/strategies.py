@@ -78,9 +78,3 @@ def random_policy(env: QRNEnv, rng: np.random.Generator) -> np.ndarray:
         valid = np.flatnonzero(mask[i])
         actions[i] = rng.choice(valid) if len(valid) > 0 else NOOP
     return actions
-
-STRATEGY_MAP = {
-    "SwapASAP":        swap_asap,
-    "PurifyThenSwap":  purify_then_swap,
-    "FidGatedSwap":    fidelity_gated_swap,
-}

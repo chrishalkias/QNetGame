@@ -90,7 +90,6 @@ def main(argv=None):
         p_gen_std=0.0, p_swap_std=0.0,
         cutoff=CUTOFF,
         F0=1.0, channel_loss=0.0, dt_seconds=0.0,
-        heterogeneous=False,
         curriculum=False,
         topology="chain",
         backend="legacy",

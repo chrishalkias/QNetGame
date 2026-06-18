@@ -72,7 +72,6 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         n_range=list(range(args.n_lo, args.n_hi+1)),
         curriculum=args.curriculum,
-        heterogeneous=False,   # inhomogeneity is now driven by p_gen_std/p_swap_std
         p_gen=args.p_gen,
         p_swap=args.p_swap,
         p_gen_std=args.p_gen_std,

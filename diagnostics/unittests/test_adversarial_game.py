@@ -127,7 +127,6 @@ def test_adversarial_env_validates_positional_backend_before_construction():
         0.0,
         50,
         np.random.default_rng(0),
-        False,
         "chain",
         0.99,
         "legacy",

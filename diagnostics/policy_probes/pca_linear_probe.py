@@ -33,7 +33,7 @@ import torch
 
 from rl_stack.agent import _obs_to_data
 from rl_stack.env_wrapper import N_ACTIONS
-from rl_stack.model import QNetwork
+from rl_stack.model import QNetwork, load_qnet
 
 
 DEFAULT_MODEL = "checkpoints/cluster/cluster_004/policy.pth"
@@ -42,18 +42,6 @@ DEFAULT_RESOLUTION = 25
 DEFAULT_N_NODES = 10
 DEFAULT_PROBE = 5
 DEFAULT_T_REM = 0.5
-
-
-def load_model(path: str, device: str = "cpu") -> QNetwork:
-    """Load a checkpoint while inferring its input and hidden dimensions."""
-    state = torch.load(path, map_location=device, weights_only=True)
-    conv1_weight = state["conv1.lin_l.weight"]
-    hidden, node_dim = conv1_weight.shape
-    model = QNetwork(node_dim=node_dim, hidden=hidden, n_actions=N_ACTIONS)
-    model.load_state_dict(state)
-    model.to(device)
-    model.eval()
-    return model
 
 
 def _make_obs(
@@ -522,7 +510,7 @@ def plot_model_comparison(
 
 def run_probe(args: argparse.Namespace) -> dict[str, str]:
     os.makedirs(args.save_dir, exist_ok=True)
-    model = load_model(args.model, device=args.device)
+    model = load_qnet(args.model, args.device)
     embeddings, features, _ = collect_embeddings(
         model,
         device=args.device,

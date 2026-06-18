@@ -41,7 +41,6 @@ def make_backend(
     F0: float = 0.95,
     channel_loss: float = 0.02,
     dt_seconds: float = 1e-4,
-    heterogeneous: bool = False,
     rng: Optional[np.random.Generator] = None,
     fidelity_mode: str = "analytic",
 ):
@@ -49,20 +48,14 @@ def make_backend(
 
     Inhomogeneity: `p_gen`/`p_swap` are the per-network MEANS; `p_gen_std`/
     `p_swap_std` spread per-repeater values via `_sample_matched_uniform`
-    (std=0 -> homogeneous, no rng draw). `heterogeneous` is a DEPRECATED shim:
-    when True and both stds are 0 it preserves the old uniform(0.3, 1.0) spread
-    so existing callers (game/runner) keep working; prefer the std knobs.
+    (std=0 -> homogeneous, no rng draw).
     """
     rng = rng if rng is not None else np.random.default_rng()
     if backend == "legacy":
         net = _build_legacy_net(topology, n_repeaters, n_ch, spacing,
                                 p_gen, p_swap, cutoff, F0, channel_loss,
                                 dt_seconds, rng)
-        if heterogeneous and p_gen_std <= 0.0 and p_swap_std <= 0.0:
-            for rep in net.repeaters:           # deprecated legacy behaviour
-                rep.p_gen = rng.uniform(0.3, 1.0)
-                rep.p_swap = rng.uniform(0.3, 1.0)
-        elif p_gen_std > 0.0 or p_swap_std > 0.0:
+        if p_gen_std > 0.0 or p_swap_std > 0.0:
             pg = _sample_matched_uniform(p_gen, p_gen_std, net.N, rng)
             ps = _sample_matched_uniform(p_swap, p_swap_std, net.N, rng)
             for i, rep in enumerate(net.repeaters):
@@ -85,14 +78,10 @@ def make_backend(
             N=n_repeaters, n_ch=n_ch, spacing=spacing, p_gen=p_gen,
             p_swap=p_swap, cutoff=cutoff, F0=F0, channel_loss=channel_loss,
             dt_seconds=dt_seconds, distance_dep_gen=True, rng=rng)
-        if heterogeneous and p_gen_std <= 0.0 and p_swap_std <= 0.0:
-            be._p_gen[:] = rng.uniform(0.3, 1.0, size=be._N)   # deprecated
-            be._p_swap[:] = rng.uniform(0.3, 1.0, size=be._N)
-        else:
-            if p_gen_std > 0.0:
-                be._p_gen[:] = _sample_matched_uniform(p_gen, p_gen_std, be._N, rng)
-            if p_swap_std > 0.0:
-                be._p_swap[:] = _sample_matched_uniform(p_swap, p_swap_std, be._N, rng)
+        if p_gen_std > 0.0:
+            be._p_gen[:] = _sample_matched_uniform(p_gen, p_gen_std, be._N, rng)
+        if p_swap_std > 0.0:
+            be._p_swap[:] = _sample_matched_uniform(p_swap, p_swap_std, be._N, rng)
         return be
     raise ValueError(f"Unknown backend {backend!r}")
 

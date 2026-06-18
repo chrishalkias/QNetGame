@@ -76,7 +76,6 @@ class QRNEnv:
                  dt_seconds = 1e-4,
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
-                 heterogeneous = False,
                  topology = 'chain',
                  gamma = 0.99,
                  backend = 'legacy',
@@ -96,7 +95,7 @@ class QRNEnv:
             spacing=spacing, p_gen=p_gen, p_swap=p_swap,
             p_gen_std=p_gen_std, p_swap_std=p_swap_std, cutoff=cutoff,
             F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
-            heterogeneous=heterogeneous, rng=self.rng, fidelity_mode=fidelity_mode)
+            rng=self.rng, fidelity_mode=fidelity_mode)
 
         self._topo = self.backend.topology()
         self.N = self._topo.N

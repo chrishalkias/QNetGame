@@ -31,8 +31,8 @@ from diagnostics.policy_probes.pca_linear_probe import (
     _r2_score,
     compare_linear_models,
     fit_pca_2,
-    load_model,
 )
+from rl_stack.model import load_qnet
 from rl_stack.agent import _obs_to_data
 from rl_stack.env_wrapper import QRNEnv
 
@@ -48,7 +48,6 @@ PARAM_POINT = {
     "p_swap": 0.7,
     "cutoff": 15,
     "dt_seconds": 0.0,
-    "heterogeneous": False,
     "topology": "chain",
     "n_ch": 4,
     "F0": 0.95,
@@ -482,7 +481,7 @@ def run(args: argparse.Namespace) -> dict[str, str]:
     os.makedirs(args.save_dir, exist_ok=True)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    model = load_model(args.model, device=args.device)
+    model = load_qnet(args.model, args.device)
 
     collected = {}
     analyses = {}
