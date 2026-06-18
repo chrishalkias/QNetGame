@@ -22,18 +22,16 @@ Usage:
 from __future__ import annotations
 import argparse
 import os
-from typing import Optional
 
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.colors import Normalize
 from matplotlib import cm
 from sklearn.decomposition import PCA
 
 from rl_stack.model import QNetwork, load_qnet
-from rl_stack.env_wrapper import N_ACTIONS, NOOP, SWAP, PURIFY
+from rl_stack.env_wrapper import NOOP, SWAP, PURIFY
 from rl_stack.agent import _obs_to_data
 
 # ── constants ──────────────────────────────────────────────────────────────

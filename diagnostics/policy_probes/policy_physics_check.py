@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 from rl_stack.model import load_qnet
-from rl_stack.env_wrapper import N_ACTIONS, NOOP, SWAP, PURIFY
+from rl_stack.env_wrapper import NOOP, SWAP, PURIFY
 from rl_stack.agent import _obs_to_data
 
 NEIGHBORS = {0: [1], 1: [0, 2], 2: [1, 3], 3: [2, 4], 4: [3]}

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="figs/logo.svg" width="180" alt="QNetGame logo">
+  <img src="logo.svg" width="180" alt="QNetGame logo">
 </p>
 
 # QNetGame

@@ -32,7 +32,6 @@ import numpy as np
 import torch
 
 from rl_stack.agent import _obs_to_data
-from rl_stack.env_wrapper import N_ACTIONS
 from rl_stack.model import QNetwork, load_qnet
 
 
