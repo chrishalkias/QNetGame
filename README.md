@@ -11,12 +11,17 @@
 
 A discrete-time quantum repeater network simulator with classical
 communication delays, designed as the environment for a Reinforcement
-Learning pipeline. Pure Python/NumPy with optional `torch_geometric`
-integration for GNN-based agents.
+Learning pipeline. The core simulator is pure Python/NumPy; an optional
+`torch` / `torch_geometric` stack provides a GNN-based Double-DQN agent.
 
-**Dependencies:** NumPy.  `torch` and `torch_geometric` are optional
-(enables `HeteroData` output; falls back to a NumPy-based container
-otherwise).
+The physics lives behind a **pluggable backend interface** (`legacy` NumPy
+backend by default; an optional `netsquid` backend with `analytic` and
+`full_dm` fidelity modes). The RL agent trains on small chains and
+**generalises zero-shot** to larger / differently-parameterised networks,
+including a 24-node GÉANT topology.
+
+**Dependencies:** NumPy (core). `torch` + `torch_geometric` for the RL
+stack. `netsquid` only if you select the NetSquid backend.
 
 ---
 
@@ -27,21 +32,27 @@ otherwise).
 3. [Architecture Overview](#3-architecture-overview)
 4. [`repeater.py` — The Repeater Class](#4-repeaterpy--the-repeater-class)
 5. [`network.py` — The Network and Its Actions](#5-networkpy--the-network-and-its-actions)
-6. [`graph_builder.py` — Graph Observations](#6-graph_builderpy--graph-observations)
+6. [Physics Backends](#6-physics-backends)
 7. [Classical Communication Delays](#7-classical-communication-delays)
 8. [Runnable Examples](#8-runnable-examples)
-9. [Known Limitations](#10-known-limitations)
-10. [RL stack](#10.-`rl_stack`-RL-Agent-Module)
-11. [QRN test suite](#12-qrn-simulator-test-suite---test_rlpy)
-12. [RL test suite](#13-rl-stack-test-suite-test_rlpy)
+9. [Known Limitations](#9-known-limitations)
+10. [`rl_stack` — RL Agent Module](#10-rl_stack--rl-agent-module)
+11. [Training / Validation](#11-training--validation)
+12. [PBRS Reward Shaping (`potential.py`)](#12-pbrs-reward-shaping-potentialpy)
+13. [Adversarial Game (`rl_stack/adversarial_game`)](#13-adversarial-game-rl_stackadversarial_game)
+14. [Optimal-Policy Benchmark](#14-optimal-policy-benchmark)
+15. [Repository Layout & Runners](#15-repository-layout--runners)
+16. [Test Suites](#16-test-suites)
 
 ---
 
 ## 1. Quick Start
 
+**Low-level simulator** (pure NumPy, no torch needed):
+
 ```python
 import numpy as np
-from quantum_repeater_sim import build_chain, network_to_heterodata
+from quantum_repeater_sim import build_chain
 
 net = build_chain(n_repeaters=5, n_ch=4, spacing=50.0,
                   p_gen=0.8, p_swap=0.7, cutoff=15,
@@ -49,12 +60,26 @@ net = build_chain(n_repeaters=5, n_ch=4, spacing=50.0,
                   dt_seconds=1e-4,          # enables classical delays
                   rng=np.random.default_rng(42))
 
-# RL loop
 for step in range(100):
-    net.age_links()                          # tick clock, resolve events
-    obs = network_to_heterodata(net)         # graph observation
-    # ... agent picks action from obs ...
-    net.entangle(0, 1)                       # or net.swap(2), net.purify(0, 1)
+    net.age_links()              # tick clock, resolve events
+    net.entangle(0, 1)           # or net.swap(2), net.purify(0, 1)
+    # ... inspect net.get_all_links() ...
+```
+
+**RL environment** (the agent's view — node features + topology):
+
+```python
+import numpy as np
+from rl_stack import QRNEnv
+
+env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.8, p_swap=0.7,
+             cutoff=15, topology='chain', backend='legacy',
+             rng=np.random.default_rng(0))
+
+obs  = env.get_observation()          # {"x": (N,10), "edge_index": (2,E)}
+mask = env.get_action_mask()          # (N, 3) bool: NOOP / SWAP / PURIFY
+actions = np.zeros(env.N, dtype=int)  # one action per node
+obs, reward, done, info = env.step(actions)
 ```
 
 ---
@@ -164,10 +189,11 @@ duration of one simulator tick. During the delay, involved qubits are
 | `p_gen` | per repeater | 0.8 | Generation success probability |
 | `p_swap` | per repeater | 0.5 | BSM success probability |
 | `cutoff` | per repeater | 20 | Memory coherence time (steps) |
-| `F0` | network | 0.98 | Zero-distance fidelity |
+| `F0` | network | 0.95 | Zero-distance fidelity |
 | `channel_loss` | network | 0.02 | Fibre attenuation (km$^{-1}$) |
 | `dt_seconds` | network | $10^{-4}$ | Physical time per tick (s) |
 | `distance_dep_gen` | network | True | Scale $P_{\text{gen}}$ by distance? |
+| `p_gen_std` / `p_swap_std` | network | 0.0 | Per-repeater inhomogeneity spread |
 
 Setting `dt_seconds=0.0` disables all classical delays (events resolve
 on the next `age_links()` call).
@@ -177,36 +203,39 @@ on the next `age_links()` call).
 ## 3. Architecture Overview
 
 ```
-  RL Agent ───────────────────┐
-    │ observes graph          │ picks action
-    ▼                         ▼
-┌────────────────┐   ┌───────────────────────────────────────┐
-│ graph_builder  │◄──│          RepeaterNetwork              │
-│                │   │                                       │
-│ network_to_    │   │  .entangle(r1, r2)  → instant         │
-│ heterodata()   │   │  .swap(r)           → deferred (lock) │
-│                │   │  .purify(r1, r2)    → deferred (lock) │
-│  → HeteroData  │   │  .age_links()       → tick + resolve  │
-│  or numpy dict │   │                                       │
-└────────────────┘   └───────────────┬───────────────────────┘
-                                     │ delegates to
-                                     ▼
-                          ┌───────────────────────┐
-                          │   Repeater (×N)       │
-                          │  per-qubit arrays     │
-                          │  locking, aging       │
-                          │  swap pair selection  │
-                          └───────────────────────┘
+  RL Agent (rl_stack) ─────────────┐
+    │ observes {x, edge_index}      │ picks (N,) actions
+    ▼                               ▼
+┌──────────────────────────────────────────────────────────┐
+│                        QRNEnv                              │
+│  get_observation() → {"x": (N,10), "edge_index": (2,E)}    │
+│  get_action_mask() → (N, 3)  NOOP / SWAP / PURIFY          │
+│  step(actions): purify → swap → age → e2e → auto-entangle  │
+└───────────────────────────┬────────────────────────────────┘
+                            │ talks to a
+                            ▼
+                ┌───────────────────────────┐
+                │      PhysicsBackend         │   make_backend(...)
+                │  legacy │ netsquid          │
+                │  node_state / advance / ... │
+                └───────────────┬─────────────┘
+                                │  (legacy) wraps
+                                ▼
+                ┌───────────────────────────┐
+                │      RepeaterNetwork        │
+                │   Repeater (×N) internals   │
+                └───────────────────────────┘
 ```
 
-**One RL step:**
+**One RL step (`QRNEnv.step`):**
 
-1. `net.age_links()` — advance clock, resolve pending events, expire
-   old links.
-2. `network_to_heterodata(net)` — build the graph observation.
-3. Agent selects an action using the action masks.
-4. Call the chosen action (`entangle`, `swap`, or `purify`).
-5. Compute reward from the result dict.
+1. Execute agent actions — **purify first, then swap** (purify-before-swap
+   ensures freshly-improved links get swapped).
+2. `backend.advance()` — tick the clock, resolve pending classical events,
+   decohere, expire old links.
+3. Check end-to-end; compute reward (step cost + failed-action penalty +
+   PBRS shaping; success pays `fidelity × SUCCESS_REWARD`).
+4. Auto-entangle every adjacent pair so the next observation is fresh.
 
 ---
 
@@ -214,7 +243,7 @@ on the next `age_links()` call).
 
 ### 4.1 Per-Qubit Data Layout
 
-Each `Repeater` stores its state in nine parallel NumPy arrays of length
+Each `Repeater` stores its state in parallel NumPy arrays of length
 `n_ch`, using `__slots__` to eliminate per-instance overhead.
 
 | Array | dtype | Free value | Description |
@@ -231,7 +260,7 @@ Each `Repeater` stores its state in nine parallel NumPy arrays of length
 ### 4.2 Two Query Layers
 
 **Raw queries** (include locked qubits — used internally by aging,
-symmetry checks, graph builder):
+symmetry checks, observation builder):
 
 - `occupied_indices()`, `free_indices()`, `num_occupied()`
 
@@ -350,54 +379,59 @@ in-flight operations.
 ### 5.7 Factory Functions
 
 ```python
+from quantum_repeater_sim import build_chain, build_grid   # top-level
+from quantum_repeater_sim.network import build_GEANT        # network module
+
 net = build_chain(n_repeaters=5, n_ch=4, spacing=50.0,
                   p_gen=0.8, p_swap=0.5, cutoff=20,
                   channel_loss=0.02, F0=0.98, dt_seconds=1e-4)
 
 net = build_grid(rows=3, cols=3, n_ch=4, spacing=50.0, ...)
+
+net = build_GEANT(n_ch=4, p_gen=0.8, p_swap=0.5, cutoff=20, ...)
 ```
 
-`build_chain` creates a 1-D line. `build_grid` creates a 2-D lattice
-with 4-connectivity. Both forward `**kwargs` to `RepeaterNetwork`.
+- `build_chain` — 1-D line.
+- `build_grid` — 2-D lattice with 4-connectivity.
+- `build_GEANT` — the GÉANT pan-European research network (24 nodes,
+  37 links), node positions from member-state capital lat/lon projected
+  to a flat km plane.
+
+All forward `**kwargs` to `RepeaterNetwork`.
 
 ---
 
-## 6. `graph_builder.py` — Graph Observations
+## 6. Physics Backends
 
-### 6.1 `network_to_heterodata(net, force_numpy=False)`
+The simulator's physics is accessed through `PhysicsBackend`
+(`quantum_repeater_sim/backends/`). `QRNEnv` never touches
+`RepeaterNetwork` directly — it talks to a backend built by
+`make_backend(...)`.
 
-Converts the network state into a hierarchical heterogeneous graph.
-Returns `torch_geometric.data.HeteroData`.
+### 6.1 The Interface (`backends/base.py`)
 
-### 6.2 Graph Schema
+| Object | Role |
+|---|---|
+| `PhysicsBackend` | abstract: `node_state(i)`, `topology()`, `entangle/swap/purify`, `advance()` |
+| `NodeState` | frozen per-node snapshot: `occupied`, `locked`, `partner_node`, `fidelity`, `n_ch`, `p_gen`, `p_swap` |
+| `LinkState` | frozen link record (endpoints, Werner $p$, age) |
+| `Topology` | `N`, `adjacency`, positions — the static graph |
 
-**Node types:**
+`NodeState` / `LinkState` / `Topology` are frozen dataclasses with
+read-only arrays (immutable snapshots — the agent can't mutate physics
+state through the observation).
 
-| Type | Shape | Features |
+### 6.2 `make_backend(backend, topology, fidelity_mode, ...)`
+
+| `backend` | `fidelity_mode` | Notes |
 |---|---|---|
-| `repeater` | `(N, 6)` | `pos_x, pos_y, frac_occupied, mean_fidelity, p_gen, p_swap` |
-| `qubit` | `(N*n_ch, 6)` | `is_occupied, werner_p, fidelity, partner_rid, age_norm, is_locked` |
+| `"legacy"` | — | Pure-NumPy `RepeaterNetwork` wrapper. Default. All topologies (chain/grid/geant). |
+| `"netsquid"` | `"analytic"` | NetSquid event engine, Werner-scalar physics. Chain only (grid/geant = M2). |
+| `"netsquid"` | `"full_dm"` | NetSquid with real density-matrix qubits. Reproduces the analytic model to machine precision. Chain only. |
 
-**Edge types:**
-
-| Triplet | Description | Attr |
-|---|---|---|
-| `(repeater, adjacent, repeater)` | Physical topology (both dirs) | normalised distance |
-| `(repeater, has, qubit)` | Ownership hierarchy | — |
-| `(qubit, belongs_to, repeater)` | Reverse ownership | — |
-| `(qubit, entangled, qubit)` | Active entanglement (both dirs) | fidelity |
-
-**Attached masks and state:**
-
-- `data["repeater"].swap_mask` — `(N,)` bool
-- `data["entangle_mask"]` — `(2, K)` int, valid entangle pairs
-- `data["purify_mask"]` — `(2, K)` int, valid purify pairs
-- `data["repeater"].network_state` — `[time_step, pending_count]`
-
-### 6.3 Global Qubit Indexing
-
-Qubit $j$ on repeater $r$ has global index $r \cdot n_{\text{ch}} + j$.
-This is implicit in the ownership edges.
+**Inhomogeneity:** `p_gen` / `p_swap` are per-network *means*;
+`p_gen_std` / `p_swap_std` spread per-repeater values (std = 0 →
+homogeneous, no RNG draw).
 
 ---
 
@@ -421,9 +455,8 @@ The key design principle is that actions never block execution. Instead,
 - Purify failure: destroy both pairs (which clears locks via `free_qubit`).
 
 This preserves the Markov property: at every tick the agent can observe
-which qubits are locked (via the `is_locked` feature column) and how
-many events are pending (via `network_state`), and is free to act on
-unrelated parts of the network.
+which qubits are locked and how many events are pending, and is free to
+act on unrelated parts of the network.
 
 **Failed BSMs resolve immediately** (no event queued, no locks) because
 the measurement is local and no classical communication is needed to
@@ -435,7 +468,8 @@ event later resolves, guard checks detect the freed qubit and clean up
 any remaining locks without corrupting state.
 
 **Disabling delays:** set `dt_seconds=0.0`. All events get `timer=0`
-and resolve on the very **next** `age_links()` call (this in turn disables a "end-to-end" state in 1 step even for perfect operations).
+and resolve on the very **next** `age_links()` call (this in turn allows
+an "end-to-end" state in 1 step even for perfect operations).
 
 ---
 
@@ -445,7 +479,7 @@ and resolve on the very **next** `age_links()` call (this in turn disables a "en
 
 ```python
 import numpy as np
-from quantum_repeater_sim import build_chain, network_to_heterodata
+from quantum_repeater_sim import build_chain
 
 net = build_chain(5, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
                   cutoff=20, F0=0.95, channel_loss=0.02,
@@ -530,9 +564,7 @@ net = RepeaterNetwork(repeaters, adj, channel_loss=0.01, F0=0.99,
 print(net)
 ```
 
-
 ---
-
 
 ## 9. Known Limitations
 
@@ -560,108 +592,102 @@ memories would benefit from approximate nearest-neighbour methods.
 
 The simulator is single-instance. For vectorised RL training, run $B$
 instances in a `multiprocessing.Pool` or refactor state into batched
-$(B, N, n_{\text{ch}}, \ldots)$ arrays.
+arrays.
 
-### 9.5 Static Topology
+### 9.5 NetSquid Backend Topologies
 
-Positions and adjacency are fixed at construction time. If the RL
-application requires dynamic topology (e.g., satellite networks), the
-`_positions` and `_dist_matrix` caches must be invalidated on change.
+The NetSquid backend currently supports **chain** topologies only;
+grid / GÉANT support is deferred (M2). Use the `legacy` backend for
+non-chain topologies.
 
 ---
 
 ## 10. `rl_stack` — RL Agent Module
 
-A Double-DQN agent that learns multi-node routing policies on quantum
-repeater chains and generalises zero-shot to larger, differently-parameterised
-networks.
+A Double-DQN agent (`rl_stack`) that learns multi-node routing policies
+on quantum repeater networks and generalises zero-shot to larger,
+differently-parameterised networks.
 
 **Requires:** `torch`, `torch_geometric`, `matplotlib` (in addition to the
 base simulator's `numpy`).
 
----
+### 10.1 Step Semantics
 
-### 10.1 Architecture
+Each `QRNEnv.step(actions)`:
 
-```
-                  ┌─────────────────────────────────┐
-                  │        QRNAgent                 │
-                  │  Double DQN + ReplayBuffer      │
-                  │  .train()   .validate()         │
-                  └──────────┬──────────────────────┘
-                             │ selects N actions
-                             ▼
-                  ┌─────────────────────────────────┐
-                  │         QRNEnv                  │
-                  │  1. auto-entangle all pairs     │
-                  │  2. execute agent actions       │
-                  │  3. age_links (resolve events)  │
-                  │  4. check end-to-end            │
-                  └──────────┬──────────────────────┘
-                             │ wraps
-                             ▼
-                  ┌─────────────────────────────────┐
-                  │     RepeaterNetwork             │
-                  │     (from base simulator)       │
-                  └─────────────────────────────────┘
-```
+1. **Agent actions:** one action per node from `{NOOP=0, SWAP=1,
+   PURIFY=2}`, masked so only valid actions are chosen. Purifications
+   execute before swaps. Actions at source/dest are forced to NOOP.
+2. **Age links:** `backend.advance()` — resolve pending classical
+   events, apply decoherence, expire old links.
+3. **Check e-e:** if source and dest share a direct entangled link, the
+   episode terminates successfully.
+4. **Auto-entangle:** every adjacent pair attempts generation (the
+   background physical process) so the next observation is fresh.
 
-### 10.2 Step Semantics
+**Entanglement generation is not an agent action** — it is handled
+entirely by the automatic background step.
 
-Each environment step proceeds as:
+### 10.2 Reward
 
-1. **Auto-entangle:** every adjacent pair attempts entanglement generation
-   (the "background" physical process).
-2. **Agent actions:** the agent provides one action per node from
-   `{noop=0, entangle=1, swap=2, purify=3}`. Actions are masked so
-   only valid actions can be chosen.
-3. **Age links:** advance the discrete clock by one tick — resolve pending
-   classical communication events, apply decoherence, expire old links.
-4. **Check e-e:** if the source and destination repeaters share a direct
-   entangled link, the episode terminates with success.
+| Term | Value | When |
+|---|---|---|
+| `STEP_COST` | `-0.01` | every non-success step |
+| `SUCCESS_REWARD` | `+1.0` × end-to-end fidelity | on connection |
+| `FAILED_ACTION` | `-0.05` per failed action | swap/purify that fails |
+| PBRS shaping | $\gamma\Phi(s') - \Phi(s)$ | every step (see §12) |
 
-The reward is `+1.0` on end-to-end success and `-0.1` per step.
+The potential $\Phi$ is a topology-general path-progress signal in
+$[0,1]$; by PBRS convention $\Phi(s_{\text{terminal}}) = 0$, so the
+optimal policy is unchanged by the shaping.
 
 ### 10.3 Action Space
 
-Per node, 4 discrete actions:
+Per node, 3 discrete actions:
 
 | Index | Name | Condition |
 |---|---|---|
-| 0 | `noop` | Always valid |
-| 1 | `entangle` | Node and some neighbour both have free unlocked qubits |
-| 2 | `swap` | Node has ≥ 2 available (occupied, unlocked) qubits |
-| 3 | `purify` | Node shares ≥ 2 available pairs with some neighbour |
+| 0 | `NOOP` | Always valid |
+| 1 | `SWAP` | $\geq 2$ available qubits to **distinct** partners |
+| 2 | `PURIFY` | $\geq 2$ available qubits to the **same** partner |
 
 The agent outputs `(N,)` actions simultaneously — the system is "frozen
 in time" while the agent decides, then all actions execute in one step.
 
-## 10.4 Observation Space
+### 10.4 Observation Space
 
-**Node features** `(N, 7)`, all in [0, 1]:
+`get_observation()` returns `{"x": (N, 10) float32, "edge_index": (2, E)
+int64}` — a **homogeneous** graph.
 
-| Column | Feature |
+**Node features** `(N, 10)`:
+
+| Col | Feature |
 |---|---|
-| 0 | `frac_occupied` - occupied qubits / n_ch |
-| 1 | `mean_fidelity` - average Werner fidelity of occupied qubits |
-| 2 | `is_source` - 1 if this node is the e-e source |
-| 3 | `is_dest` - 1 if this node is the e-e destination |
-| 4 | `frac_available` - available (unlocked) qubits / n_ch |
-| 5 | `can_swap` - 1 if swap is possible |
-| 6 | `has_purify_option` - 1 if purification is possible |
-| 7 | `time_remaining` - Steps until episode termination
+| 0 | `frac_occupied` — occupied / n_ch |
+| 1 | `mean_fidelity` — avg F of available (unlocked) qubits (0 if none) |
+| 2 | `is_source` — 0/1 |
+| 3 | `is_dest` — 0/1 |
+| 4 | `frac_available` — available (unlocked occupied) / n_ch |
+| 5 | `can_swap` — 1.0 if $\geq 2$ available qubits to distinct partners |
+| 6 | `can_purify` — 1.0 if $\geq 2$ available qubits to same partner |
+| 7 | `time_remaining` — (max_steps − steps) / max_steps |
+| 8 | `p_gen` — per-repeater generation prob. (inhomogeneity signal) |
+| 9 | `p_swap` — per-repeater BSM prob. (inhomogeneity signal) |
 
-**Edges:** the repeater adjacency graph (both directions).
+Columns 5/6 are forced to 0 for source/dest. Columns 8/9 are constant
+across nodes when the network is homogeneous (std = 0). `edge_index` is
+the repeater adjacency (both directions).
 
-Because all features are normalised and topology-agnostic, the GNN processes any chain length / graph size without retraining.
-
+Because all features are normalised and topology-agnostic, the GNN
+processes any chain length / graph size without retraining.
 
 ### 10.5 Replay Buffer (`buffer.py`)
 
-Circular buffer storing `(state, actions, reward, next_state, done)`:
+Circular buffer storing `(state, actions, reward, next_state, done,
+mask)`:
 
 ```python
-from quantum_repeater_sim.rl import ReplayBuffer
+from rl_stack import ReplayBuffer
 
 buf = ReplayBuffer(max_size=50_000)
 buf.add(obs, actions, reward, next_obs, done)
@@ -670,48 +696,50 @@ batch = buf.sample(64)
 
 ### 10.6 GNN Model (`model.py`)
 
-Two-layer GraphSAGE with a 2-layer MLP head:
+`QNetwork`: three `SAGEConv` layers + a 2-layer MLP head.
 
-```               
-Input: (N, 7)     |<------------------------
-      ↓           | System Representation
-SAGEConv(7→64)    |<------------------------         
-      ↓           |          GNN 
-    ReLU          |         Block
-      ↓           |       (Encoder)
-SAGEConv(64→64)   |<------------------------
-      ↓           |
-    ReLU          |          MLP
-      ↓           |         Block
-Linear(64→64)     |        (Latent)
-      ↓           |
-    ReLU          |<------------------------
-      ↓           |        Linear
-Linear(64→4)      |       (Decoder)
-      ↓           |<------------------------
-(N, 4) Q-values   |    Value estimation
+```
+Input: (N, 10)
+      ↓
+SAGEConv(10→64) → ReLU
+      ↓
+SAGEConv(64→64) → ReLU         GNN encoder
+      ↓
+SAGEConv(64→64) → ReLU
+      ↓
+Linear(64→64)   → ReLU         MLP head
+      ↓
+Linear(64→3)
+      ↓
+(N, 3) Q-values
 ```
 
 All layers are local (message-passing + per-node linear), so the model
 is size-agnostic by construction.
 
+---
 
-## 11. Training / Testing
-### 11.1 Training (`agent.py: QRNAgent.train`)
+## 11. Training / Validation
+
+### 11.1 Training (`QRNAgent.train`)
 
 ```python
-from quantum_repeater_sim.rl import QRNAgent
+from rl_stack import QRNAgent
 
 agent = QRNAgent(lr=5e-4, gamma=0.99, batch_size=64, buffer_size=1e4)
 metrics = agent.train(
     episodes=3000,
     max_steps=50,
-    n_range=[4, 5, 6],       # train on small chains
-    curriculum=True,          # progressive difficulty
-    heterogeneous=True,       # randomise per-repeater params
+    n_range=[4, 5, 6, 7],     # train on small chains
+    curriculum=True,           # progressive difficulty
+    curriculum_frac=0.5,       # widen the size pool over the first half
     p_gen=0.8, p_swap=0.7,
-    cutoff=15, F0=1.0,
-    topolog='chain', dt_seconds=1e4
+    p_gen_std=0.0, p_swap_std=0.0,   # per-repeater inhomogeneity
+    cutoff=30, F0=0.95,
+    topology='chain',
+    backend='legacy', fidelity_mode='analytic',
+    dt_seconds=1e-3,
+    disable_actions=(),        # e.g. (PURIFY,) → pure swap-scheduler
     save_path="checkpoints/",
     plot=True,
 )
@@ -719,16 +747,23 @@ metrics = agent.train(
 
 **Key training features:**
 
-- **Curriculum learning:** starts with small chains (N=4), gradually
-  introduces larger ones. Controlled by `n_range` and `curriculum=True`.
-- **Domain randomisation:** `heterogeneous=True` randomises p_gen and
-  p_swap per repeater each episode.
-- **Epsilon schedule:** cosine annealing from 1.0 to 0.05.
-- **Double DQN:** policy net selects actions, target net evaluates them.
-- **Polyak averaging:** target net updated with τ=0.005 each step.
-- **Gradient clipping:** max_norm=10.
+- **Curriculum learning:** linearly widens the eligible chain size to the
+  full `n_range` over the first `curriculum_frac` of training.
+- **Domain randomisation:** `p_gen_std` / `p_swap_std` spread per-repeater
+  parameters each episode.
+- **Best-checkpointing:** `policy.pth` holds the *best* agent (judged by a
+  held-out greedy probe via `eval_fn`, else rolling-mean reward in the
+  settled late window); final weights go to `policy_final.pth`.
+- **Early stopping:** with `eval_fn` + `eval_every` + `eval_patience`,
+  training stops when the probe stops improving.
+- **Pluggable backend:** train against `legacy` or `netsquid`.
+- **Double DQN + Polyak averaging (τ=0.005) + gradient clipping.**
+- **`disable_actions`:** mask action indices in both selection and the
+  Double-DQN target (e.g. ablate PURIFY).
+- **`compare=True`:** log greedy-agent vs swap-asap vs random returns,
+  steps and success each episode (+ a 3-panel `training_compare.png`).
 
-### 11.2 Validation (`agent.py: QRNAgent.validate`)
+### 11.2 Validation (`QRNAgent.validate`)
 
 ```python
 results = agent.validate(
@@ -736,164 +771,165 @@ results = agent.validate(
     n_episodes=100,
     n_repeaters=10,           # test on larger chain than trained
     p_gen=0.6, p_swap=0.5,   # different params than training
+    topology='chain', backend='legacy',
     plot_actions=True,
 )
 ```
 
-Compares the trained agent against three heuristic baselines:
+Compares the trained agent against heuristic baselines:
 
 | Strategy | Description |
 |---|---|
-| **SwapASAP** | Swap wherever possible, entangle elsewhere |
-| **PurifyThenSwap** | Purify if possible, otherwise swap, then entangle |
+| **SwapASAP** | Swap wherever possible |
+| **FidGatedSwap** | Swap only above a fidelity threshold, else hold |
+| **PurifySwap** | Purify if possible, otherwise swap |
 | **Random** | Uniform random valid action per node |
 
-**Output:** a results table and a colour-coded action timeline:
-
-```
-======================================================================
-Validation: N=10, p_gen=0.6, p_swap=0.5, cutoff=15
-======================================================================
-Strategy       |    Avg Steps |   Avg Fidelity | S%    | Succ
-----------------------------------------------------------------------
-Agent          |  12.3±4.2   | 0.6521±0.1200  | 100%  |  87%
-SwapASAP       |  15.1±5.8   | 0.5102±0.0980  | 123%  |  72%
-PurifySwap     |  18.4±6.1   | 0.7210±0.0850  | 150%  |  65%
-Random         |  45.2±8.3   | 0.3100±0.1500  | 367%  |  12%
-```
-
-The timeline plot uses:
-- Solid colours for each node's action
-- `///` hatching for swaps
-- `...` hatching for purifications
-- Black for terminal "Done"
+**Output:** a results table and a colour-coded action timeline.
 
 ### 11.3 Heuristic Strategies (`strategies.py`)
 
-Available as standalone functions:
+Available as standalone functions, each respecting the current action
+mask and returning valid `(N,)` int arrays:
 
 ```python
-from quantum_repeater_sim.rl import strategies
+from rl_stack import strategies
 
-actions = strategies.swap_asap(env)           # (N,) int array
+actions = strategies.swap_asap(env)
 actions = strategies.purify_then_swap(env)
-actions = strategies.entangle_only(env)
+actions = strategies.fidelity_gated_swap(env, f_threshold=0.5)
 actions = strategies.random_policy(env, rng)
 ```
 
-Each function respects the current action mask and returns valid actions.
-
-
 ### 11.4 Zero-Shot Generalisation
 
-The design enables training on small chains (N=4–6) and testing on larger ones (N=10-20+):
+Train on small chains (N=4–7), test on larger ones (N=10–20+) or other
+topologies:
 
 1. **Node features are normalised** — fractions and binary flags.
-2. **GNN is local** — SAGEConv aggregates from 1-hop neighbours (N-independent). 
-3. **Action space is per-node** — 4 actions for any topology/size.
-4. **Domain randomisation** — heterogeneous p_gen/p_swap during training prevents overfitting to specific parameter regimes (experimental).
-5. **Curriculum** — progressive difficulty teaches general patterns before scaling up.
+2. **GNN is local** — `SAGEConv` aggregates from 1-hop neighbours
+   (N-independent).
+3. **Action space is per-node** — 3 actions for any topology/size.
+4. **Domain randomisation** — heterogeneous `p_gen`/`p_swap` prevents
+   overfitting to a parameter regime.
+5. **Curriculum** — progressive difficulty teaches general patterns
+   before scaling up.
 
-## 12. QRN Simulator test suite - `test_rl.py`
+---
 
-2 AI generated test suites available. Human testing soon to follow...
+## 12. PBRS Reward Shaping (`potential.py`)
 
-`test_simulator.py` is a `unittest`-based test suite for the QRN simulator, covering physical correctness, core mechanics, and RL safety. It contains **67 tests across 14 test classes** organised into three sections.
+Potential-Based Reward Shaping keeps the optimal policy invariant while
+giving the agent a dense progress signal toward an end-to-end link.
 
-### 12.3 Structure
-
-#### 12.3.1 Physical Validation
-Verifies the simulator's fidelity to quantum networking theory:
-- **Werner ↔ Fidelity** round-trips and boundary values (`F = (3p+1)/4`)
-- **Decoherence** exponential decay `p(t) = p₀ exp(−t/τ)` checked numerically at each tick
-- **BBPSSW purification** success probability and fidelity improvement against closed-form formulas
-- **Entanglement swapping** product rule `p_new = p_a × p_b` verified end-to-end in a 3-node chain
-- **Classical delay** `ceil(d / c_fiber·dt)` and remote qubit locking
-- **Distance-dependent generation** probability and fidelity scaling laws
-
-#### 12.3.2 Core Functionality
-Exercises standard simulation mechanics:
-- Entanglement (FREE→OCCUPIED transitions, partner back-pointers, adjacency guards)
-- Swapping (BSM qubit destruction, event queueing, long-range link resolution)
-- Purification (fidelity upgrade on success, both pairs destroyed on failure)
-- Ageing (timestep increment, per-tick decay, cutoff expiry)
-- Cross-module wiring (network↔repeater↔env_wrapper references, topology builders)
-
-### 12.4 Edge Cases & RL Loophole Tests
-Catches bugs that could allow an RL agent to exploit unphysical behaviour:
-- **Ghost link resolution** — remote qubit expires during classical delay; verifies clean abort with no dangling state
-- **Asymmetric cutoff** — enforces `min(c₁, c₂)` as the effective link lifetime
-- **Zero-distance operations** — no division-by-zero; delay is exactly 0
-- **Double-booking / locking integrity** — locked qubits are invisible to swap, purify, and all action masks
-- **Self-swapping** — rejected when both qubits point to the same remote repeater
-
-### 12.5 Running
-```bash
-python -m pytest test_simulator.py -v
-# or
-python -m unittest test_simulator -v
-```
-
-### 12.6 Dependencies
-`numpy`, `torch`, `torch_geometric` (only for `graph_builder` imports; all network tests are pure NumPy).
-
-## 13. RL stack test suite `test_rl.py`
-
-Comprehensive `unittest` suite for the Double-DQN RL stack of the Quantum Repeater Network Simulator. Contains **58 tests across 11 test classes**.
-
-### 13.1 What Is Tested
-
-#### 13.1.1 Architecture & Logic Validation
-- **Double-DQN update rule** — verifies that the policy net selects the next action and the target net evaluates it, and that `(1 − done)` correctly zeros out future reward on terminal transitions.
-- **Polyak averaging** — tests τ=0 (frozen target), τ=1 (full copy), and τ∈(0,1) (interpolation) cases of `θ_target ← τ·θ_policy + (1−τ)·θ_target`.
-- **Action masking in target computation** — confirms that invalid actions are assigned −∞ *before* `argmax` in the target Q calculation, preventing the agent from learning Q-values for physically impossible states.
-- **Graph batching** — verifies that `Batch.from_data_list` correctly sums node counts, assigns the `batch` index vector, and that per-graph rewards broadcast to per-node rewards without shape mismatches.
-
-#### 13.1.2 Environment (`QRNEnv`)
-- `reset()` returns a correctly shaped observation, reinitialises counters, runs auto-entanglement, and sets valid source/dest nodes.
-- All 8 node features (`frac_occupied`, `mean_fidelity`, `is_source`, `is_dest`, `frac_available`, `can_swap`, `can_purify`, `time_remaining`) are checked for range, mutual exclusivity, and per-step decay.
-- `step()` ordering (purify → swap → age → check e2e → auto-entangle), step cost, done-on-max-steps, and success reward.
-
-#### 13.1.3 Agent (`QRNAgent`)
-- `select_actions` never chooses a masked action under ε-greedy exploration **or** greedy exploitation.
-- NOOP-only mask forces NOOP from both modes without throwing an empty-sequence error.
-- Output shape and dtype are correct; greedy actions are deterministic across calls.
-- `train_step` tensor shapes: `current_q` and `target_q` are 1-D with length equal to total nodes in the batch.
-
-#### 13.1.4 Buffer (`ReplayBuffer`)
-- `add`, `size`, ring-buffer rollover at `max_size`, oldest-entry overwrite.
-- `sample` returns the correct batch size (or all entries if buffer is smaller).
-- All transition keys (`s`, `a`, `r`, `s_`, `d`, `m_`) are present with correct shapes.
-- `clear` resets both the list and the position pointer.
-
-### 13.2 Edge Cases & RL Loopholes
-| Test | Failure mode prevented |
+| Function | Role |
 |---|---|
-| **Target-node action injection** | Agent assigns SWAP/PURIFY to source or dest; env must silently overwrite to NOOP |
-| **Heterogeneous graph batching** | Curriculum mixes chain sizes 4 and 7 in one batch; tensor shapes must still align |
-| **All-actions-masked fallback** | Node with zero available qubits; `argmax` on all-−∞ must not raise a runtime error |
-| **NOOP column always True** | Env mask must guarantee at least one valid action per node at all times |
+| `bfs_hops(adjacency, start)` | hop-distance from `start` to every node |
+| `path_progress(d_src, d_dst, d_total, edges)` | potential $\Phi \in [0,1]$: how far the current entanglement graph has stitched a source→dest path |
 
-### 13.3 Running
+`QRNEnv` precomputes `bfs_hops` from source and dest, then each step adds
+$\gamma\Phi(s') - \Phi(s)$ to the reward (with $\Phi=0$ at the terminal
+state). The potential is topology-general (works on chain / grid /
+GÉANT).
+
+---
+
+## 13. Adversarial Game (`rl_stack/adversarial_game`)
+
+A two-player extension where an adversary sabotages links while the
+router tries to deliver end-to-end entanglement.
+
+| Component | Role |
+|---|---|
+| `AdversaryAgent` | Double-DQN adversary; per-qubit actions `{NOOP=0, DESTROY=1}` |
+| `AdversaryFlavor` | sabotage budget / targeting style |
+| `SabotageTarget` | decoded (node, qubit-pair) target |
+| `AdversarialQRNEnv` | env exposing both the router and adversary action interfaces |
+
+`train.py` / `evaluate.py` drive adversarial training and evaluation.
+
+---
+
+## 14. Optimal-Policy Benchmark
+
+`quantum_repeater_sim/optimal_policy/` benchmarks the RL agent against a
+dynamic-programming "optimal" policy.
+
+| Script | Purpose |
+|---|---|
+| `compare_optimal.py` | DP-optimal vs agent delivery-time comparison |
+| `pgen_pswap_study.py` | sweep over $(p_{\text{gen}}, p_{\text{swap}})$ |
+| `report.py` | aggregate / plot results |
+
+> Note: the DP "optimal" optimises only over `{NOOP, SWAP}`; the agent can
+> beat it via `PURIFY`, so its delivery time is **not** a universal lower
+> bound — it is the swap-only optimum.
+
+---
+
+## 15. Repository Layout & Runners
+
+```
+quantum_repeater_sim/        core simulator (NumPy)
+  repeater.py, network.py
+  backends/                  PhysicsBackend: legacy, netsquid (analytic/full_dm)
+  optimal_policy/            DP-optimal benchmark
+rl_stack/                    Double-DQN RL stack
+  env_wrapper.py  agent.py  model.py  buffer.py  strategies.py  potential.py
+  adversarial_game/          two-player adversarial extension
+experiments/                 entry-point scripts (argparse at top of file)
+  train.py  validation.py  batch_validate.py
+  optimal_baseline.py  compare_optimal.py  replot.py
+diagnostics/
+  unittests/                 pytest / unittest suites
+  policy_probes/             PCA + linear-probe interpretability tools
+scripts/
+  local/                     local train.sh / test.sh
+  SLURM/                     cluster submit_*.sh
+  sync/                      upload.sh (code up) / download.sh (artifacts down)
+```
+
+Runner scripts in `experiments/` put their `argparse` at the top of the
+file so the available flags are visible at a glance; they are invoked by
+the `scripts/` shell wrappers.
+
+---
+
+## 16. Test Suites
+
+`unittest` / `pytest` suites live in `diagnostics/unittests/`.
+
+| File | Covers |
+|---|---|
+| `test_simulator.py` | physics: Werner↔fidelity, decoherence, BBPSSW, swap product rule, classical delay, distance scaling; core mechanics; RL-loophole edge cases (ghost links, asymmetric cutoff, locking integrity, self-swap) |
+| `test_rl_stack.py` | Double-DQN update rule, Polyak averaging, masked-target argmax, graph batching, `QRNEnv` reset/step/features, `QRNAgent.select_actions`, `ReplayBuffer` |
+| `test_backends.py` | `PhysicsBackend` interface, frozen/read-only `NodeState`/`Topology` snapshots |
+| `test_netsquid_backend.py` | NetSquid timing / `SimClock` delay-tick conversion |
+| `test_fulldm_backend.py` | density-matrix backend reproduces the analytic model |
+| `test_potential.py` | `bfs_hops` and `path_progress` PBRS potential |
+| `test_game.py` | curriculum / `QRNAgent` helpers (e.g. `_normalize_n_ch`) |
+| `test_adversarial_game.py` | adversary agent / `AdversarialQRNEnv` |
+| `test_pca_linear_probe*.py` | interpretability probe utilities |
+
+### Running
 
 ```bash
-# pytest (recommended)
-python -m pytest test_rl_stack.py -v
+# all tests
+python -m pytest diagnostics/unittests -v
 
-# standard unittest
-python -m unittest test_rl_stack -v
+# a single suite
+python -m pytest diagnostics/unittests/test_simulator.py -v
 ```
 
-### 13.4 Dependencies
+### Dependencies
 
-```
-torch
-torch_geometric
-numpy
-quantum_repeater_sim   # network / repeater / env_wrapper
-rl_stack               # model / buffer / agent / strategies
-```
+`numpy` (core); `torch`, `torch_geometric` (RL-stack and backend-import
+tests); `netsquid` only for the NetSquid backend tests.
 
-### 13.5 DISCLAIMER:
+### Disclaimer
 
-The tests as written give structural and crash-safety guarantees, and the subset derived from physics formulas gives physical correctness guarantees for those specific mechanics. HOWEVER, they do not guarantee the RL agent is learning anything useful, and they cannot detect bugs that were present in the code when the tests were written.
+The tests give structural and crash-safety guarantees, and the subset
+derived from physics formulas gives physical-correctness guarantees for
+those specific mechanics. They do **not** guarantee the RL agent is
+learning anything useful, nor can they detect bugs that were present in
+the code when the tests were written.
