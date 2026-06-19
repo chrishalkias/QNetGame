@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
-python3 -u train-test/validation.py \
+python3 -u experiments/validation.py \
     --run_id netsquid_001 \
     --episodes 200 \
     --steps 100 \

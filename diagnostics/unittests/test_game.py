@@ -213,7 +213,7 @@ def test_disable_actions_trains(tmp_path):
 
 
 def test_gaps_computes_percentages():
-    from game.report import gaps
+    from quantum_repeater_sim.optimal_policy.report import gaps
     row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,
                T_agent=11.0, T_agent_swaponly=10.5)
     assert row["N"] == 4
@@ -225,7 +225,7 @@ def test_gaps_computes_percentages():
 
 
 def test_gaps_handles_missing_optimal():
-    from game.report import gaps
+    from quantum_repeater_sim.optimal_policy.report import gaps
     row = gaps(N=5, in_distribution=False, T_opt_swaponly=None, T_swap=20.0,
                T_agent=19.0, T_agent_swaponly=19.5)
     assert math.isnan(row["gap_full_pct"])
@@ -234,7 +234,7 @@ def test_gaps_handles_missing_optimal():
 
 
 def test_gaps_without_swaponly_agent():
-    from game.report import gaps
+    from quantum_repeater_sim.optimal_policy.report import gaps
     row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,
                T_agent=11.0)  # T_agent_swaponly defaults to None
     assert row["T_agent_swaponly"] is None
@@ -243,7 +243,7 @@ def test_gaps_without_swaponly_agent():
 
 
 def test_format_report_has_columns():
-    from game.report import format_report
+    from quantum_repeater_sim.optimal_policy.report import format_report
     report = {
         "config": {"n_ch": 2, "cutoff": 5, "p_gen": 0.9, "p_swap": 0.9, "horizon": 30},
         "rows": [
@@ -279,7 +279,7 @@ def _write_synthetic_pickle(policy_dir, N, n_ch, cutoff, horizon, pg, ps):
 
 
 def test_load_optimal_pickle_match_and_mismatch(tmp_path):
-    from game.compare_optimal import load_optimal_pickle
+    from quantum_repeater_sim.optimal_policy.compare_optimal import load_optimal_pickle
     _write_synthetic_pickle(str(tmp_path), 4, 2, 5, 30, 0.9, 0.9)
     # exact match loads
     payload = load_optimal_pickle(str(tmp_path), N=4, n_ch=2, cutoff=5,
@@ -292,12 +292,8 @@ def test_load_optimal_pickle_match_and_mismatch(tmp_path):
 
 def test_compare_to_optimal_with_injected_agent(tmp_path):
     # Use swap_asap as a stand-in "agent_fn" so the test needs no torch checkpoint.
-    import sys, os
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    repo_root = os.path.dirname(repo_root)  # diagnostics/unittests -> repo root
-    sys.path.insert(0, os.path.join(repo_root, "train-test"))
-    import optimal_baseline as ob
-    from game.compare_optimal import compare_to_optimal
+    from experiments import optimal_baseline as ob
+    from quantum_repeater_sim.optimal_policy.compare_optimal import compare_to_optimal
 
     _write_synthetic_pickle(str(tmp_path), 3, 2, 5, 30, 0.9, 0.9)
     _write_synthetic_pickle(str(tmp_path), 4, 2, 5, 30, 0.9, 0.9)
@@ -318,7 +314,7 @@ def test_compare_to_optimal_with_injected_agent(tmp_path):
 
 def test_load_optimal_pickle_config_mismatch_raises(tmp_path):
     import os, pickle, pytest
-    from game.compare_optimal import load_optimal_pickle
+    from quantum_repeater_sim.optimal_policy.compare_optimal import load_optimal_pickle
     # Write a pickle whose filename says N=4 but whose stored config says N=99.
     fname = "optimal_policy_N4_ch2_co5_h30_pg0.90_ps0.90.pkl"
     payload = {"config": dict(N=99, n_ch=2, cutoff=5, horizon=30, p_gen=0.9, p_swap=0.9),
@@ -331,12 +327,9 @@ def test_load_optimal_pickle_config_mismatch_raises(tmp_path):
 
 
 def test_compare_to_optimal_degrades_without_pickle(tmp_path):
-    import sys, os, math
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    repo_root = os.path.dirname(repo_root)
-    sys.path.append(os.path.join(repo_root, "train-test"))
-    import optimal_baseline as ob
-    from game.compare_optimal import compare_to_optimal
+    import math
+    from experiments import optimal_baseline as ob
+    from quantum_repeater_sim.optimal_policy.compare_optimal import compare_to_optimal
     # Empty policy_dir -> no pickles -> swap-asap-only rows with NaN optimal gap.
     report = compare_to_optimal(
         ckpt=None, policy_dir=str(tmp_path),

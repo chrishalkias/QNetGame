@@ -30,7 +30,7 @@ unmodified env, and the trained agent and swap-asap are evaluated at the identic
 config for a fair gap-to-optimal.
 
 Usage:
-    PYTHONPATH=. python train-test/optimal_baseline.py
+    PYTHONPATH=. python experiments/optimal_baseline.py
 """
 from __future__ import annotations
 import argparse, copy, math, itertools, json, os, pickle, sys, time

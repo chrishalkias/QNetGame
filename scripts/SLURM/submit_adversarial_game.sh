@@ -13,12 +13,12 @@
 # Stage III adversarial training.
 #
 # Submit with defaults:
-#   sbatch --account=liacs scripts/submit_adversarial_game.sh
+#   sbatch --account=liacs scripts/SLURM/submit_adversarial_game.sh
 #
 # Override experiment settings through exported environment variables:
 #   FLAVOR=gate_daemon EPISODES=10000 SEED=1 \
 #     sbatch --account=liacs --export=ALL \
-#     scripts/submit_adversarial_game.sh
+#     scripts/SLURM/submit_adversarial_game.sh
 #
 # Common overrides:
 #   DEFENDER_CHECKPOINT, FLAVOR, EPISODES, MAX_STEPS, N_RANGE, N_CH, K,
@@ -134,7 +134,7 @@ if [[ "$NO_PLOT" == "1" ]]; then
     TRAIN_ARGS+=(--no-plot)
 fi
 
-python -u -m game.adversarial_game.train "${TRAIN_ARGS[@]}"
+python -u -m rl_stack.adversarial_game.train "${TRAIN_ARGS[@]}"
 
 echo "Job completed at $(date)"
 echo "Outputs: $OUTPUT_DIR"

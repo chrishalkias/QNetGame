@@ -1,11 +1,10 @@
 """Compare a trained agent against the exact optimal policy and swap-asap.
 
-Reuses train-test/optimal_baseline.py for the MDP/MC machinery. The optimal
+Reuses experiments/optimal_baseline.py for the MDP/MC machinery. The optimal
 policy only exists for n_ch=2, N<=4 (exact DP), so comparison is restricted to
 that slice; other points are reported against swap-asap only."""
 from __future__ import annotations
 import os
-import sys
 import pickle
 import numpy as np
 from typing import Dict, Optional, Sequence
@@ -13,16 +12,10 @@ from typing import Dict, Optional, Sequence
 from . import report as _report
 
 
-def _repo_root() -> str:
-    # game/compare_optimal.py -> game/ -> repo root
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
 def _import_optimal_baseline():
-    tt = os.path.join(_repo_root(), "train-test")
-    if tt not in sys.path:
-        sys.path.append(tt)
-    import optimal_baseline  # noqa: E402
+    # experiments/ is a top-level package (repo root on PYTHONPATH). Imported
+    # lazily so torch/heavy deps load only when a comparison actually runs.
+    from experiments import optimal_baseline
     return optimal_baseline
 
 

@@ -9,23 +9,20 @@ per point), so we sample params from the grid and dispatch to the matching
 pickle. Expectation: the agent starts below swap-asap, overtakes it, then
 converges toward the optimal line (steps/success panels of training_compare.png).
 
-  PYTHONPATH=$(pwd) python train-test/compare_optimal_smoke.py --episodes 500 \
+  PYTHONPATH=$(pwd) python experiments/compare_optimal.py --episodes 500 \
       --run_id compare_optimal_smoke
 """
 from __future__ import annotations
 import argparse
 import os
 import pickle
-import sys
 
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)          # for `import optimal_baseline`
 
-import optimal_baseline as ob          # noqa: E402
+from experiments import optimal_baseline as ob  # noqa: E402
 from rl_stack import QRNAgent           # noqa: E402
 from rl_stack.env_wrapper import PURIFY  # noqa: E402
 
@@ -47,7 +44,7 @@ def build_optimal_dispatch():
             if not os.path.isfile(path):
                 raise FileNotFoundError(
                     f"missing optimal pickle: {path}\n"
-                    "Generate it via train-test/optimal_baseline.py first.")
+                    "Generate it via experiments/optimal_baseline.py first.")
             with open(path, "rb") as f:
                 payload = pickle.load(f)
             acts = [np.asarray(a, dtype=int) for a in payload["acts"]]

@@ -32,7 +32,7 @@
 #   1. NEW FILE STRUCTURE on the cluster (branch refactor/netsquid-m1):
 #         (laptop)  git push -u origin refactor/netsquid-m1
 #         (cluster) cd <repo> && git fetch && git checkout refactor/netsquid-m1 && git pull
-#      Verify:  ls train-test/optimal_baseline.py
+#      Verify:  ls experiments/optimal_baseline.py
 #
 #   2. The remote venv ~/.venvs/qnetgame just needs numpy (1.26.4) + torch,
 #      already present from the training runs. NetSquid is NOT required here.
@@ -74,7 +74,7 @@ PY
 # the optimal policy beating swap-asap (T_opt 19.88 vs 20.90). --save_policy
 # writes one pickle per (N, p_gen, p_swap) into results/optimal_policies/ for
 # reuse as a baseline. The JSON is saved incrementally (per point).
-python -u train-test/optimal_baseline.py \
+python -u experiments/optimal_baseline.py \
     --n_list 3,4 \
     --n_ch 2 \
     --cutoff 5 \

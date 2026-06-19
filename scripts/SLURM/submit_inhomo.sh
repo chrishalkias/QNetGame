@@ -35,7 +35,7 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Job $SLURM_JOB_ID started at $(date)"
 echo "Node: $(hostname), GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 
-python -u train-test/train.py \
+python -u experiments/train.py \
     --run_id inhomo_001 \
     --lr 5e-4 \
     --hidden 64 \

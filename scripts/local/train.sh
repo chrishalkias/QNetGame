@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
-python -u train-test/train.py \
+python -u experiments/train.py \
     --run_id local_run \
     --lr 5e-4 \
     --hidden 64 \

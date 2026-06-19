@@ -9,7 +9,7 @@ metric is the purify-masked agent's gap to T_opt_swaponly. We also report the
 full-action agent's gap (purify lets it dip below the swap-only optimum).
 
 Run from repo root with the venv active:
-    PYTHONPATH=. python -m game.pgen_pswap_study --both
+    PYTHONPATH=. python -m quantum_repeater_sim.optimal_policy.pgen_pswap_study --both
 """
 from __future__ import annotations
 import argparse
@@ -24,7 +24,7 @@ import seaborn as sns
 import pandas as pd
 
 from rl_stack import QRNAgent
-from game.compare_optimal import (
+from .compare_optimal import (
     make_agent_fns, load_optimal_pickle, _import_optimal_baseline,
 )
 

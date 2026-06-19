@@ -3,7 +3,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from game.adversarial_game.adversary import (
+from rl_stack.adversarial_game.adversary import (
     DESTROY,
     NOOP,
     AdversaryAgent,
@@ -19,7 +19,7 @@ from game.adversarial_game.adversary import (
     target_pairs,
     targets_per_node,
 )
-from game.adversarial_game.environment import AdversarialQRNEnv
+from rl_stack.adversarial_game.environment import AdversarialQRNEnv
 from quantum_repeater_sim.repeater import (
     NO_PARTNER,
     QUBIT_OCCUPIED,
@@ -561,7 +561,7 @@ def test_gate_daemon_fails_when_probability_draw_is_exactly_zero():
 
 
 def test_adversarial_game_public_exports():
-    from game.adversarial_game import (
+    from rl_stack.adversarial_game import (
         AdversarialQRNEnv as PublicEnvironment,
         AdversaryAgent as PublicAgent,
         AdversaryFlavor as PublicFlavor,
@@ -1185,7 +1185,7 @@ def test_adversary_agent_builds_matching_policy_and_target_networks():
 
 
 def test_load_defender_initializes_policy_and_target(tmp_path):
-    from game.adversarial_game.train import load_defender
+    from rl_stack.adversarial_game.train import load_defender
     from rl_stack.agent import QRNAgent
 
     source = QRNAgent(hidden=64, rng=np.random.default_rng(8))
@@ -1209,7 +1209,7 @@ def test_load_defender_initializes_policy_and_target(tmp_path):
 
 
 def test_one_game_step_stores_exact_opposite_rewards(tmp_path):
-    from game.adversarial_game.train import (
+    from rl_stack.adversarial_game.train import (
         StageIIIConfig,
         build_training_state,
         play_step,
@@ -1243,7 +1243,7 @@ def test_one_game_step_stores_exact_opposite_rewards(tmp_path):
 
 
 def test_one_game_step_updates_both_agents_when_replay_is_ready(tmp_path):
-    from game.adversarial_game.train import StageIIIConfig, build_training_state, play_step
+    from rl_stack.adversarial_game.train import StageIIIConfig, build_training_state, play_step
 
     config = StageIIIConfig(
         defender_checkpoint="checkpoints/inhomo_001/policy.pth",
@@ -1277,7 +1277,7 @@ def test_one_game_step_updates_both_agents_when_replay_is_ready(tmp_path):
 
 
 def test_stage3_config_rejects_invalid_fixed_dimensions_and_flavor():
-    from game.adversarial_game.train import StageIIIConfig
+    from rl_stack.adversarial_game.train import StageIIIConfig
 
     with pytest.raises(NotImplementedError, match="CosmicRay"):
         StageIIIConfig(flavor="cosmic_ray").validate()
@@ -1292,7 +1292,7 @@ def test_stage3_config_rejects_invalid_fixed_dimensions_and_flavor():
 
 
 def test_incompatible_defender_checkpoint_fails_strict_load(tmp_path):
-    from game.adversarial_game.train import load_defender
+    from rl_stack.adversarial_game.train import load_defender
 
     checkpoint = tmp_path / "bad.pth"
     torch.save({"not_a_model": torch.zeros(1)}, checkpoint)
@@ -1308,7 +1308,7 @@ def test_incompatible_defender_checkpoint_fails_strict_load(tmp_path):
 def test_stage3_training_smoke_saves_loadable_outputs(tmp_path):
     import json
 
-    from game.adversarial_game.train import StageIIIConfig, train
+    from rl_stack.adversarial_game.train import StageIIIConfig, train
 
     config = StageIIIConfig(
         defender_checkpoint="checkpoints/inhomo_001/policy.pth",
@@ -1336,7 +1336,7 @@ def test_stage3_training_smoke_saves_loadable_outputs(tmp_path):
 
 
 def test_stage3_training_is_reproducible_for_a_fixed_seed(tmp_path):
-    from game.adversarial_game.train import StageIIIConfig, train
+    from rl_stack.adversarial_game.train import StageIIIConfig, train
 
     base = dict(
         defender_checkpoint="checkpoints/inhomo_001/policy.pth",
@@ -1368,8 +1368,8 @@ def test_stage3_training_is_reproducible_for_a_fixed_seed(tmp_path):
 
 
 def test_stage3_evaluation_uses_final_checkpoints_only(tmp_path, monkeypatch):
-    from game.adversarial_game.adversary import AdversaryAgent
-    from game.adversarial_game.evaluate import evaluate
+    from rl_stack.adversarial_game.adversary import AdversaryAgent
+    from rl_stack.adversarial_game.evaluate import evaluate
     from rl_stack.agent import QRNAgent
 
     run_dir = tmp_path / "run"
@@ -1385,11 +1385,11 @@ def test_stage3_evaluation_uses_final_checkpoints_only(tmp_path, monkeypatch):
     torch.save(defender.policy_net.state_dict(), run_dir / "defender_final.pth")
     torch.save(adversary.policy_net.state_dict(), run_dir / "adversary_final.pth")
     monkeypatch.setattr(
-        "game.adversarial_game.evaluate._plot_summary",
+        "rl_stack.adversarial_game.evaluate._plot_summary",
         lambda result, output: None,
     )
     monkeypatch.setattr(
-        "game.adversarial_game.evaluate._plot_targets",
+        "rl_stack.adversarial_game.evaluate._plot_targets",
         lambda result, output: None,
     )
 

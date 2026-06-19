@@ -533,7 +533,7 @@ class QRNAgent:
     @staticmethod
     def _save_metrics(metrics, save_path):
         """Dump raw per-episode metrics to metrics.json so plots can be
-        regenerated (train-test/replot.py) without retraining."""
+        regenerated (experiments/replot.py) without retraining."""
         import json
         os.makedirs(save_path, exist_ok=True)
         with open(os.path.join(save_path, "metrics.json"), "w") as f:

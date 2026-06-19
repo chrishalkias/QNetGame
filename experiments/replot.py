@@ -3,7 +3,7 @@
 train() writes <save_path>/metrics.json; this reloads it and re-runs the
 plotting, so stylistic tweaks to the figures are a few-second turnaround.
 
-  PYTHONPATH=$(pwd) python train-test/replot.py --dir checkpoints/compare_optimal
+  PYTHONPATH=$(pwd) python experiments/replot.py --dir checkpoints/compare_optimal
 """
 from __future__ import annotations
 import argparse
