@@ -656,25 +656,23 @@ in time" while the agent decides, then all actions execute in one step.
 
 ### 10.4 Observation Space
 
-`get_observation()` returns `{"x": (N, 10) float32, "edge_index": (2, E)
+`get_observation()` returns `{"x": (N, 8) float32, "edge_index": (2, E)
 int64}` — a **homogeneous** graph.
 
-**Node features** `(N, 10)`:
+**Node features** `(N, 8)`:
 
 | Col | Feature |
 |---|---|
 | 0 | `frac_occupied` — occupied / n_ch |
 | 1 | `mean_fidelity` — avg F of available (unlocked) qubits (0 if none) |
-| 2 | `is_source` — 0/1 |
-| 3 | `is_dest` — 0/1 |
-| 4 | `frac_available` — available (unlocked occupied) / n_ch |
-| 5 | `can_swap` — 1.0 if $\geq 2$ available qubits to distinct partners |
-| 6 | `can_purify` — 1.0 if $\geq 2$ available qubits to same partner |
-| 7 | `time_remaining` — (max_steps − steps) / max_steps |
-| 8 | `p_gen` — per-repeater generation prob. (inhomogeneity signal) |
-| 9 | `p_swap` — per-repeater BSM prob. (inhomogeneity signal) |
+| 2 | `in_endnode` — 1.0 if source OR dest (endpoints are symmetric) |
+| 3 | `frac_available` — available (unlocked occupied) / n_ch |
+| 4 | `can_swap` — 1.0 if $\geq 2$ available qubits to distinct partners |
+| 5 | `can_purify` — 1.0 if $\geq 2$ available qubits to same partner |
+| 6 | `p_gen` — per-repeater generation prob. (inhomogeneity signal) |
+| 7 | `p_swap` — per-repeater BSM prob. (inhomogeneity signal) |
 
-Columns 5/6 are forced to 0 for source/dest. Columns 8/9 are constant
+Columns 4/5 are forced to 0 for source/dest. Columns 6/7 are constant
 across nodes when the network is homogeneous (std = 0). `edge_index` is
 the repeater adjacency (both directions).
 
@@ -699,9 +697,9 @@ batch = buf.sample(64)
 `QNetwork`: three `SAGEConv` layers + a 2-layer MLP head.
 
 ```
-Input: (N, 10)
+Input: (N, 8)
       ↓
-SAGEConv(10→64) → ReLU
+SAGEConv(8→64) → ReLU
       ↓
 SAGEConv(64→64) → ReLU         GNN encoder
       ↓

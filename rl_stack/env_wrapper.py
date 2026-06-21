@@ -164,23 +164,21 @@ class QRNEnv:
     def get_observation(self) -> Dict[str, np.ndarray]:
         """Build size-agnostic node features + topology.
 
-        Features per node (10):
+        Features per node (8):
             [0] frac_occupied     — occupied / n_ch
             [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
-            [2] is_source         — 0/1
-            [3] is_dest           — 0/1
-            [4] frac_available    — available (unlocked occupied) / n_ch
-            [5] can_swap          — 1.0 if ≥2 available qubits to different partners
-            [6] can_purify        — 1.0 if ≥2 available qubits to same partner
-            [7] time_remaining    — (max_steps - steps) / max_steps
-            [8] p_gen             — per-repeater link-generation prob. (inhomogeneity)
-            [9] p_swap            — per-repeater BSM success prob. (inhomogeneity)
+            [2] in_endnode        — 1.0 if source OR dest (endpoints are symmetric)
+            [3] frac_available    — available (unlocked occupied) / n_ch
+            [4] can_swap          — 1.0 if ≥2 available qubits to different partners
+            [5] can_purify        — 1.0 if ≥2 available qubits to same partner
+            [6] p_gen             — per-repeater link-generation prob. (inhomogeneity)
+            [7] p_swap            — per-repeater BSM success prob. (inhomogeneity)
 
-        Features [5] and [6] are forced to 0 for source / dest. Features [8]/[9]
+        Features [4] and [5] are forced to 0 for source / dest. Features [6]/[7]
         are constant across nodes when the network is homogeneous (std=0); they
         carry node-quality signal only under per-repeater inhomogeneity.
         """
-        feats = np.zeros((self.N, 10), dtype=np.float32)
+        feats = np.zeros((self.N, 8), dtype=np.float32)
         for i in range(self.N):
             ns = self.backend.node_state(i)
             occ = ns.occupied
@@ -188,18 +186,16 @@ class QRNEnv:
             feats[i, 0] = int(occ.sum()) / ns.n_ch
             feats[i, 1] = (float(ns.fidelity[avail].mean())
                            if bool(avail.any()) else 0.0)
-            feats[i, 2] = 1.0 if i == self.source else 0.0
-            feats[i, 3] = 1.0 if i == self.dest else 0.0
-            feats[i, 4] = int(avail.sum()) / ns.n_ch
+            feats[i, 2] = 1.0 if self.is_target(i) else 0.0
+            feats[i, 3] = int(avail.sum()) / ns.n_ch
             if self.is_target(i):
+                feats[i, 4] = 0.0
                 feats[i, 5] = 0.0
-                feats[i, 6] = 0.0
             else:
-                feats[i, 5] = 1.0 if self._can_swap_from(ns) else 0.0
-                feats[i, 6] = 1.0 if self._can_purify_from(ns) else 0.0
-            feats[i, 7] = (self.max_steps - self.steps) / self.max_steps
-            feats[i, 8] = ns.p_gen
-            feats[i, 9] = ns.p_swap
+                feats[i, 4] = 1.0 if self._can_swap_from(ns) else 0.0
+                feats[i, 5] = 1.0 if self._can_purify_from(ns) else 0.0
+            feats[i, 6] = ns.p_gen
+            feats[i, 7] = ns.p_swap
         src, dst = np.nonzero(self._topo.adjacency)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}

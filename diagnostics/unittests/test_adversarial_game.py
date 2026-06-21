@@ -656,10 +656,10 @@ def test_adversary_observation_has_fixed_qubit_features_and_copied_edges():
     obs = build_adversary_observation(env, base_obs, n_ch=4)
 
     assert QUBIT_FEATURES == 5
-    assert obs["x"].shape == (3, 30)
+    assert obs["x"].shape == (3, 28)
     assert obs["x"].dtype == np.float32
-    np.testing.assert_array_equal(obs["x"][:, :10], base_obs["x"])
-    start = 10 + qubit * QUBIT_FEATURES
+    np.testing.assert_array_equal(obs["x"][:, :8], base_obs["x"])
+    start = 8 + qubit * QUBIT_FEATURES
     expected_qubit = np.array(
         [
             1.0,
@@ -739,7 +739,7 @@ def test_adversary_model_outputs_action_values_per_target():
     obs = build_adversary_observation(env, env.reset(), n_ch=4)
     data = obs_to_data(obs, device="cpu")
     model = AdversaryQNetwork(
-        node_dim=30,
+        node_dim=28,  # 8 base obs + n_ch(4) * QUBIT_FEATURES(5)
         hidden=16,
         targets_per_node=6,
     )
@@ -1176,7 +1176,7 @@ def test_adversary_agent_builds_matching_policy_and_target_networks():
     )
 
     assert agent.target_count == 6
-    assert agent.node_dim == 10 + 4 * QUBIT_FEATURES
+    assert agent.node_dim == 8 + 4 * QUBIT_FEATURES
     assert not agent.target_net.training
     for policy_parameter, target_parameter in zip(
         agent.policy_net.parameters(), agent.target_net.parameters()

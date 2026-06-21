@@ -130,8 +130,9 @@ def build_adversary_observation(
 ) -> dict[str, np.ndarray]:
     states = _fixed_width_states(env, n_ch)
     base_x = np.asarray(base_obs["x"], dtype=np.float32)
-    if base_x.shape != (env.N, 10):
-        raise ValueError(f"base observation x must have shape ({env.N}, 10)")
+    # 8 = env_wrapper.get_observation feature count (rl_stack.agent.NODE_DIM)
+    if base_x.shape != (env.N, 8):
+        raise ValueError(f"base observation x must have shape ({env.N}, 8)")
 
     qubit_x = np.empty((env.N, n_ch * QUBIT_FEATURES), dtype=np.float32)
     partner_scale = max(env.N - 1, 1)
@@ -292,7 +293,7 @@ class AdversaryAgent:
             else ("cuda" if torch.cuda.is_available() else "cpu")
         )
         self.target_count = targets_per_node(self.flavor, self.n_ch)
-        self.node_dim = 10 + self.n_ch * QUBIT_FEATURES
+        self.node_dim = 8 + self.n_ch * QUBIT_FEATURES  # 8 = base obs (NODE_DIM)
 
         self.policy_net = AdversaryQNetwork(
             self.node_dim,

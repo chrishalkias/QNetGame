@@ -44,7 +44,7 @@ from matplotlib.colors import to_rgba
                 #                    ██                      
                 #                    ▀▀       
                               
-NODE_DIM = 10   # must match env_wrapper feature count (8 base + p_gen, p_swap)
+NODE_DIM = 8   # must match env_wrapper get_observation feature count
 
 def _obs_to_data(obs: Dict[str, np.ndarray], device="cpu") -> Data:
     return Data(
@@ -206,17 +206,14 @@ class QRNAgent:
             tp.data.copy_(self.tau * p.data + (1.0 - self.tau) * tp.data)
 
         return loss.item()
-
-
-
-        # ▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄     ▄▄▄▄   ▄▄▄▄▄ ▄▄▄    ▄▄▄ 
-        # ▀▀▀███▀▀▀ ███▀▀███▄ ▄██▀▀██▄  ███  ████▄  ███ 
-        #    ███    ███▄▄███▀ ███  ███  ███  ███▀██▄███ 
-        #    ███    ███▀▀██▄  ███▀▀███  ███  ███  ▀████ 
-        #    ███    ███  ▀███ ███  ███ ▄███▄ ███    ███ 
-
-
-
+                
+            #  ▄▄▄▄▄▄▄                                  
+            # █████▀▀▀  ██         ██   ▀▀              
+            #  ▀████▄  ▀██▀▀ ▀▀█▄ ▀██▀▀ ██  ▄████ ▄█▀▀▀ 
+            #    ▀████  ██  ▄█▀██  ██   ██  ██    ▀███▄ 
+            # ███████▀  ██  ▀█▄██  ██   ██▄ ▀████ ▄▄▄█▀ 
+                                          
+                                          
     @staticmethod
     def _normalize_n_ch(n_ch):
         """Resolve n_ch (int or sequence) to a non-empty list of ints >= 2.
@@ -281,6 +278,14 @@ class QRNAgent:
         eps_floor_ep = int(eps_floor_frac * episodes)
         curr_open_ep = int(curriculum_frac * episodes) if curriculum else 0
         return max(eps_floor_ep, curr_open_ep)
+    
+
+        # ▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄     ▄▄▄▄   ▄▄▄▄▄ ▄▄▄    ▄▄▄ 
+        # ▀▀▀███▀▀▀ ███▀▀███▄ ▄██▀▀██▄  ███  ████▄  ███ 
+        #    ███    ███▄▄███▀ ███  ███  ███  ███▀██▄███ 
+        #    ███    ███▀▀██▄  ███▀▀███  ███  ███  ▀████ 
+        #    ███    ███  ▀███ ███  ███ ▄███▄ ███    ███ 
+
 
     def train(self,
               episodes = 3000,
@@ -950,3 +955,4 @@ class QRNAgent:
         plt.savefig(os.path.join(save_dir, "validation_actions.png"),
                     dpi=150, bbox_inches="tight")
         plt.close()
+

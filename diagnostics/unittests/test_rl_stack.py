@@ -368,8 +368,8 @@ class TestQRNEnvReset(unittest.TestCase):
 
     def test_reset_node_feature_shape(self):
         obs = self.env.reset()
-        # 10 features per node as documented in env_wrapper (8 base + p_gen, p_swap).
-        self.assertEqual(obs["x"].shape, (5, 10))
+        # 8 features per node as documented in env_wrapper.get_observation.
+        self.assertEqual(obs["x"].shape, (5, 8))
 
     def test_reset_steps_and_done_reinitialised(self):
         self.env.reset()
@@ -397,10 +397,9 @@ class TestQRNEnvReset(unittest.TestCase):
 
 class TestObservationFeatures(unittest.TestCase):
     """
-    Verify all 10 node features:
-      [0] frac_occupied  [1] mean_fidelity  [2] is_source  [3] is_dest
-      [4] frac_available [5] can_swap       [6] can_purify [7] time_remaining
-      [8] p_gen          [9] p_swap
+    Verify all 8 node features:
+      [0] frac_occupied  [1] mean_fidelity  [2] in_endnode   [3] frac_available
+      [4] can_swap       [5] can_purify     [6] p_gen        [7] p_swap
     """
 
     def setUp(self):
@@ -410,12 +409,12 @@ class TestObservationFeatures(unittest.TestCase):
     def test_feature_values_in_valid_range(self):
         x = self.obs["x"]
         # Fractions, flags and per-repeater rates must all lie in [0, 1].
-        for col in range(10):
+        for col in range(8):
             self.assertTrue((x[:, col] >= 0).all() and (x[:, col] <= 1).all(),
                             f"Feature column {col} out of [0,1] range.")
 
     def test_p_gen_p_swap_features_match_backend(self):
-        # Cols 8/9 must equal each repeater's per-node p_gen / p_swap, and an
+        # Cols 6/7 must equal each repeater's per-node p_gen / p_swap, and an
         # inhomogeneous network (std>0) must produce genuinely varying values.
         env = QRNEnv(n_repeaters=6, n_ch=4, p_gen=0.7, p_swap=0.7,
                      p_gen_std=0.18, p_swap_std=0.18, cutoff=20, max_steps=40,
@@ -423,41 +422,32 @@ class TestObservationFeatures(unittest.TestCase):
         x = env.reset()["x"]
         for i in range(env.N):
             ns = env.backend.node_state(i)
-            self.assertAlmostEqual(float(x[i, 8]), float(ns.p_gen), places=5)
-            self.assertAlmostEqual(float(x[i, 9]), float(ns.p_swap), places=5)
-        self.assertGreater(float(x[:, 8].std()), 0.0)  # inhomogeneous
-        self.assertGreater(float(x[:, 9].std()), 0.0)
+            self.assertAlmostEqual(float(x[i, 6]), float(ns.p_gen), places=5)
+            self.assertAlmostEqual(float(x[i, 7]), float(ns.p_swap), places=5)
+        self.assertGreater(float(x[:, 6].std()), 0.0)  # inhomogeneous
+        self.assertGreater(float(x[:, 7].std()), 0.0)
 
-    def test_source_dest_flags_exclusive(self):
+    def test_in_endnode_flags_endpoints(self):
         x = self.obs["x"]
-        src_flags  = x[:, 2]
-        dest_flags = x[:, 3]
-        # Exactly one node flagged as source and one as dest.
-        self.assertEqual(int(src_flags.sum()),  1)
-        self.assertEqual(int(dest_flags.sum()), 1)
-        # No node is both source and dest.
-        self.assertFalse((src_flags * dest_flags).any())
+        endnode = x[:, 2]
+        # Exactly the two endpoints (source + dest) are flagged.
+        self.assertEqual(int(endnode.sum()), 2)
+        self.assertEqual(float(endnode[self.env.source]), 1.0)
+        self.assertEqual(float(endnode[self.env.dest]), 1.0)
 
     def test_source_dest_cannot_swap_or_purify(self):
         x = self.obs["x"]
         for node in [self.env.source, self.env.dest]:
-            # can_swap (col 5) and can_purify (col 6) must be 0 for endpoints.
-            self.assertEqual(float(x[node, 5]), 0.0,
+            # can_swap (col 4) and can_purify (col 5) must be 0 for endpoints.
+            self.assertEqual(float(x[node, 4]), 0.0,
                              f"Node {node} (src/dst) must have can_swap=0.")
-            self.assertEqual(float(x[node, 6]), 0.0,
+            self.assertEqual(float(x[node, 5]), 0.0,
                              f"Node {node} (src/dst) must have can_purify=0.")
-
-    def test_time_remaining_decreases_per_step(self):
-        obs0 = self.env.reset()
-        t0 = float(obs0["x"][0, 7])
-        obs1, _, _, _ = self.env.step(np.zeros(self.env.N, dtype=int))
-        t1 = float(obs1["x"][0, 7])
-        self.assertLess(t1, t0, "time_remaining must decrease after each step.")
 
     def test_frac_available_leq_frac_occupied(self):
         x = self.obs["x"]
         # Available ≤ occupied (locked qubits reduce availability).
-        self.assertTrue((x[:, 4] <= x[:, 0] + 1e-6).all(),
+        self.assertTrue((x[:, 3] <= x[:, 0] + 1e-6).all(),
                         "frac_available must never exceed frac_occupied.")
 
     def test_edge_index_shape(self):
@@ -977,7 +967,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                      cutoff=20, max_steps=40, topology="chain",
                      rng=np.random.default_rng(2024))
         obs = env.reset()
-        self.assertEqual(obs["x"].shape, (env.N, 10))
+        self.assertEqual(obs["x"].shape, (env.N, 8))
         self.assertEqual(obs["edge_index"].shape[0], 2)
         for _ in range(40):
             mask = env.get_action_mask()
@@ -986,7 +976,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                 self.assertTrue(mask[i, a[i]])
             obs, r, done, info = env.step(a)
             self.assertTrue(np.isfinite(r))
-            self.assertEqual(obs["x"].shape, (env.N, 10))
+            self.assertEqual(obs["x"].shape, (env.N, 8))
             self.assertTrue(np.all(obs["x"] >= -1e-6))
             self.assertTrue(np.all(obs["x"] <= 1.0 + 1e-6))
             if done:
