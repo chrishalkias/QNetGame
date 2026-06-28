@@ -421,7 +421,7 @@ class TestObservationFeatures(unittest.TestCase):
                      topology="chain", rng=np.random.default_rng(99))
         x = env.reset()["x"]
         for i in range(env.N):
-            ns = env.backend.node_state(i)
+            ns = env.net.node_state(i)
             self.assertAlmostEqual(float(x[i, 6]), float(ns.p_gen), places=5)
             self.assertAlmostEqual(float(x[i, 7]), float(ns.p_swap), places=5)
         self.assertGreater(float(x[:, 6].std()), 0.0)  # inhomogeneous

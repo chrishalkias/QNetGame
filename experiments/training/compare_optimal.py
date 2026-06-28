@@ -51,7 +51,7 @@ def build_optimal_dispatch():
             opt_fns[(pg, ps)] = ob.optimal_policy_fn(payload["policy"], acts)
 
     def optimal_dispatch(env, obs):
-        ns = env.backend.node_state(0)        # homogeneous -> node 0 carries both
+        ns = env.net.node_state(0)        # homogeneous -> node 0 carries both
         key = (round(float(ns.p_gen), 2), round(float(ns.p_swap), 2))
         return opt_fns[key](env, obs)
 

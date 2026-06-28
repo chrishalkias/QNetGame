@@ -30,7 +30,7 @@ from __future__ import annotations
 from typing import Dict, Tuple, Optional
 import numpy as np
 
-from simulator.backends import make_backend
+from simulator.network import build_network
 from simulator.repeater import NO_PARTNER
 from rl_stack import potential
 
@@ -52,7 +52,7 @@ class QRNEnv:
          ▀█████▀  ███  ▀███ ███    ███       ▀███████ ██ ██  ▀█▀
               ▀▀
 
-    Gym-like wrapper around PhysicsBackend for RL training.
+    Gym-like wrapper around RepeaterNetwork for RL training.
 
     The agent decides SWAP / PURIFY / NOOP at each interior node.
     Source and destination nodes are always forced to NOOP.
@@ -88,14 +88,14 @@ class QRNEnv:
         self._phi = 0.0
         self.topology = topology
 
-        self.backend = make_backend(
+        self.net = build_network(
             topology=topology, n_repeaters=n_repeaters, n_ch=n_ch,
             spacing=spacing, p_gen=p_gen, p_swap=p_swap,
             p_gen_std=p_gen_std, p_swap_std=p_swap_std, cutoff=cutoff,
             F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
             rng=self.rng)
 
-        self._topo = self.backend.topology()
+        self._topo = self.net.topology()
         self.N = self._topo.N
         self.source = -1
         self.dest = -1
@@ -103,10 +103,14 @@ class QRNEnv:
         self.done = False
         self._pick_targets()
 
-    @property
-    def net(self):
-        """Temporary shim for legacy consumers; use node_state()/topology()."""
-        return self.backend.net
+    # Engine entangle/swap go through these seams so subclasses (the
+    # adversarial game) can intercept them via override instead of patching
+    # the slotted RepeaterNetwork.
+    def _engine_entangle(self, r1: int, r2: int) -> Dict:
+        return self.net.entangle(r1, r2)
+
+    def _engine_swap(self, r: int) -> Dict:
+        return self.net.swap(r)
 
 
 # ▄▄▄▄▄▄▄▄▄
@@ -136,7 +140,7 @@ class QRNEnv:
         """Undirected (a, b) edges of the current entanglement graph."""
         edges = set()
         for i in range(self.N):
-            ns = self.backend.node_state(i)
+            ns = self.net.node_state(i)
             for qi in np.flatnonzero(ns.occupied):
                 p = int(ns.partner_node[qi])
                 if p != NO_PARTNER and p != i:
@@ -178,7 +182,7 @@ class QRNEnv:
         """
         feats = np.zeros((self.N, 8), dtype=np.float32)
         for i in range(self.N):
-            ns = self.backend.node_state(i)
+            ns = self.net.node_state(i)
             occ = ns.occupied
             avail = occ & (~ns.locked)
             feats[i, 0] = int(occ.sum()) / ns.n_ch
@@ -241,7 +245,7 @@ class QRNEnv:
         for i in range(self.N):
             if self.is_target(i):
                 continue
-            ns = self.backend.node_state(i)
+            ns = self.net.node_state(i)
             if self._can_swap_from(ns):
                 mask[i, SWAP] = True
             if self._can_purify_from(ns):
@@ -287,7 +291,7 @@ class QRNEnv:
         info["noops"] = int(np.sum(actions == NOOP))
 
         # Phase 2: age links (resolves pending events, decoheres, expires)
-        self.backend.advance()
+        self.net.age_links(discard_expired=True)
 
         # Phase 3: check end-to-end
         self.steps += 1
@@ -333,13 +337,13 @@ class QRNEnv:
         pairs = list(zip(*np.nonzero(np.triu(self._topo.adjacency, k=1))))
         self.rng.shuffle(pairs)
         for r1, r2 in pairs:
-            self.backend.entangle(int(r1), int(r2))
+            self._engine_entangle(int(r1), int(r2))
 
     def _exec_swap(self, r: int) -> Dict:
-        return self.backend.swap(r)
+        return self._engine_swap(r)
 
     def _exec_purify(self, r: int) -> Dict:
-        ns = self.backend.node_state(r)
+        ns = self.net.node_state(r)
         avail = ns.occupied & (~ns.locked)
         if int(avail.sum()) < 2:
             return {"success": False, "reason": "insufficient_qubits"}
@@ -350,11 +354,11 @@ class QRNEnv:
         if not valid:
             return {"success": False, "reason": "no_valid_pair"}
         best_nb = max(valid, key=lambda x: x[1])[0]
-        return self.backend.purify(r, best_nb)
+        return self.net.purify(r, best_nb)
 
     def _check_e2e(self) -> Tuple[bool, float]:
         """Check whether source and dest share a direct entanglement link."""
-        ns = self.backend.node_state(self.source)
+        ns = self.net.node_state(self.source)
         for qi in np.flatnonzero(ns.occupied):
             if int(ns.partner_node[qi]) == self.dest:
                 return True, float(ns.fidelity[qi])
@@ -371,7 +375,7 @@ class QRNEnv:
 
     def reset(self) -> Dict[str, np.ndarray]:
         """Reset, auto-entangle once, return observation."""
-        self.backend.reset()
+        self.net.reset()
         self._pick_targets()
         self.steps = 0
         self.done  = False
@@ -384,6 +388,6 @@ class QRNEnv:
         return f"{['W','S','P'][action]}({node})"
 
     def render(self, filepath=None, figsize=None, dpi=250):
-        return self.backend.render(filepath=filepath, figsize=figsize,
-                                   dpi=dpi,
-                                   source_dest=(self.source, self.dest))
+        return self.net.render(filepath=filepath, figsize=figsize,
+                               dpi=dpi,
+                               source_dest=(self.source, self.dest))

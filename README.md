@@ -211,18 +211,13 @@ on the next `age_links()` call).
 │  get_action_mask() → (N, 3)  NOOP / SWAP / PURIFY          │
 │  step(actions): purify → swap → age → e2e → auto-entangle  │
 └───────────────────────────┬────────────────────────────────┘
-                            │ talks to a
+                            │ drives
                             ▼
                 ┌───────────────────────────┐
-                │      PhysicsBackend         │   make_backend(...)
-                │  legacy                     │
-                │  node_state / advance / ... │
-                └───────────────┬─────────────┘
-                                │  (legacy) wraps
-                                ▼
-                ┌───────────────────────────┐
-                │      RepeaterNetwork        │
-                │   Repeater (×N) internals   │
+                │      RepeaterNetwork        │   build_network(...)
+                │  node_state / topology /    │
+                │  entangle / swap / purify / │
+                │  age_links · Repeater (×N)  │
                 └───────────────────────────┘
 ```
 
@@ -400,31 +395,30 @@ All forward `**kwargs` to `RepeaterNetwork`.
 
 ---
 
-## 6. Physics Backends
+## 6. Physics Engine
 
-The simulator's physics is accessed through `PhysicsBackend`
-(`simulator/backends/`). `QRNEnv` never touches
-`RepeaterNetwork` directly — it talks to a backend built by
-`make_backend(...)`.
+`QRNEnv` drives a `RepeaterNetwork` (`simulator/network.py`) directly. The
+engine exposes immutable, fidelity-domain read snapshots so the agent reads
+state without being able to mutate it.
 
-### 6.1 The Interface (`backends/base.py`)
+### 6.1 Read snapshots (`simulator/snapshots.py`)
 
 | Object | Role |
 |---|---|
-| `PhysicsBackend` | abstract: `node_state(i)`, `topology()`, `entangle/swap/purify`, `advance()` |
+| `RepeaterNetwork` | the engine: `node_state(i)`, `topology()`, `all_links()`, `entangle/swap/purify`, `age_links()` |
 | `NodeState` | frozen per-node snapshot: `occupied`, `locked`, `partner_node`, `fidelity`, `n_ch`, `p_gen`, `p_swap` |
-| `LinkState` | frozen link record (endpoints, Werner $p$, age) |
+| `LinkState` | frozen link record (endpoints, fidelity, age) |
 | `Topology` | `N`, `adjacency`, positions — the static graph |
 
 `NodeState` / `LinkState` / `Topology` are frozen dataclasses with
 read-only arrays (immutable snapshots — the agent can't mutate physics
 state through the observation).
 
-### 6.2 `make_backend(backend, topology, ...)`
+### 6.2 `build_network(topology, ...)`
 
-| `backend` | Notes |
-|---|---|
-| `"legacy"` | Pure-NumPy `RepeaterNetwork` wrapper. Default (and only) backend. All topologies (chain/grid/geant). |
+Builds a `RepeaterNetwork` for `topology` in `{chain, grid, geant}` (the
+factory that dispatches to `build_chain` / `build_grid` / `build_GEANT` and
+applies per-repeater inhomogeneity).
 
 **Inhomogeneity:** `p_gen` / `p_swap` are per-network *means*;
 `p_gen_std` / `p_swap_std` spread per-repeater values (std = 0 →
@@ -859,8 +853,8 @@ dynamic-programming "optimal" policy.
 
 ```
 simulator/        core simulator (NumPy)
-  repeater.py, network.py
-  backends/                  PhysicsBackend: legacy
+  repeater.py, network.py    engine + build_network()
+  snapshots.py               frozen NodeState / LinkState / Topology
   optimal_policy/            DP-optimal benchmark
 rl_stack/                    Double-DQN RL stack
   env_wrapper.py  agent.py  model.py  buffer.py  strategies.py  potential.py
@@ -891,7 +885,7 @@ the `scripts/` shell wrappers.
 |---|---|
 | `test_simulator.py` | physics: Werner↔fidelity, decoherence, BBPSSW, swap product rule, classical delay, distance scaling; core mechanics; RL-loophole edge cases (ghost links, asymmetric cutoff, locking integrity, self-swap) |
 | `test_rl_stack.py` | Double-DQN update rule, Polyak averaging, masked-target argmax, graph batching, `QRNEnv` reset/step/features, `QRNAgent.select_actions`, `ReplayBuffer` |
-| `test_backends.py` | `PhysicsBackend` interface, frozen/read-only `NodeState`/`Topology` snapshots |
+| `test_backends.py` | `RepeaterNetwork` read snapshots + `build_network`, frozen/read-only `NodeState`/`Topology` |
 | `test_potential.py` | `bfs_hops` and `path_progress` PBRS potential |
 | `test_game.py` | curriculum / `QRNAgent` helpers (e.g. `_normalize_n_ch`) |
 | `test_adversarial_game.py` | adversary agent / `AdversarialQRNEnv` |

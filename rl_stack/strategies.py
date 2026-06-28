@@ -47,15 +47,15 @@ def fidelity_gated_swap(env: QRNEnv, f_threshold: float = 0.5) -> np.ndarray:
     Approximates the learned RL policy from cluster_004: wait for fresh,
     high-quality links before swapping; never purify.
 
-    Reads the PhysicsBackend snapshot (engine-agnostic) rather than the
-    legacy engine internals.
+    Reads the RepeaterNetwork node_state snapshot rather than the engine's
+    mutable internals.
     """
     mask = env.get_action_mask()
     actions = np.full(env.N, NOOP, dtype=np.int32)
     for i in range(env.N):
         if not mask[i, SWAP]:
             continue
-        ns = env.backend.node_state(i)
+        ns = env.net.node_state(i)
         occ = ns.occupied
         if not bool(occ.any()):
             continue

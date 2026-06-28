@@ -292,7 +292,7 @@ def test_load_optimal_pickle_match_and_mismatch(tmp_path):
 
 def test_compare_to_optimal_with_injected_agent(tmp_path):
     # Use swap_asap as a stand-in "agent_fn" so the test needs no torch checkpoint.
-    from experiments import optimal_baseline as ob
+    from experiments.heatmap import optimal_baseline as ob
     from simulator.optimal_policy.compare_optimal import compare_to_optimal
 
     _write_synthetic_pickle(str(tmp_path), 3, 2, 5, 30, 0.9, 0.9)
@@ -328,7 +328,7 @@ def test_load_optimal_pickle_config_mismatch_raises(tmp_path):
 
 def test_compare_to_optimal_degrades_without_pickle(tmp_path):
     import math
-    from experiments import optimal_baseline as ob
+    from experiments.heatmap import optimal_baseline as ob
     from simulator.optimal_policy.compare_optimal import compare_to_optimal
     # Empty policy_dir -> no pickles -> swap-asap-only rows with NaN optimal gap.
     report = compare_to_optimal(

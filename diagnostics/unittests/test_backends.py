@@ -2,9 +2,7 @@ import numpy as np
 import pytest
 from dataclasses import FrozenInstanceError
 
-from simulator.backends.base import (
-    PhysicsBackend, NodeState, LinkState, Topology, _freeze,
-)
+from simulator.snapshots import NodeState, Topology, _freeze
 
 
 def test_freeze_makes_array_readonly():
@@ -26,11 +24,6 @@ def test_nodestate_is_frozen():
     )
     with pytest.raises(FrozenInstanceError):
         ns.node_id = 5
-
-
-def test_physicsbackend_is_abstract():
-    with pytest.raises(TypeError):
-        PhysicsBackend()
 
 
 def test_freeze_returns_independent_copy():
@@ -67,31 +60,29 @@ def test_topology_autofreezes_arrays():
         topo.adjacency[0, 0] = 9.0
 
 
-from simulator.backends.legacy import LegacyBackend
-from simulator.network import build_chain
+from simulator.network import build_chain, RepeaterNetwork
 
 
-def _legacy_chain():
-    net = build_chain(3, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
-                      cutoff=20, F0=0.95, channel_loss=0.0,
-                      dt_seconds=1e-4, distance_dep_gen=True,
-                      rng=np.random.default_rng(0))
-    return LegacyBackend(net)
+def _chain():
+    return build_chain(3, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
+                       cutoff=20, F0=0.95, channel_loss=0.0,
+                       dt_seconds=1e-4, distance_dep_gen=True,
+                       rng=np.random.default_rng(0))
 
 
-def test_legacy_topology():
-    be = _legacy_chain()
-    topo = be.topology()
+def test_network_topology_snapshot():
+    net = _chain()
+    topo = net.topology()
     assert topo.N == 3
     assert topo.adjacency.shape == (3, 3)
     assert topo.positions.shape == (3, 2)
     assert topo.adjacency.flags.writeable is False
 
 
-def test_legacy_node_state_reflects_entanglement():
-    be = _legacy_chain()
-    be.entangle(0, 1)
-    ns = be.node_state(0)
+def test_node_state_reflects_entanglement():
+    net = _chain()
+    net.entangle(0, 1)
+    ns = net.node_state(0)
     assert ns.n_ch == 4
     assert ns.occupied.any()
     qi = int(np.flatnonzero(ns.occupied)[0])
@@ -100,44 +91,33 @@ def test_legacy_node_state_reflects_entanglement():
     assert ns.occupied.flags.writeable is False
 
 
-def test_legacy_node_state_free_qubit_zero_fidelity():
-    be = _legacy_chain()
-    ns = be.node_state(2)
+def test_node_state_free_qubit_zero_fidelity():
+    net = _chain()
+    ns = net.node_state(2)
     assert not ns.occupied.any()
     assert float(ns.fidelity.max()) == 0.0
 
 
-def test_legacy_advance_returns_contract_dict():
-    be = _legacy_chain()
-    out = be.advance()
-    assert set(out) == {"expired", "resolved", "pending", "time"}
-    assert out["time"] == 1.0
+def test_pending_increments_on_deferred_swap():
+    net = _chain()
+    net.entangle(0, 1)
+    net.entangle(1, 2)
+    net.swap(1)            # nonzero channel delay -> deferred
+    assert len(net.pending_events) >= 1
 
 
-def test_legacy_pending_increments_on_deferred_swap():
-    be = _legacy_chain()
-    be.entangle(0, 1)
-    be.entangle(1, 2)
-    be.swap(1)            # nonzero channel delay -> deferred
-    assert be.n_pending >= 1
+from simulator.network import build_network, _sample_matched_uniform
 
 
-from simulator.backends import make_backend
+def test_build_network_builds_chain():
+    net = build_network("chain", n_repeaters=4, rng=np.random.default_rng(1))
+    assert isinstance(net, RepeaterNetwork)
+    assert net.topology().N == 4
 
 
-def test_factory_builds_legacy_chain():
-    be = make_backend("legacy", topology="chain", n_repeaters=4,
-                      rng=np.random.default_rng(1))
-    assert isinstance(be, LegacyBackend)
-    assert be.topology().N == 4
-
-
-def test_factory_rejects_unknown_backend():
+def test_build_network_rejects_unknown_topology():
     with pytest.raises(ValueError):
-        make_backend("quantum_magic", topology="chain")
-
-
-from simulator.backends.factory import _sample_matched_uniform
+        build_network("quantum_magic")
 
 
 def test_sample_matched_uniform_std_zero_is_constant_and_drawless():
@@ -171,24 +151,24 @@ def test_sample_matched_uniform_clips_to_valid_band():
     assert out.max() <= 1.0
 
 
-def test_factory_std_makes_per_repeater_params_differ():
-    be = make_backend("legacy", topology="chain", n_repeaters=6,
-                      p_gen=0.7, p_swap=0.7, p_swap_std=0.18,
-                      rng=np.random.default_rng(3))
-    ps = np.array([rep.p_swap for rep in be.net.repeaters])
+def test_build_network_std_makes_per_repeater_params_differ():
+    net = build_network("chain", n_repeaters=6,
+                        p_gen=0.7, p_swap=0.7, p_swap_std=0.18,
+                        rng=np.random.default_rng(3))
+    ps = np.array([rep.p_swap for rep in net.repeaters])
     assert ps.std() > 0.0          # inhomogeneous
     assert ps.min() >= 0.05 and ps.max() <= 1.0
 
 
-def test_factory_std_zero_is_homogeneous():
-    be = make_backend("legacy", topology="chain", n_repeaters=6,
-                      p_gen=0.7, p_swap=0.65,
-                      rng=np.random.default_rng(4))
-    assert all(rep.p_gen == 0.7 for rep in be.net.repeaters)
-    assert all(rep.p_swap == 0.65 for rep in be.net.repeaters)
+def test_build_network_std_zero_is_homogeneous():
+    net = build_network("chain", n_repeaters=6,
+                        p_gen=0.7, p_swap=0.65,
+                        rng=np.random.default_rng(4))
+    assert all(rep.p_gen == 0.7 for rep in net.repeaters)
+    assert all(rep.p_swap == 0.65 for rep in net.repeaters)
 
 
-def test_fidelity_gated_swap_uses_backend_snapshot():
+def test_fidelity_gated_swap_uses_node_state_snapshot():
     from rl_stack.env_wrapper import QRNEnv
     from rl_stack.strategies import fidelity_gated_swap
     env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7, cutoff=20,

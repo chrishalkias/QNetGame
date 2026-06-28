@@ -114,7 +114,7 @@ def decode_target(
 
 def _fixed_width_states(env, n_ch: int):
     n_ch = _channel_count(n_ch)
-    states = [env.backend.node_state(node) for node in range(env.N)]
+    states = [env.net.node_state(node) for node in range(env.N)]
     mismatched = [state.node_id for state in states if state.n_ch != n_ch]
     if mismatched:
         raise ValueError(
@@ -142,7 +142,7 @@ def build_adversary_observation(
             -1.0,
             state.partner_node.astype(np.float32) / partner_scale,
         )
-        cutoff = max(env.backend.net.repeaters[node].cutoff, 1)
+        cutoff = max(env.net.repeaters[node].cutoff, 1)
         age = np.minimum(state.age.astype(np.float32) / cutoff, 1.0)
         qubit_x[node] = np.column_stack(
             (

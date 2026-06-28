@@ -1123,17 +1123,5 @@ class TestRepeaterInternals(unittest.TestCase):
         self.assertNotIn(0, result)
         self.assertIn(1, result)
 
-    def test_feature_vector_length(self):
-        rep = Repeater(rid=0, n_ch=4, cutoff=20,
-                       position=np.array([1.0, 2.0]))
-        fv = rep.feature_vector()
-        self.assertEqual(len(fv), 6)
-
-    def test_qubit_features_shape(self):
-        rep = Repeater(rid=0, n_ch=4, cutoff=20)
-        qf = rep.qubit_features()
-        self.assertEqual(qf.shape, (4, 6))
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -276,56 +276,6 @@ class Repeater:
         return int(qa_all[best]), int(qb_all[best])
 
 
-                                                
-#  ▄▄▄▄▄▄▄                                        
-# ███▀▀▀▀▀           ██                           
-# ███▄▄ ▄█▀█▄  ▀▀█▄ ▀██▀▀ ██ ██ ████▄ ▄█▀█▄ ▄█▀▀▀ 
-# ███▀▀ ██▄█▀ ▄█▀██  ██   ██ ██ ██ ▀▀ ██▄█▀ ▀███▄ 
-# ███   ▀█▄▄▄ ▀█▄██  ██   ▀██▀█ ██    ▀█▄▄▄ ▄▄▄█▀ 
-                                                
-                                                
-    def feature_vector(self) -> np.ndarray:
-        """
-        REPEATER feature vector to be fed into the GNN
-            `[pos_x, pos_y, frac_occupied, mean_fidelity, p_gen, p_swap]`
-        """
-
-        n_occ = self.num_occupied()
-        frac = n_occ / self.n_ch #NOTE maybe use abs number of qubits instead?
-
-        all_f = werner_to_fidelity(self.werner_param[self.status == QUBIT_OCCUPIED])
-        mean_f = float(np.mean(all_f)
-            if n_occ > 0 else 0.0)
-        
-        return np.array([self.position[0], 
-                         self.position[1],
-                         frac, 
-                         mean_f, 
-                         self.p_gen, 
-                         self.p_swap],)
-
-    def qubit_features(self) -> np.ndarray:
-        """
-        QUBIT feature vector:
-            (n_ch, 6): [occupied, werner, fidelity, partner_rid, age_norm, locked]
-        """
-        is_occ = (self.status == QUBIT_OCCUPIED).astype(np.float64)
-        fid = werner_to_fidelity(self.werner_param)
-        pn = self.partner_repeater.astype(np.float64)
-
-        # Encode "no partner" as -1.0 to avoid collision with repeater ID 0
-        pn[pn == NO_PARTNER] = -1.0
-
-        # normalized age
-        age_norm = self.age.astype(np.float64) / max(self.cutoff, 1)
-        is_locked = self.locked.astype(np.float64)
-
-        return np.stack([is_occ, 
-                         self.werner_param, 
-                         fid, 
-                         pn, 
-                         age_norm, 
-                         is_locked], axis=-1)                           
 # ▄▄▄      ▄▄▄                 
 # ████▄  ▄████ ▀▀              
 # ███▀████▀███ ██  ▄█▀▀▀ ▄████ 

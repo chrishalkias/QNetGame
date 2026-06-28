@@ -14,6 +14,7 @@ from .repeater import (
     fidelity_to_werner, werner_to_fidelity,
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
+from .snapshots import NodeState, Topology, _freeze
 
                                                                                            
 """                                                           
@@ -494,7 +495,34 @@ class RepeaterNetwork:
                                   werner_to_fidelity(rep.werner_param[qi]),
                                   int(rep.age[qi])])
         return np.array(links, dtype=np.float64) if links else np.empty((0, 6), dtype=np.float64)
-    
+
+    # ---- immutable read snapshots (engine-agnostic, F-domain) -------------
+    def topology(self) -> Topology:
+        return Topology(
+            N=self.N,
+            adjacency=_freeze(self.adj.copy()),
+            positions=_freeze(self._positions.copy()),
+        )
+
+    def node_state(self, node: int) -> NodeState:
+        rep = self.repeaters[node]
+        occupied = (rep.status == QUBIT_OCCUPIED)
+        fid = werner_to_fidelity(rep.werner_param).astype(np.float64)
+        fid = np.where(occupied, fid, 0.0)
+        return NodeState(
+            node_id=node,
+            n_ch=rep.n_ch,
+            p_gen=float(rep.p_gen),
+            p_swap=float(rep.p_swap),
+            occupied=_freeze(occupied),
+            locked=_freeze(rep.locked),
+            partner_node=_freeze(rep.partner_repeater),
+            partner_qubit=_freeze(rep.partner_qubit),
+            fidelity=_freeze(fid),
+            age=_freeze(rep.age.astype(np.int32)),
+        )
+
+
                                                                              
 #   ▄▄▄▄                                 ▄▄▄      ▄▄▄                          
 # ▄██▀▀██▄        ██   ▀▀                ████▄  ▄████             ▄▄           
@@ -1128,5 +1156,75 @@ def build_GEANT(
         adj[i, j] = adj[j, i] = d
 
     return RepeaterNetwork(reps, adj, **kw)
+
+
+# ▄▄▄      ▄▄▄                 ▄▄
+# ████▄  ▄████ ▀▀             ██  ▄█▀█▄
+# ███▀████▀███ ██ ▄█▀▀▀ ▄████ ██▄█▀  ▄████  ▀▀█▄ ▄█▀█▄ ████▄
+# ███  ▀▀  ███ ██ ▀███▄ ██    ██ ▀█▄ ██     ▄█▀██ ██▄█▀ ██ ▀▀
+# ███      ███ ██▄ ▄▄▄█▀ ▀████ ██  ██ ▀████ ▀█▄██ ▀█▄▄▄ ██
+
+def _sample_matched_uniform(mean, std, size, rng, lo=0.05, hi=1.0):
+    """Per-repeater rates drawn from a uniform with variance ``std**2``, centred
+    on ``mean`` and clipped to ``[lo, hi]``.
+
+    A uniform on ``[mean - sqrt(3)*std, mean + sqrt(3)*std]`` has standard
+    deviation exactly ``std`` (before clipping). ``std <= 0`` broadcasts the
+    clipped ``mean`` and consumes NO rng draw, so the homogeneous path keeps the
+    pre-inhomogeneity RNG stream bit-for-bit.
+    """
+    if std <= 0.0:
+        return np.full(size, float(np.clip(mean, lo, hi)))
+    hw = sqrt(3.0) * std
+    return np.clip(rng.uniform(mean - hw, mean + hw, size=size), lo, hi)
+
+
+def build_network(
+    topology: str = "chain",
+    *,
+    n_repeaters: int = 5,
+    n_ch: int = 4,
+    spacing: float = 50.0,
+    p_gen: float = 0.8,
+    p_swap: float = 0.5,
+    p_gen_std: float = 0.0,
+    p_swap_std: float = 0.0,
+    cutoff: int = 20,
+    F0: float = 0.95,
+    channel_loss: float = 0.02,
+    dt_seconds: float = 1e-4,
+    rng=None,
+) -> RepeaterNetwork:
+    """Build a RepeaterNetwork for the given topology.
+
+    Inhomogeneity: `p_gen`/`p_swap` are the per-network MEANS; `p_gen_std`/
+    `p_swap_std` spread per-repeater values via `_sample_matched_uniform`
+    (std=0 -> homogeneous, no rng draw).
+    """
+    rng = rng if rng is not None else np.random.default_rng()
+    if topology == "chain":
+        net = build_chain(
+            n_repeaters, n_ch=n_ch, spacing=spacing,
+            p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+            F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
+            distance_dep_gen=True, rng=rng)
+    elif topology == "grid":
+        net = build_grid(
+            rows=n_repeaters, cols=n_repeaters, n_ch=n_ch, spacing=spacing,
+            swap_policy=SwapPolicy.FARTHEST, p_gen=p_gen, p_swap=p_swap,
+            cutoff=cutoff, rng=rng)
+    elif topology == "geant":
+        net = build_GEANT(
+            n_ch=n_ch, swap_policy=SwapPolicy.FARTHEST,
+            p_gen=p_gen, p_swap=p_swap, cutoff=cutoff, rng=rng)
+    else:
+        raise ValueError(f"Unknown topology {topology!r}")
+
+    if p_gen_std > 0.0 or p_swap_std > 0.0:
+        pg = _sample_matched_uniform(p_gen, p_gen_std, net.N, rng)
+        ps = _sample_matched_uniform(p_swap, p_swap_std, net.N, rng)
+        for i, rep in enumerate(net.repeaters):
+            rep.p_gen, rep.p_swap = float(pg[i]), float(ps[i])
+    return net
 
 

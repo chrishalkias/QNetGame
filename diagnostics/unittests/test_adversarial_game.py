@@ -75,34 +75,6 @@ def noop_actions(env):
     return np.zeros(env.N, dtype=np.int64)
 
 
-def entangle_instance_state(env):
-    return (
-        "entangle" in env.backend.__dict__,
-        env.backend.__dict__.get("entangle"),
-    )
-
-
-def assert_entangle_instance_state(env, expected):
-    present, value = expected
-    assert ("entangle" in env.backend.__dict__) is present
-    if present:
-        assert env.backend.__dict__["entangle"] is value
-
-
-def swap_instance_state(env):
-    return (
-        "swap" in env.backend.__dict__,
-        env.backend.__dict__.get("swap"),
-    )
-
-
-def assert_swap_instance_state(env, expected):
-    present, value = expected
-    assert ("swap" in env.backend.__dict__) is present
-    if present:
-        assert env.backend.__dict__["swap"] is value
-
-
 def test_adversarial_env_rejects_cosmic_ray():
     with pytest.raises(NotImplementedError, match="CosmicRay"):
         AdversarialQRNEnv(AdversaryFlavor.COSMIC_RAY)
@@ -195,7 +167,7 @@ def test_adversarial_env_rejects_invalid_target_slot(slot):
 def test_adversarial_step_normalizes_numpy_target_and_generator_qubits():
     env = make_adversarial_env()
     env.reset()
-    for repeater in env.backend.net.repeaters:
+    for repeater in env.net.repeaters:
         repeater.p_gen = 1.0
     target = SabotageTarget(
         node=np.int64(0),
@@ -216,10 +188,9 @@ def test_adversarial_step_normalizes_numpy_target_and_generator_qubits():
 def test_photon_eater_blocks_exact_allocation_for_one_turn():
     env = make_adversarial_env()
     env.reset()
-    for repeater in env.backend.net.repeaters:
+    for repeater in env.net.repeaters:
         repeater.p_gen = 1.0
     target = SabotageTarget(node=0, slot=0, qubits=(0,))
-    prior_entangle_state = entangle_instance_state(env)
 
     _, _, done, info = env.step_adversarial(noop_actions(env), (target,))
 
@@ -227,9 +198,8 @@ def test_photon_eater_blocks_exact_allocation_for_one_turn():
     assert info["sabotage_targets"] == (target,)
     assert info["sabotage_triggered"] is True
     assert info["sabotage_result"]["reason"] == "photon_eater"
-    assert not env.backend.node_state(0).occupied.any()
-    assert not env.backend.node_state(1).occupied.any()
-    assert_entangle_instance_state(env, prior_entangle_state)
+    assert not env.net.node_state(0).occupied.any()
+    assert not env.net.node_state(1).occupied.any()
     assert env._sabotage_triggered is False
 
     _, _, done, info = env.step_adversarial(noop_actions(env))
@@ -237,41 +207,40 @@ def test_photon_eater_blocks_exact_allocation_for_one_turn():
     assert not done
     assert info["sabotage_targets"] == ()
     assert info["sabotage_triggered"] is False
-    assert env.backend.node_state(0).occupied.tolist() == [True, False]
-    assert env.backend.node_state(1).occupied.tolist() == [True, False]
-    assert_entangle_instance_state(env, prior_entangle_state)
+    assert env.net.node_state(0).occupied.tolist() == [True, False]
+    assert env.net.node_state(1).occupied.tolist() == [True, False]
     assert env._sabotage_triggered is False
 
 
 def test_photon_eater_nonmatching_target_delegates_to_allocator():
     env = make_adversarial_env()
     env.reset()
-    for repeater in env.backend.net.repeaters:
+    for repeater in env.net.repeaters:
         repeater.p_gen = 1.0
     target = SabotageTarget(node=0, slot=1, qubits=(1,))
 
     _, _, _, info = env.step_adversarial(noop_actions(env), (target,))
 
     assert info["sabotage_triggered"] is False
-    assert env.backend.node_state(0).occupied.tolist() == [True, False]
-    assert env.backend.node_state(1).occupied.tolist() == [True, False]
+    assert env.net.node_state(0).occupied.tolist() == [True, False]
+    assert env.net.node_state(1).occupied.tolist() == [True, False]
 
 
 def test_photon_eater_does_not_mutate_existing_link_when_blocking_next_slot():
     env = make_adversarial_env(n_repeaters=3, n_ch=3)
     env.reset()
-    for repeater in env.backend.net.repeaters:
+    for repeater in env.net.repeaters:
         repeater.p_gen = 1.0
         repeater.cutoff = 10**9
-    assert env.backend.entangle(0, 1)["success"]
-    before_left = env.backend.node_state(0)
-    before_right = env.backend.node_state(1)
+    assert env.net.entangle(0, 1)["success"]
+    before_left = env.net.node_state(0)
+    before_right = env.net.node_state(1)
     target = SabotageTarget(node=0, slot=1, qubits=(1,))
 
     _, _, _, info = env.step_adversarial(noop_actions(env), (target,))
 
-    after_left = env.backend.node_state(0)
-    after_right = env.backend.node_state(1)
+    after_left = env.net.node_state(0)
+    after_right = env.net.node_state(1)
     assert info["sabotage_triggered"] is True
     assert info["sabotage_result"]["reason"] == "photon_eater"
     assert after_left.partner_node[0] == before_left.partner_node[0]
@@ -285,15 +254,12 @@ def test_photon_eater_does_not_mutate_existing_link_when_blocking_next_slot():
 def test_adversarial_step_restores_interceptor_after_exception(monkeypatch):
     env = make_adversarial_env()
     env.reset()
-    for repeater in env.backend.net.repeaters:
+    for repeater in env.net.repeaters:
         repeater.p_gen = 1.0
-    raw_entangle = env.backend.entangle
-    env.backend.entangle = raw_entangle
-    prior_entangle_state = entangle_instance_state(env)
     target = SabotageTarget(node=0, slot=0, qubits=(0,))
 
     def trigger_then_raise():
-        result = env.backend.entangle(0, 1)
+        result = env._engine_entangle(0, 1)
         assert result["reason"] == "photon_eater"
         assert env._sabotage_triggered is True
         raise RuntimeError("boom")
@@ -303,7 +269,6 @@ def test_adversarial_step_restores_interceptor_after_exception(monkeypatch):
     with pytest.raises(RuntimeError, match="boom"):
         env.step_adversarial(noop_actions(env), (target,))
 
-    assert_entangle_instance_state(env, prior_entangle_state)
     assert env.active_targets == ()
     assert env._sabotage_triggered is False
 
@@ -311,13 +276,13 @@ def test_adversarial_step_restores_interceptor_after_exception(monkeypatch):
 def test_photon_eater_triggers_only_once_per_transition(monkeypatch):
     env = make_adversarial_env(n_repeaters=3, n_ch=2, p_gen=0.0)
     env.reset()
-    for repeater in env.backend.net.repeaters:
+    for repeater in env.net.repeaters:
         repeater.p_gen = 1.0
     outcomes = []
 
     def two_attempts():
-        outcomes.append(env.backend.entangle(0, 1))
-        outcomes.append(env.backend.entangle(1, 2))
+        outcomes.append(env._engine_entangle(0, 1))
+        outcomes.append(env._engine_entangle(1, 2))
 
     monkeypatch.setattr(env, "_auto_entangle", two_attempts)
     target = SabotageTarget(node=1, slot=0, qubits=(0,))
@@ -335,17 +300,17 @@ def test_photon_eater_preserves_generation_rng_advancement(monkeypatch):
     sabotaged.reset()
     control.reset()
     shared_state = np.random.default_rng(91).bit_generator.state
-    sabotaged.backend.net.rng.bit_generator.state = shared_state
-    control.backend.net.rng.bit_generator.state = shared_state
+    sabotaged.net.rng.bit_generator.state = shared_state
+    control.net.rng.bit_generator.state = shared_state
     monkeypatch.setattr(
         sabotaged,
         "_auto_entangle",
-        lambda: sabotaged.backend.entangle(0, 1),
+        lambda: sabotaged._engine_entangle(0, 1),
     )
     monkeypatch.setattr(
         control,
         "_auto_entangle",
-        lambda: control.backend.entangle(0, 1),
+        lambda: control._engine_entangle(0, 1),
     )
 
     sabotaged.step_adversarial(
@@ -354,13 +319,12 @@ def test_photon_eater_preserves_generation_rng_advancement(monkeypatch):
     )
     control.step(noop_actions(control))
 
-    assert sabotaged.backend.net.rng.random() == control.backend.net.rng.random()
+    assert sabotaged.net.rng.random() == control.net.rng.random()
 
 
-def test_adversarial_step_restores_interceptor_on_terminal_return():
+def test_adversarial_step_clears_state_on_terminal_return():
     env = make_adversarial_env(max_steps=1)
     env.reset()
-    prior_entangle_state = entangle_instance_state(env)
     target = SabotageTarget(node=0, slot=0, qubits=(0,))
 
     _, _, done, info = env.step_adversarial(noop_actions(env), (target,))
@@ -368,7 +332,6 @@ def test_adversarial_step_restores_interceptor_on_terminal_return():
     assert done
     assert info["sabotage_targets"] == (target,)
     assert info["sabotage_triggered"] is False
-    assert_entangle_instance_state(env, prior_entangle_state)
     assert env.active_targets == ()
     assert env._sabotage_triggered is False
 
@@ -381,12 +344,11 @@ def test_gate_daemon_forces_targeted_swap_to_fail_and_consume_links():
         p_gen=1.0,
     )
     env.reset()
-    middle = env.backend.net.repeaters[1]
+    middle = env.net.repeaters[1]
     middle.p_gen = 0.0
-    env.backend.net.repeaters[0].p_gen = 0.0
-    env.backend.net.repeaters[2].p_gen = 0.0
+    env.net.repeaters[0].p_gen = 0.0
+    env.net.repeaters[2].p_gen = 0.0
     prior_p_swap = middle.p_swap
-    prior_swap_state = swap_instance_state(env)
     target = SabotageTarget(node=1, slot=0, qubits=(0, 1))
     actions = noop_actions(env)
     actions[1] = SWAP
@@ -397,9 +359,8 @@ def test_gate_daemon_forces_targeted_swap_to_fail_and_consume_links():
     assert info["sabotage_triggered"] is True
     assert info["sabotage_result"]["reason"] == "swap_failed"
     assert info["failed_actions"] == 1
-    assert not env.backend.node_state(1).occupied.any()
+    assert not env.net.node_state(1).occupied.any()
     assert middle.p_swap == prior_p_swap
-    assert_swap_instance_state(env, prior_swap_state)
 
 
 def test_gate_daemon_nonmatching_pair_uses_normal_swap_probability():
@@ -421,7 +382,7 @@ def test_gate_daemon_nonmatching_pair_uses_normal_swap_probability():
     assert info["failed_actions"] == 0
 
 
-def test_gate_daemon_restores_swap_and_probability_after_exception():
+def test_gate_daemon_restores_swap_and_probability_after_exception(monkeypatch):
     env = make_adversarial_env(
         AdversaryFlavor.GATE_DAEMON,
         n_repeaters=3,
@@ -429,16 +390,17 @@ def test_gate_daemon_restores_swap_and_probability_after_exception():
         p_gen=1.0,
     )
     env.reset()
-    middle = env.backend.net.repeaters[1]
+    middle = env.net.repeaters[1]
     prior_p_swap = middle.p_swap
 
-    def exploding_swap(node):
+    # Make the *underlying* engine swap raise mid-sabotage, to prove the
+    # daemon's finally-block restores p_swap and the rng even on error.
+    def exploding_swap(self, node):
         assert node == 1
         assert middle.p_swap == 0.0
         raise RuntimeError("boom")
 
-    env.backend.swap = exploding_swap
-    prior_swap_state = swap_instance_state(env)
+    monkeypatch.setattr(type(env.net), "swap", exploding_swap)
     target = SabotageTarget(node=1, slot=0, qubits=(0, 1))
     actions = noop_actions(env)
     actions[1] = SWAP
@@ -447,7 +409,6 @@ def test_gate_daemon_restores_swap_and_probability_after_exception():
         env.step_adversarial(actions, (target,))
 
     assert middle.p_swap == prior_p_swap
-    assert_swap_instance_state(env, prior_swap_state)
     assert env.active_targets == ()
     assert env._sabotage_triggered is False
 
@@ -460,21 +421,21 @@ def test_gate_daemon_random_preview_preserves_selected_pair():
         p_gen=1.0,
     )
     env.reset()
-    assert env.backend.entangle(0, 1)["success"]
-    middle = env.backend.net.repeaters[1]
+    assert env.net.entangle(0, 1)["success"]
+    middle = env.net.repeaters[1]
     middle.swap_policy = SwapPolicy.RANDOM
-    for repeater in env.backend.net.repeaters:
+    for repeater in env.net.repeaters:
         repeater.p_gen = 0.0
 
     expected = None
     for seed in range(100):
         state = np.random.default_rng(seed).bit_generator.state
-        env.backend.net.rng.bit_generator.state = state
+        env.net.rng.bit_generator.state = state
         candidate = middle.select_swap_pair(
-            env.backend.net._positions,
-            rng=env.backend.net.rng,
+            env.net._positions,
+            rng=env.net.rng,
         )
-        env.backend.net.rng.bit_generator.state = state
+        env.net.rng.bit_generator.state = state
         if (
             middle.partner_repeater[candidate[0]]
             != middle.partner_repeater[candidate[1]]
@@ -490,7 +451,7 @@ def test_gate_daemon_random_preview_preserves_selected_pair():
     _, _, _, info = env.step_adversarial(actions, (target,))
 
     assert info["sabotage_triggered"] is True
-    occupied = env.backend.node_state(1).occupied
+    occupied = env.net.node_state(1).occupied
     assert all(not occupied[qubit] for qubit in expected)
 
 
@@ -513,8 +474,8 @@ def test_gate_daemon_fails_when_probability_draw_is_exactly_zero():
         p_gen=1.0,
     )
     env.reset()
-    proxy = ZeroRandom(env.backend.net.rng)
-    env.backend.net.rng = proxy
+    proxy = ZeroRandom(env.net.rng)
+    env.net.rng = proxy
     actions = noop_actions(env)
     actions[1] = SWAP
 
@@ -525,7 +486,7 @@ def test_gate_daemon_fails_when_probability_draw_is_exactly_zero():
 
     assert info["sabotage_result"]["reason"] == "swap_failed"
     assert info["failed_actions"] == 1
-    assert env.backend.net.rng is proxy
+    assert env.net.rng is proxy
 
 
 def test_adversarial_game_public_exports():
@@ -612,7 +573,7 @@ def test_decode_target_rejects_non_integral_slot(slot):
 def test_adversary_observation_has_fixed_qubit_features_and_copied_edges():
     env = make_env(n_ch=4, p_gen=0.0)
     base_obs = env.reset()
-    repeater = env.backend.net.repeaters[0]
+    repeater = env.net.repeaters[0]
     qubit = 2
     repeater.status[qubit] = QUBIT_OCCUPIED
     repeater.locked[qubit] = True
@@ -651,7 +612,7 @@ def test_adversary_observation_has_fixed_qubit_features_and_copied_edges():
 def test_observation_and_mask_reject_mixed_channel_widths():
     env = make_env(n_ch=4)
     base_obs = env.reset()
-    env.backend.net.repeaters[1].n_ch = 3
+    env.net.repeaters[1].n_ch = 3
 
     with pytest.raises(ValueError, match="n_ch"):
         build_adversary_observation(env, base_obs, n_ch=4)
@@ -669,7 +630,7 @@ def test_photon_eater_mask_marks_free_unlocked_qubits():
     assert mask.dtype == np.bool_
     assert mask.all()
 
-    repeater = env.backend.net.repeaters[1]
+    repeater = env.net.repeaters[1]
     repeater.status[0] = QUBIT_OCCUPIED
     repeater.locked[2] = True
     mask = target_mask(env, AdversaryFlavor.PHOTON_EATER, n_ch=4)
@@ -686,7 +647,7 @@ def test_gate_daemon_mask_requires_distinct_present_partners():
     assert mask.shape == (3, 1)
     assert mask[:, 0].tolist() == [False, True, False]
 
-    repeater = env.backend.net.repeaters[1]
+    repeater = env.net.repeaters[1]
     original_partners = repeater.partner_repeater.copy()
 
     repeater.locked[0] = True
@@ -843,8 +804,8 @@ def test_select_actions_returns_only_the_positive_greedy_target():
 def test_exploration_includes_global_noop_and_respects_mask_and_k():
     env = make_env(n_repeaters=3, n_ch=4, p_gen=0.0)
     base_obs = env.reset()
-    env.backend.net.repeaters[0].status[0] = QUBIT_OCCUPIED
-    env.backend.net.repeaters[1].locked[1] = True
+    env.net.repeaters[0].status[0] = QUBIT_OCCUPIED
+    env.net.repeaters[1].locked[1] = True
     valid = target_mask(env, AdversaryFlavor.PHOTON_EATER, n_ch=4)
     agent = AdversaryAgent(
         AdversaryFlavor.PHOTON_EATER,
