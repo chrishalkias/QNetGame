@@ -32,7 +32,7 @@
 #   1. NEW FILE STRUCTURE on the cluster (branch refactor/netsquid-m1):
 #         (laptop)  git push -u origin refactor/netsquid-m1
 #         (cluster) cd <repo> && git fetch && git checkout refactor/netsquid-m1 && git pull
-#      Verify:  ls experiments/optimal_baseline.py
+#      Verify:  ls experiments/heatmap/optimal_baseline.py
 #
 #   2. The remote venv ~/.venvs/qnetgame just needs numpy (1.26.4) + torch,
 #      already present from the training runs. NetSquid is NOT required here.
@@ -47,7 +47,7 @@ set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 
 mkdir -p slurm_logs
-mkdir -p results/optimal_policies
+mkdir -p results/optimal/optimal_policies
 
 eval "$(/usr/bin/modulecmd bash purge)" 2>/dev/null || true
 eval "$(/usr/bin/modulecmd bash load ALICE/default)"
@@ -72,20 +72,20 @@ PY
 # N is capped at 4: N=5 measured ~5.5h build PER (p_gen,p_swap) point (6741
 # states), i.e. ~38h across the 7-point sweep — not worth it. N=4 already shows
 # the optimal policy beating swap-asap (T_opt 19.88 vs 20.90). --save_policy
-# writes one pickle per (N, p_gen, p_swap) into results/optimal_policies/ for
+# writes one pickle per (N, p_gen, p_swap) into results/optimal/optimal_policies/ for
 # reuse as a baseline. The JSON is saved incrementally (per point).
-python -u experiments/optimal_baseline.py \
+python -u experiments/heatmap/optimal_baseline.py \
     --n_list 3,4 \
     --n_ch 2 \
     --cutoff 5 \
     --horizon 30 \
     --mc_eps 5000 \
     --mc_eps_opt 4000 \
-    --ckpt checkpoints/cluster_004/policy.pth \
-    --out_json results/optimal_baseline.json \
-    --policy_dir results/optimal_policies \
+    --ckpt checkpoints/cluster/cluster_004/policy.pth \
+    --out_json results/optimal/optimal_baseline.json \
+    --policy_dir results/optimal/optimal_policies \
     --save_policy
 
 echo "Job completed at $(date)"
-echo "Metrics: results/optimal_baseline.json"
-echo "Policies: results/optimal_policies/"
+echo "Metrics: results/optimal/optimal_baseline.json"
+echo "Policies: results/optimal/optimal_policies/"

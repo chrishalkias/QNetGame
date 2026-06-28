@@ -25,19 +25,13 @@ def parse_args():
                         help="per-repeater spread of p_swap (0 = homogeneous)")
     parser.add_argument("--cutoff", type=int, default=100)
     parser.add_argument("--topology", type=str, default='chain')
-    parser.add_argument("--backend", type=str, default='legacy',
-                        choices=['legacy', 'netsquid'],
-                        help="physics engine: legacy (numpy) or netsquid")
-    parser.add_argument("--fidelity_mode", type=str, default='analytic',
-                        choices=['analytic', 'full_dm'],
-                        help="netsquid mode: analytic (fast) or full_dm (slow, real density matrices)")
 
     # CC variables
     parser.add_argument("--F0", type=float, default=1.0)
     parser.add_argument("--channel_loss", type=float, default=0.0)
     parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
 
-    parser.add_argument("--path", type=str, default="checkpoints/cluster_004/")
+    parser.add_argument("--path", type=str, default="checkpoints/cluster/cluster_004/")
     parser.add_argument("--dict", type=str, default="policy.pth")
     parser.add_argument("--no_plot_actions", dest="plot_actions", action="store_false", default=True)
     parser.add_argument("--verbose", type=int, default=0)
@@ -67,7 +61,5 @@ if __name__ == "__main__":
         plot_actions=args.plot_actions,
         save_dir=args.path,
         topology=args.topology,
-        backend=args.backend,
-        fidelity_mode=args.fidelity_mode,
         verbose=args.verbose,
     )

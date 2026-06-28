@@ -15,7 +15,7 @@ set -euo pipefail
 
 REMOTE_HOST="${REMOTE_HOST:-alice-gw}"
 REMOTE_PATH="${REMOTE_PATH:-~/QNetGame}"
-LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOCAL_DIR="$(cd "$(dirname "$0")/../.." && pwd)"  # scripts/sync/ -> repo root
 
 echo "Uploading $LOCAL_DIR/ -> $REMOTE_HOST:$REMOTE_PATH/"
 rsync -avz --delete \

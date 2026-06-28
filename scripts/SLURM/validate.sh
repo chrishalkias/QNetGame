@@ -26,8 +26,8 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:$PYTHONPATH"
 echo "Job $SLURM_JOB_ID started at $(date)"
 echo "Node: $(hostname), GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 
-python -u experiments/batch_validate.py \
-    --model checkpoints/cluster_004/policy.pth \
+python -u experiments/training/batch_validate.py \
+    --model checkpoints/cluster/cluster_004/policy.pth \
     --episodes 200 \
     --seed 42 \
     --save_dir results/batch_validate \

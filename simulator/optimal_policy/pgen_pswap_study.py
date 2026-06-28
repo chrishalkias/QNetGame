@@ -9,7 +9,7 @@ metric is the purify-masked agent's gap to T_opt_swaponly. We also report the
 full-action agent's gap (purify lets it dip below the swap-only optimum).
 
 Run from repo root with the venv active:
-    PYTHONPATH=. python -m quantum_repeater_sim.optimal_policy.pgen_pswap_study --both
+    PYTHONPATH=. python -m simulator.optimal_policy.pgen_pswap_study --both
 """
 from __future__ import annotations
 import argparse
@@ -41,8 +41,6 @@ STUDY_CFG = dict(
     channel_loss=0.0,
     dt_seconds=0.0,
     topology="chain",
-    backend="legacy",
-    fidelity_mode="analytic",
     max_steps=30,
 )
 
@@ -139,7 +137,7 @@ def parse_args(argv=None):
     ap.add_argument("--heatmap", action="store_true")
     ap.add_argument("--both", action="store_true")
     ap.add_argument("--save_dir", default="game/results/sched_study")
-    ap.add_argument("--policy_dir", default="results/optimal_policies")
+    ap.add_argument("--policy_dir", default="results/optimal/optimal_policies")
     ap.add_argument("--episodes", type=int, default=5000)
     ap.add_argument("--mc_eps", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)

@@ -28,8 +28,8 @@ echo "Node: $(hostname), GPU: $(nvidia-smi --query-gpu=name --format=csv,noheade
 
 # Fixed-cutoff p_gen x p_swap sweep (formerly clean_check.py, now a
 # batch_validate sweep mode). --resume skips columns already in the CSV.
-python -u experiments/batch_validate.py \
-    --model checkpoints/cluster_004/policy.pth \
+python -u experiments/training/batch_validate.py \
+    --model checkpoints/cluster/cluster_004/policy.pth \
     --sweep pgen_pswap_fixed_cutoff \
     --cutoffs 20,80 \
     --sweep2_nodes 8 \

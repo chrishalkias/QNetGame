@@ -15,8 +15,8 @@ Usage:
     python -m diagnostics.policy_probes.PCA_viz
     # or with a custom checkpoint:
     PYTHONPATH=. python diagnostics/policy_probes/PCA_viz.py \
-        --model checkpoints/cluster_008/policy.pth \
-        --save_dir checkpoints/cluster_008/diagnostics
+        --model checkpoints/cluster/cluster_008/policy.pth \
+        --save_dir checkpoints/cluster/cluster_008/diagnostics
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ def plot_pca(
 ):
     os.makedirs(save_dir, exist_ok=True)
 
-    # Derive run name from model path (e.g. "checkpoints/cluster_008/policy.pth" → "cluster_008")
+    # Derive run name from model path (e.g. "checkpoints/cluster/cluster_008/policy.pth" → "cluster_008")
     run_name = os.path.basename(os.path.dirname(os.path.abspath(model_path)))
 
     print(f"Loading model from {model_path}")
@@ -264,8 +264,8 @@ def plot_pca(
                              
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model",      default="checkpoints/cluster_004/policy.pth")
-    parser.add_argument("--save_dir",   default="checkpoints/cluster_004/diagnostics")
+    parser.add_argument("--model",      default="checkpoints/cluster/cluster_004/policy.pth")
+    parser.add_argument("--save_dir",   default="checkpoints/cluster/cluster_004/diagnostics")
     parser.add_argument("--resolution", type=int, default=RESOLUTION)
     parser.add_argument("--device",     default="cpu")
     parser.add_argument("--n_nodes",    type=int, default=N_NODES)

@@ -1,11 +1,7 @@
 matplotlib==3.10.8
-numpy==1.26.4          # pinned to 1.x: NetSquid 1.1.x breaks on numpy 2.x
+numpy>=1.26            # NetSquid pin removed
 torch==2.6.0
 torch_geometric==2.7.0
 networkx==3.6.1
 pytest==9.0.2
 mutmut>=2.0
-
-# NetSquid is NOT installable from PyPI. Install separately from its private index:
-#   pip install --extra-index-url https://pypi.netsquid.org netsquid
-# (requires a free netsquid.org account; needs numpy 1.x as pinned above)

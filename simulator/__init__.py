@@ -1,8 +1,10 @@
 """Quantum Repeater Network Simulator for RL pipelines."""
-from quantum_repeater_sim.repeater import (Repeater, SwapPolicy,
+from simulator.repeater import (Repeater, SwapPolicy,
                        fidelity_to_werner, werner_to_fidelity,
                        bbpssw_success_prob, bbpssw_new_fidelity)
-from quantum_repeater_sim.network import RepeaterNetwork, build_chain, build_grid
+from simulator.network import RepeaterNetwork, build_chain, build_grid
+from simulator.optimal_policy.compare_optimal import compare_to_optimal, load_optimal_pickle
+from simulator.optimal_policy.report import format_report
 
 __all__ = [
     "Repeater",
@@ -14,4 +16,7 @@ __all__ = [
     "werner_to_fidelity",
     "bbpssw_success_prob", 
     "bbpssw_new_fidelity",
+    "compare_to_optimal", 
+    "load_optimal_pickle", 
+    "format_report",
 ]

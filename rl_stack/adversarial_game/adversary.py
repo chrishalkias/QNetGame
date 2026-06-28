@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Batch, Data
 from torch_geometric.nn import SAGEConv
 
-from quantum_repeater_sim.repeater import NO_PARTNER
+from simulator.repeater import NO_PARTNER
 from rl_stack.buffer import ReplayBuffer
 
 

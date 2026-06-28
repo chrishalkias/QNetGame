@@ -9,14 +9,14 @@
 #
 # Override host/path/dirs via env, e.g.:
 #   REMOTE_HOST=chalkiasc1@alice-gw ./scripts/download.sh
-#   PULL_DIRS="checkpoints/inhomo_001" ./scripts/download.sh   # one subdir
+#   PULL_DIRS="checkpoints/cluster/inhomo_001" ./scripts/download.sh   # one subdir
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 REMOTE_HOST="${REMOTE_HOST:-alice-gw}"
 REMOTE_PATH="${REMOTE_PATH:-~/QNetGame}"
 PULL_DIRS="${PULL_DIRS:-checkpoints slurm_logs}"
-LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOCAL_DIR="$(cd "$(dirname "$0")/../.." && pwd)"  # scripts/sync/ -> repo root
 
 for sub in $PULL_DIRS; do
   echo "Downloading $REMOTE_HOST:$REMOTE_PATH/$sub/ -> $LOCAL_DIR/$sub/"

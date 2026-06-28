@@ -17,9 +17,9 @@
 # swap-asap vs random vs the EXACT DP-optimal (swap-only) policy -> the agent
 # should climb toward the Optimal line in training_compare.png.
 #
-# REQUIRES the precomputed optimal pickles at results/optimal_policies/ — these
+# REQUIRES the precomputed optimal pickles at results/optimal/optimal_policies/ — these
 # are EXCLUDED by scripts/upload.sh, so push them once:
-#   rsync -avz results/optimal_policies/ alice-gw:~/QNetGame/results/optimal_policies/
+#   rsync -avz results/optimal/optimal_policies/ alice-gw:~/QNetGame/results/optimal/optimal_policies/
 #
 #   (cluster) cd ~/QNetGame && sbatch --account=liacs scripts/submit_compare_optimal.sh
 # ─────────────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Job $SLURM_JOB_ID started at $(date)"
 echo "Node: $(hostname), GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 
-python -u experiments/compare_optimal.py \
+python -u experiments/training/compare_optimal.py \
     --episodes 5000 \
     --run_id compare_optimal \
     --hidden 64 \
@@ -48,4 +48,4 @@ python -u experiments/compare_optimal.py \
     --save_base_dir checkpoints
 
 echo "Job completed at $(date)"
-echo "Crossover plot: checkpoints/compare_optimal/training_compare.png"
+echo "Crossover plot: checkpoints/cluster/compare_optimal/training_compare.png"

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import copy
-import inspect
 import operator
 
 import numpy as np
 
-from quantum_repeater_sim.backends.legacy import LegacyBackend
-from quantum_repeater_sim.repeater import QUBIT_FREE
+from simulator.backends.legacy import LegacyBackend
+from simulator.repeater import QUBIT_FREE
 from rl_stack.env_wrapper import QRNEnv
 
 from .adversary import AdversaryFlavor, SabotageTarget, decode_target
@@ -39,15 +38,6 @@ def _integer(value, name: str) -> int:
 
 class AdversarialQRNEnv(QRNEnv):
     def __init__(self, flavor: AdversaryFlavor, *args, **kwargs):
-        bound = inspect.signature(QRNEnv.__init__).bind_partial(
-            None,
-            *args,
-            **kwargs,
-        )
-        backend = bound.arguments.get("backend", "legacy")
-        if backend != "legacy":
-            raise ValueError("AdversarialQRNEnv backend must be legacy")
-
         self.flavor = AdversaryFlavor(flavor)
         if self.flavor is AdversaryFlavor.COSMIC_RAY:
             raise NotImplementedError("CosmicRay adversary is not implemented")

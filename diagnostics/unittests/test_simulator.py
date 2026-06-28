@@ -25,13 +25,13 @@ import unittest
 import numpy as np
 
 # ── imports ──────────────────────────────────────────────────────────────────
-from quantum_repeater_sim.repeater import (
+from simulator.repeater import (
     Repeater, SwapPolicy,
     QUBIT_FREE, QUBIT_OCCUPIED, NO_PARTNER,
     fidelity_to_werner, werner_to_fidelity,
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
-from quantum_repeater_sim.network import (
+from simulator.network import (
     RepeaterNetwork, build_chain, build_grid, build_GEANT,
 )
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY

@@ -35,7 +35,7 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Job $SLURM_JOB_ID started at $(date)"
 echo "Node: $(hostname), GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 
-python -u experiments/train.py \
+python -u experiments/training/train.py \
     --run_id inhomo_001 \
     --lr 5e-4 \
     --hidden 64 \
@@ -56,4 +56,4 @@ python -u experiments/train.py \
     --save_base_dir checkpoints
 
 echo "Job completed at $(date)"
-echo "Checkpoint: checkpoints/inhomo_001/policy.pth"
+echo "Checkpoint: checkpoints/cluster/inhomo_001/policy.pth"

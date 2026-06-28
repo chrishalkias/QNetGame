@@ -1,6 +1,6 @@
 """Compare a trained agent against the exact optimal policy and swap-asap.
 
-Reuses experiments/optimal_baseline.py for the MDP/MC machinery. The optimal
+Reuses experiments/heatmap/optimal_baseline.py for the MDP/MC machinery. The optimal
 policy only exists for n_ch=2, N<=4 (exact DP), so comparison is restricted to
 that slice; other points are reported against swap-asap only."""
 from __future__ import annotations
@@ -15,7 +15,7 @@ from . import report as _report
 def _import_optimal_baseline():
     # experiments/ is a top-level package (repo root on PYTHONPATH). Imported
     # lazily so torch/heavy deps load only when a comparison actually runs.
-    from experiments import optimal_baseline
+    from experiments.heatmap import optimal_baseline
     return optimal_baseline
 
 

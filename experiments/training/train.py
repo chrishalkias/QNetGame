@@ -22,13 +22,6 @@ def parse_args():
     parser.add_argument("--curriculum", action='store_false')
     parser.add_argument("--n_ch", type=int, default=4)
     parser.add_argument("--topology", type=str, default='chain')
-    parser.add_argument("--backend", type=str, default='legacy',
-                        choices=['legacy', 'netsquid'],
-                        help="physics engine: legacy (numpy) or netsquid")
-    parser.add_argument("--fidelity_mode", type=str, default='analytic',
-                        choices=['analytic', 'full_dm'],
-                        help="netsquid mode: analytic (fast, for training) "
-                             "or full_dm (slow, validation only)")
     parser.add_argument("--p_gen", type=float, default=0.60,
                         help="per-network MEAN link-generation prob.")
     parser.add_argument("--p_swap", type=float, default=0.85,
@@ -82,7 +75,5 @@ if __name__ == "__main__":
         dt_seconds=args.dt_seconds,
         save_path=save_path,
         topology=args.topology,
-        backend=args.backend,
-        fidelity_mode=args.fidelity_mode,
         compare=args.compare,
         plot=True,)

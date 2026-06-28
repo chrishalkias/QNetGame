@@ -20,7 +20,7 @@ from rl_stack.adversarial_game.adversary import (
     targets_per_node,
 )
 from rl_stack.adversarial_game.environment import AdversarialQRNEnv
-from quantum_repeater_sim.repeater import (
+from simulator.repeater import (
     NO_PARTNER,
     QUBIT_OCCUPIED,
     SwapPolicy,
@@ -43,7 +43,6 @@ def make_env(*, n_repeaters=3, n_ch=4, p_gen=0.0):
         max_steps=50,
         rng=np.random.default_rng(0),
         topology="chain",
-        backend="legacy",
     )
 
 
@@ -69,7 +68,6 @@ def make_adversarial_env(
         max_steps=max_steps,
         rng=np.random.default_rng(0),
         topology="chain",
-        backend="legacy",
     )
 
 
@@ -105,39 +103,9 @@ def assert_swap_instance_state(env, expected):
         assert env.backend.__dict__["swap"] is value
 
 
-def test_adversarial_env_rejects_nonlegacy_backend_and_cosmic_ray():
-    with pytest.raises(ValueError, match="backend.*legacy"):
-        AdversarialQRNEnv(AdversaryFlavor.PHOTON_EATER, backend="netsquid")
+def test_adversarial_env_rejects_cosmic_ray():
     with pytest.raises(NotImplementedError, match="CosmicRay"):
-        AdversarialQRNEnv(AdversaryFlavor.COSMIC_RAY, backend="legacy")
-
-
-def test_adversarial_env_validates_positional_backend_before_construction():
-    legacy_args = (
-        2,
-        2,
-        50.0,
-        0.0,
-        1.0,
-        0.0,
-        0.0,
-        20,
-        1.0,
-        0.0,
-        0.0,
-        50,
-        np.random.default_rng(0),
-        "chain",
-        0.99,
-        "legacy",
-    )
-
-    env = AdversarialQRNEnv(AdversaryFlavor.PHOTON_EATER, *legacy_args)
-    assert env.backend.__class__.__name__ == "LegacyBackend"
-
-    netsquid_args = legacy_args[:-1] + ("netsquid",)
-    with pytest.raises(ValueError, match="backend.*legacy"):
-        AdversarialQRNEnv(AdversaryFlavor.PHOTON_EATER, *netsquid_args)
+        AdversarialQRNEnv(AdversaryFlavor.COSMIC_RAY)
 
 
 def test_adversarial_env_validates_targets_defensively():
@@ -1216,7 +1184,7 @@ def test_one_game_step_stores_exact_opposite_rewards(tmp_path):
     )
 
     config = StageIIIConfig(
-        defender_checkpoint="checkpoints/inhomo_001/policy.pth",
+        defender_checkpoint="checkpoints/cluster/inhomo_001/policy.pth",
         flavor="photon_eater",
         episodes=1,
         max_steps=2,
@@ -1246,7 +1214,7 @@ def test_one_game_step_updates_both_agents_when_replay_is_ready(tmp_path):
     from rl_stack.adversarial_game.train import StageIIIConfig, build_training_state, play_step
 
     config = StageIIIConfig(
-        defender_checkpoint="checkpoints/inhomo_001/policy.pth",
+        defender_checkpoint="checkpoints/cluster/inhomo_001/policy.pth",
         episodes=1,
         max_steps=2,
         n_range=(3,),
@@ -1311,7 +1279,7 @@ def test_stage3_training_smoke_saves_loadable_outputs(tmp_path):
     from rl_stack.adversarial_game.train import StageIIIConfig, train
 
     config = StageIIIConfig(
-        defender_checkpoint="checkpoints/inhomo_001/policy.pth",
+        defender_checkpoint="checkpoints/cluster/inhomo_001/policy.pth",
         flavor="gate_daemon",
         episodes=2,
         max_steps=2,
@@ -1339,7 +1307,7 @@ def test_stage3_training_is_reproducible_for_a_fixed_seed(tmp_path):
     from rl_stack.adversarial_game.train import StageIIIConfig, train
 
     base = dict(
-        defender_checkpoint="checkpoints/inhomo_001/policy.pth",
+        defender_checkpoint="checkpoints/cluster/inhomo_001/policy.pth",
         flavor="photon_eater",
         episodes=2,
         max_steps=2,
@@ -1395,7 +1363,7 @@ def test_stage3_evaluation_uses_final_checkpoints_only(tmp_path, monkeypatch):
 
     result = evaluate(
         run_dir,
-        pretrained_checkpoint="checkpoints/inhomo_001/policy.pth",
+        pretrained_checkpoint="checkpoints/cluster/inhomo_001/policy.pth",
         episodes=1,
         n_range=(3,),
         max_steps=1,

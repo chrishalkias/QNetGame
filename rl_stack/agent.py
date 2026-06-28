@@ -303,8 +303,6 @@ class QRNAgent:
               curriculum = True,
               curriculum_frac = 0.5,
               topology = 'chain',
-              backend = 'legacy',
-              fidelity_mode = 'analytic',
               save_path = None,
               save_best = True,
               best_window = 200,
@@ -410,10 +408,8 @@ class QRNAgent:
                     'dt_seconds': dt_seconds,
                     'max_steps' : max_steps,
                     'topology' : topology,
-                    'backend' : backend,
-                    'fidelity_mode' : fidelity_mode,
                     }
-                
+
                 env = QRNEnv(**args)
                 obs   = env.reset()
                 score = 0.0
@@ -538,7 +534,7 @@ class QRNAgent:
     @staticmethod
     def _save_metrics(metrics, save_path):
         """Dump raw per-episode metrics to metrics.json so plots can be
-        regenerated (experiments/replot.py) without retraining."""
+        regenerated (experiments/training/replot.py) without retraining."""
         import json
         os.makedirs(save_path, exist_ok=True)
         with open(os.path.join(save_path, "metrics.json"), "w") as f:
@@ -604,8 +600,6 @@ class QRNAgent:
                  dt_seconds=1e-3,
                  plot_actions=True,
                  topology = 'chain',
-                 backend = 'legacy',
-                 fidelity_mode = 'analytic',
                  verbose = 0,
                  save_dir="."
                 ):
@@ -644,8 +638,6 @@ class QRNAgent:
             'dt_seconds': dt_seconds,
             'max_steps' : max_steps,
             'topology' : topology,
-            'backend' : backend,
-            'fidelity_mode' : fidelity_mode,
             }
 
         action_rng = np.random.default_rng()

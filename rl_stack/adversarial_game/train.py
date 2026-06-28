@@ -30,7 +30,7 @@ def _integer(value, name: str) -> int:
 
 @dataclass(frozen=True)
 class StageIIIConfig:
-    defender_checkpoint: str = "checkpoints/inhomo_001/policy_final.pth"
+    defender_checkpoint: str = "checkpoints/cluster/inhomo_001/policy_final.pth"
     flavor: str = "photon_eater"
     episodes: int = 3000
     max_steps: int = 50
@@ -53,7 +53,7 @@ class StageIIIConfig:
     epsilon_start: float = 1.0
     epsilon_end: float = 0.05
     epsilon_decay_fraction: float = 0.9
-    output_dir: str = "checkpoints/adversarial_game"
+    output_dir: str = "checkpoints/cluster/adversarial_game"
     seed: int = 0
     plot: bool = True
 
@@ -161,7 +161,6 @@ def _make_environment(
         rng=rng,
         topology="chain",
         gamma=config.gamma,
-        backend="legacy",
     )
 
 

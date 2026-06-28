@@ -30,13 +30,13 @@ unmodified env, and the trained agent and swap-asap are evaluated at the identic
 config for a fair gap-to-optimal.
 
 Usage:
-    PYTHONPATH=. python experiments/optimal_baseline.py
+    PYTHONPATH=. python experiments/heatmap/optimal_baseline.py
 """
 from __future__ import annotations
 import argparse, copy, math, itertools, json, os, pickle, sys, time
 import numpy as np
 
-from quantum_repeater_sim import RepeaterNetwork
+from simulator import RepeaterNetwork
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP
 from rl_stack import strategies
 
@@ -328,7 +328,9 @@ def swap_asap_fn(env, obs):
     return strategies.swap_asap(env)
 
 
-def make_agent_fn(ckpt, hidden=64):
+def make_agent_fn(ckpt, hidden=64, disable_actions=None):
+    """Policy fn for a trained checkpoint. `disable_actions` masks the given
+    action columns at inference (e.g. (PURIFY,) for a swap-only evaluation)."""
     import torch
     from rl_stack.agent import QRNAgent
     agent = QRNAgent(hidden=hidden)
@@ -338,6 +340,10 @@ def make_agent_fn(ckpt, hidden=64):
 
     def fn(env, obs):
         mask = env.get_action_mask()
+        if disable_actions:
+            mask = mask.copy()
+            for a in disable_actions:
+                mask[:, a] = False
         return agent.select_actions(obs, mask, training=False)
     return fn
 
@@ -395,8 +401,8 @@ def parse_args(argv=None):
     p.add_argument("--ckpt", type=str,
                    default="checkpoints/cluster/cluster_004/policy.pth",
                    help="agent checkpoint for the gap-to-optimal column (optional)")
-    p.add_argument("--out_json", type=str, default="results/optimal_baseline.json")
-    p.add_argument("--policy_dir", type=str, default="results/optimal_policies")
+    p.add_argument("--out_json", type=str, default="results/optimal/optimal_baseline.json")
+    p.add_argument("--policy_dir", type=str, default="results/optimal/optimal_policies")
     p.add_argument("--save_policy", action="store_true",
                    help="dump the exact optimal policy per (N, p_gen, p_swap)")
     return p.parse_args(argv)

@@ -42,9 +42,8 @@ def make_backend(
     channel_loss: float = 0.02,
     dt_seconds: float = 1e-4,
     rng: Optional[np.random.Generator] = None,
-    fidelity_mode: str = "analytic",
 ):
-    """Build a PhysicsBackend. `fidelity_mode` is reserved for NetSquid (M1+).
+    """Build a PhysicsBackend.
 
     Inhomogeneity: `p_gen`/`p_swap` are the per-network MEANS; `p_gen_std`/
     `p_swap_std` spread per-repeater values via `_sample_matched_uniform`
@@ -61,28 +60,6 @@ def make_backend(
             for i, rep in enumerate(net.repeaters):
                 rep.p_gen, rep.p_swap = float(pg[i]), float(ps[i])
         return LegacyBackend(net)
-    if backend == "netsquid":
-        if fidelity_mode not in ("analytic", "full_dm"):
-            raise NotImplementedError(
-                f"NetSquid fidelity_mode={fidelity_mode!r} unsupported "
-                "(analytic, full_dm)")
-        if topology != "chain":
-            raise NotImplementedError(
-                f"NetSquid topology={topology!r} not yet supported (grid/geant in M2)")
-        if fidelity_mode == "full_dm":
-            from .netsquid.fulldm import FullDMBackend
-            cls = FullDMBackend
-        else:
-            from .netsquid.backend import NetSquidBackend as cls
-        be = cls(
-            N=n_repeaters, n_ch=n_ch, spacing=spacing, p_gen=p_gen,
-            p_swap=p_swap, cutoff=cutoff, F0=F0, channel_loss=channel_loss,
-            dt_seconds=dt_seconds, distance_dep_gen=True, rng=rng)
-        if p_gen_std > 0.0:
-            be._p_gen[:] = _sample_matched_uniform(p_gen, p_gen_std, be._N, rng)
-        if p_swap_std > 0.0:
-            be._p_swap[:] = _sample_matched_uniform(p_swap, p_swap_std, be._N, rng)
-        return be
     raise ValueError(f"Unknown backend {backend!r}")
 
 

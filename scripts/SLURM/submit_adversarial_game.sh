@@ -28,7 +28,7 @@
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 
-DEFENDER_CHECKPOINT=${DEFENDER_CHECKPOINT:-checkpoints/inhomo_001/policy_final.pth}
+DEFENDER_CHECKPOINT=${DEFENDER_CHECKPOINT:-checkpoints/cluster/inhomo_001/policy_final.pth}
 FLAVOR=${FLAVOR:-photon_eater}
 EPISODES=${EPISODES:-3000}
 MAX_STEPS=${MAX_STEPS:-50}

@@ -45,7 +45,6 @@ def _make_env(n_repeaters: int, n_ch: int, max_steps: int, seed: int):
         max_steps=max_steps,
         rng=np.random.default_rng(seed),
         topology="chain",
-        backend="legacy",
     )
 
 
@@ -92,7 +91,7 @@ def _summary(values):
 def evaluate(
     run_dir: str | Path,
     *,
-    pretrained_checkpoint: str | Path = "checkpoints/inhomo_001/policy_final.pth",
+    pretrained_checkpoint: str | Path = "checkpoints/cluster/inhomo_001/policy_final.pth",
     episodes: int = 50,
     n_range=(4, 5, 6, 7),
     n_ch: int = 4,
@@ -333,7 +332,7 @@ def main(argv=None):
     parser.add_argument("run_dir")
     parser.add_argument(
         "--pretrained-checkpoint",
-        default="checkpoints/inhomo_001/policy_final.pth",
+        default="checkpoints/cluster/inhomo_001/policy_final.pth",
     )
     parser.add_argument("--episodes", type=int, default=50)
     parser.add_argument("--n-range", type=int, nargs="+", default=(4, 5, 6, 7))

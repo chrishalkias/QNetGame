@@ -134,5 +134,5 @@ def run_probes(model_path):
 
 if __name__ == "__main__":
     import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else "checkpoints/cluster_001/policy.pth"
+    path = sys.argv[1] if len(sys.argv) > 1 else "checkpoints/cluster/cluster_001/policy.pth"
     run_probes(path)

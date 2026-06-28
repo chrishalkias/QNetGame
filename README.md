@@ -15,13 +15,12 @@ Learning pipeline. The core simulator is pure Python/NumPy; an optional
 `torch` / `torch_geometric` stack provides a GNN-based Double-DQN agent.
 
 The physics lives behind a **pluggable backend interface** (`legacy` NumPy
-backend by default; an optional `netsquid` backend with `analytic` and
-`full_dm` fidelity modes). The RL agent trains on small chains and
+backend). The RL agent trains on small chains and
 **generalises zero-shot** to larger / differently-parameterised networks,
 including a 24-node GÉANT topology.
 
 **Dependencies:** NumPy (core). `torch` + `torch_geometric` for the RL
-stack. `netsquid` only if you select the NetSquid backend.
+stack.
 
 ---
 
@@ -52,7 +51,7 @@ stack. `netsquid` only if you select the NetSquid backend.
 
 ```python
 import numpy as np
-from quantum_repeater_sim import build_chain
+from simulator import build_chain
 
 net = build_chain(n_repeaters=5, n_ch=4, spacing=50.0,
                   p_gen=0.8, p_swap=0.7, cutoff=15,
@@ -73,7 +72,7 @@ import numpy as np
 from rl_stack import QRNEnv
 
 env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.8, p_swap=0.7,
-             cutoff=15, topology='chain', backend='legacy',
+             cutoff=15, topology='chain',
              rng=np.random.default_rng(0))
 
 obs  = env.get_observation()          # {"x": (N,10), "edge_index": (2,E)}
@@ -216,7 +215,7 @@ on the next `age_links()` call).
                             ▼
                 ┌───────────────────────────┐
                 │      PhysicsBackend         │   make_backend(...)
-                │  legacy │ netsquid          │
+                │  legacy                     │
                 │  node_state / advance / ... │
                 └───────────────┬─────────────┘
                                 │  (legacy) wraps
@@ -379,8 +378,8 @@ in-flight operations.
 ### 5.7 Factory Functions
 
 ```python
-from quantum_repeater_sim import build_chain, build_grid   # top-level
-from quantum_repeater_sim.network import build_GEANT        # network module
+from simulator import build_chain, build_grid   # top-level
+from simulator.network import build_GEANT        # network module
 
 net = build_chain(n_repeaters=5, n_ch=4, spacing=50.0,
                   p_gen=0.8, p_swap=0.5, cutoff=20,
@@ -404,7 +403,7 @@ All forward `**kwargs` to `RepeaterNetwork`.
 ## 6. Physics Backends
 
 The simulator's physics is accessed through `PhysicsBackend`
-(`quantum_repeater_sim/backends/`). `QRNEnv` never touches
+(`simulator/backends/`). `QRNEnv` never touches
 `RepeaterNetwork` directly — it talks to a backend built by
 `make_backend(...)`.
 
@@ -421,13 +420,11 @@ The simulator's physics is accessed through `PhysicsBackend`
 read-only arrays (immutable snapshots — the agent can't mutate physics
 state through the observation).
 
-### 6.2 `make_backend(backend, topology, fidelity_mode, ...)`
+### 6.2 `make_backend(backend, topology, ...)`
 
-| `backend` | `fidelity_mode` | Notes |
-|---|---|---|
-| `"legacy"` | — | Pure-NumPy `RepeaterNetwork` wrapper. Default. All topologies (chain/grid/geant). |
-| `"netsquid"` | `"analytic"` | NetSquid event engine, Werner-scalar physics. Chain only (grid/geant = M2). |
-| `"netsquid"` | `"full_dm"` | NetSquid with real density-matrix qubits. Reproduces the analytic model to machine precision. Chain only. |
+| `backend` | Notes |
+|---|---|
+| `"legacy"` | Pure-NumPy `RepeaterNetwork` wrapper. Default (and only) backend. All topologies (chain/grid/geant). |
 
 **Inhomogeneity:** `p_gen` / `p_swap` are per-network *means*;
 `p_gen_std` / `p_swap_std` spread per-repeater values (std = 0 →
@@ -479,7 +476,7 @@ an "end-to-end" state in 1 step even for perfect operations).
 
 ```python
 import numpy as np
-from quantum_repeater_sim import build_chain
+from simulator import build_chain
 
 net = build_chain(5, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
                   cutoff=20, F0=0.95, channel_loss=0.02,
@@ -501,7 +498,7 @@ print(f"End-to-end: R{int(links[0][0])}<->R{int(links[0][2])} F={links[0][4]:.4f
 
 ```python
 import numpy as np
-from quantum_repeater_sim import build_chain
+from simulator import build_chain
 
 # 100 km spacing, dt=1e-4 => 5-step delay
 net = build_chain(3, n_ch=4, spacing=100.0, p_gen=1.0, p_swap=1.0,
@@ -524,7 +521,7 @@ for step in range(1, 7):
 
 ```python
 import numpy as np
-from quantum_repeater_sim import build_chain
+from simulator import build_chain
 
 net = build_chain(3, n_ch=6, spacing=0.0, p_gen=1.0, p_swap=1.0,
                   cutoff=999, F0=0.90, channel_loss=0.0,
@@ -547,7 +544,7 @@ if res['success']:
 
 ```python
 import numpy as np
-from quantum_repeater_sim import Repeater, RepeaterNetwork, SwapPolicy
+from simulator import Repeater, RepeaterNetwork, SwapPolicy
 
 rng = np.random.default_rng(0)
 repeaters = [
@@ -593,12 +590,6 @@ memories would benefit from approximate nearest-neighbour methods.
 The simulator is single-instance. For vectorised RL training, run $B$
 instances in a `multiprocessing.Pool` or refactor state into batched
 arrays.
-
-### 9.5 NetSquid Backend Topologies
-
-The NetSquid backend currently supports **chain** topologies only;
-grid / GÉANT support is deferred (M2). Use the `legacy` backend for
-non-chain topologies.
 
 ---
 
@@ -735,7 +726,6 @@ metrics = agent.train(
     p_gen_std=0.0, p_swap_std=0.0,   # per-repeater inhomogeneity
     cutoff=30, F0=0.95,
     topology='chain',
-    backend='legacy', fidelity_mode='analytic',
     dt_seconds=1e-3,
     disable_actions=(),        # e.g. (PURIFY,) → pure swap-scheduler
     save_path="checkpoints/",
@@ -754,7 +744,7 @@ metrics = agent.train(
   settled late window); final weights go to `policy_final.pth`.
 - **Early stopping:** with `eval_fn` + `eval_every` + `eval_patience`,
   training stops when the probe stops improving.
-- **Pluggable backend:** train against `legacy` or `netsquid`.
+- **Pluggable backend:** physics lives behind the `legacy` backend.
 - **Double DQN + Polyak averaging (τ=0.005) + gradient clipping.**
 - **`disable_actions`:** mask action indices in both selection and the
   Double-DQN target (e.g. ablate PURIFY).
@@ -769,7 +759,7 @@ results = agent.validate(
     n_episodes=100,
     n_repeaters=10,           # test on larger chain than trained
     p_gen=0.6, p_swap=0.5,   # different params than training
-    topology='chain', backend='legacy',
+    topology='chain',
     plot_actions=True,
 )
 ```
@@ -850,7 +840,7 @@ router tries to deliver end-to-end entanglement.
 
 ## 14. Optimal-Policy Benchmark
 
-`quantum_repeater_sim/optimal_policy/` benchmarks the RL agent against a
+`simulator/optimal_policy/` benchmarks the RL agent against a
 dynamic-programming "optimal" policy.
 
 | Script | Purpose |
@@ -868,9 +858,9 @@ dynamic-programming "optimal" policy.
 ## 15. Repository Layout & Runners
 
 ```
-quantum_repeater_sim/        core simulator (NumPy)
+simulator/        core simulator (NumPy)
   repeater.py, network.py
-  backends/                  PhysicsBackend: legacy, netsquid (analytic/full_dm)
+  backends/                  PhysicsBackend: legacy
   optimal_policy/            DP-optimal benchmark
 rl_stack/                    Double-DQN RL stack
   env_wrapper.py  agent.py  model.py  buffer.py  strategies.py  potential.py
@@ -902,8 +892,6 @@ the `scripts/` shell wrappers.
 | `test_simulator.py` | physics: Werner↔fidelity, decoherence, BBPSSW, swap product rule, classical delay, distance scaling; core mechanics; RL-loophole edge cases (ghost links, asymmetric cutoff, locking integrity, self-swap) |
 | `test_rl_stack.py` | Double-DQN update rule, Polyak averaging, masked-target argmax, graph batching, `QRNEnv` reset/step/features, `QRNAgent.select_actions`, `ReplayBuffer` |
 | `test_backends.py` | `PhysicsBackend` interface, frozen/read-only `NodeState`/`Topology` snapshots |
-| `test_netsquid_backend.py` | NetSquid timing / `SimClock` delay-tick conversion |
-| `test_fulldm_backend.py` | density-matrix backend reproduces the analytic model |
 | `test_potential.py` | `bfs_hops` and `path_progress` PBRS potential |
 | `test_game.py` | curriculum / `QRNAgent` helpers (e.g. `_normalize_n_ch`) |
 | `test_adversarial_game.py` | adversary agent / `AdversarialQRNEnv` |
@@ -922,7 +910,7 @@ python -m pytest diagnostics/unittests/test_simulator.py -v
 ### Dependencies
 
 `numpy` (core); `torch`, `torch_geometric` (RL-stack and backend-import
-tests); `netsquid` only for the NetSquid backend tests.
+tests).
 
 ### Disclaimer
 

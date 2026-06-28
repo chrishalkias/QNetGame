@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from dataclasses import FrozenInstanceError
 
-from quantum_repeater_sim.backends.base import (
+from simulator.backends.base import (
     PhysicsBackend, NodeState, LinkState, Topology, _freeze,
 )
 
@@ -67,8 +67,8 @@ def test_topology_autofreezes_arrays():
         topo.adjacency[0, 0] = 9.0
 
 
-from quantum_repeater_sim.backends.legacy import LegacyBackend
-from quantum_repeater_sim.network import build_chain
+from simulator.backends.legacy import LegacyBackend
+from simulator.network import build_chain
 
 
 def _legacy_chain():
@@ -122,7 +122,7 @@ def test_legacy_pending_increments_on_deferred_swap():
     assert be.n_pending >= 1
 
 
-from quantum_repeater_sim.backends import make_backend
+from simulator.backends import make_backend
 
 
 def test_factory_builds_legacy_chain():
@@ -137,15 +137,7 @@ def test_factory_rejects_unknown_backend():
         make_backend("quantum_magic", topology="chain")
 
 
-def test_factory_netsquid_grid_full_dm_not_yet_available():
-    # netsquid chain supports analytic AND full_dm; grid/geant (M2) still guarded.
-    with pytest.raises(NotImplementedError):
-        make_backend("netsquid", topology="grid")
-    with pytest.raises(NotImplementedError):
-        make_backend("netsquid", topology="grid", fidelity_mode="full_dm")
-
-
-from quantum_repeater_sim.backends.factory import _sample_matched_uniform
+from simulator.backends.factory import _sample_matched_uniform
 
 
 def test_sample_matched_uniform_std_zero_is_constant_and_drawless():

@@ -519,7 +519,7 @@ class TestStepFunction(unittest.TestCase):
         env.net.reset()
         env.source, env.dest = 0, 2
         # Directly inject a link from R0 to R2 (simulates a successful swap).
-        from quantum_repeater_sim.repeater import fidelity_to_werner
+        from simulator.repeater import fidelity_to_werner
         q0 = env.net.repeaters[0].allocate_qubit()
         q2 = env.net.repeaters[2].allocate_qubit()
         p  = fidelity_to_werner(0.95)

@@ -7,8 +7,8 @@ via sliders and see live Q-value bar charts.
 
 Usage:
     python diagnostics/policy_probes/generate_policy_explorer.py \
-        --model checkpoints/cluster_004/policy.pth \
-        --output checkpoints/cluster_004/policy_explorer.html
+        --model checkpoints/cluster/cluster_004/policy.pth \
+        --output checkpoints/cluster/cluster_004/policy_explorer.html
 """
 
 from __future__ import annotations
@@ -505,8 +505,8 @@ def generate(model_path: str, output_path: str, hidden: int = 64) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate interactive HTML policy explorer")
-    parser.add_argument("--model", default='checkpoints/cluster_004/policy.pth')
-    parser.add_argument("--output", default='checkpoints/cluster_004/policy_explorer.html',
+    parser.add_argument("--model", default='checkpoints/cluster/cluster_004/policy.pth')
+    parser.add_argument("--output", default='checkpoints/cluster/cluster_004/policy_explorer.html',
                         help="Output HTML path (default: same dir as model)")
     parser.add_argument("--hidden", type=int, default=64,
                         help="Hidden dimension of the QNetwork")

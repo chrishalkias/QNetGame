@@ -92,7 +92,7 @@ def _tiny_train(tmp_path, name, save_best, episodes=120):
     agent.train(episodes=episodes, max_steps=6, n_range=[3], n_ch=2,
                 p_gen=0.9, p_swap=0.9, cutoff=5, F0=0.95, channel_loss=0.0,
                 dt_seconds=0.0, curriculum=False,
-                topology="chain", backend="legacy", save_path=sd,
+                topology="chain", save_path=sd,
                 save_best=save_best, best_window=20, plot=False)
     return sd
 
@@ -121,7 +121,7 @@ def _es_train(tmp_path, name, eval_fn, episodes, patience):
     metrics = agent.train(
         episodes=episodes, max_steps=6, n_range=[3], n_ch=2, p_gen=0.9, p_swap=0.9,
         cutoff=5, F0=0.95, channel_loss=0.0, dt_seconds=0.0,
-        curriculum=False, topology="chain", backend="legacy", save_path=sd,
+        curriculum=False, topology="chain", save_path=sd,
         eval_fn=eval_fn, eval_every=10, eval_patience=patience, eval_mode='min',
         plot=False)
     return sd, metrics
@@ -134,7 +134,7 @@ def test_compare_logs_paired_baseline_returns(tmp_path):
     m = agent.train(episodes=12, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     dt_seconds=0.0, curriculum=False,
-                    topology="chain", backend="legacy", save_path=None,
+                    topology="chain", save_path=None,
                     save_best=False, plot=False, compare=True)
     for k in ("cmp_agent", "cmp_swap", "cmp_rand",
               "cmp_agent_steps", "cmp_swap_steps", "cmp_rand_steps",
@@ -155,7 +155,7 @@ def test_compare_extra_logs_named_baseline(tmp_path):
     m = agent.train(episodes=10, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     dt_seconds=0.0, curriculum=False,
-                    topology="chain", backend="legacy", save_path=None,
+                    topology="chain", save_path=None,
                     save_best=False, plot=False, compare=True,
                     compare_extra={"optimal": noop_fn})
     for k in ("cmp_optimal", "cmp_optimal_steps", "cmp_optimal_succ"):
@@ -169,7 +169,7 @@ def test_no_compare_leaves_cmp_metrics_empty(tmp_path):
     m = agent.train(episodes=8, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     dt_seconds=0.0, curriculum=False,
-                    topology="chain", backend="legacy", save_path=None,
+                    topology="chain", save_path=None,
                     save_best=False, plot=False)
     assert m["cmp_agent"] == [] and m["cmp_swap"] == [] and m["cmp_rand"] == []
     assert m["cmp_agent_steps"] == [] and m["cmp_agent_succ"] == []
@@ -207,13 +207,13 @@ def test_disable_actions_trains(tmp_path):
     agent = QRNAgent(rng=np.random.default_rng(0))
     agent.train(episodes=40, max_steps=6, n_range=[3], n_ch=2, p_gen=0.9, p_swap=0.9,
                 cutoff=5, F0=0.95, channel_loss=0.0, dt_seconds=0.0,
-                curriculum=False, topology="chain", backend="legacy", save_path=sd,
+                curriculum=False, topology="chain", save_path=sd,
                 disable_actions=(PURIFY,), save_best=False, plot=False)
     assert os.path.isfile(os.path.join(sd, "policy.pth"))
 
 
 def test_gaps_computes_percentages():
-    from quantum_repeater_sim.optimal_policy.report import gaps
+    from simulator.optimal_policy.report import gaps
     row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,
                T_agent=11.0, T_agent_swaponly=10.5)
     assert row["N"] == 4
@@ -225,7 +225,7 @@ def test_gaps_computes_percentages():
 
 
 def test_gaps_handles_missing_optimal():
-    from quantum_repeater_sim.optimal_policy.report import gaps
+    from simulator.optimal_policy.report import gaps
     row = gaps(N=5, in_distribution=False, T_opt_swaponly=None, T_swap=20.0,
                T_agent=19.0, T_agent_swaponly=19.5)
     assert math.isnan(row["gap_full_pct"])
@@ -234,7 +234,7 @@ def test_gaps_handles_missing_optimal():
 
 
 def test_gaps_without_swaponly_agent():
-    from quantum_repeater_sim.optimal_policy.report import gaps
+    from simulator.optimal_policy.report import gaps
     row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,
                T_agent=11.0)  # T_agent_swaponly defaults to None
     assert row["T_agent_swaponly"] is None
@@ -243,7 +243,7 @@ def test_gaps_without_swaponly_agent():
 
 
 def test_format_report_has_columns():
-    from quantum_repeater_sim.optimal_policy.report import format_report
+    from simulator.optimal_policy.report import format_report
     report = {
         "config": {"n_ch": 2, "cutoff": 5, "p_gen": 0.9, "p_swap": 0.9, "horizon": 30},
         "rows": [
@@ -279,7 +279,7 @@ def _write_synthetic_pickle(policy_dir, N, n_ch, cutoff, horizon, pg, ps):
 
 
 def test_load_optimal_pickle_match_and_mismatch(tmp_path):
-    from quantum_repeater_sim.optimal_policy.compare_optimal import load_optimal_pickle
+    from simulator.optimal_policy.compare_optimal import load_optimal_pickle
     _write_synthetic_pickle(str(tmp_path), 4, 2, 5, 30, 0.9, 0.9)
     # exact match loads
     payload = load_optimal_pickle(str(tmp_path), N=4, n_ch=2, cutoff=5,
@@ -293,7 +293,7 @@ def test_load_optimal_pickle_match_and_mismatch(tmp_path):
 def test_compare_to_optimal_with_injected_agent(tmp_path):
     # Use swap_asap as a stand-in "agent_fn" so the test needs no torch checkpoint.
     from experiments import optimal_baseline as ob
-    from quantum_repeater_sim.optimal_policy.compare_optimal import compare_to_optimal
+    from simulator.optimal_policy.compare_optimal import compare_to_optimal
 
     _write_synthetic_pickle(str(tmp_path), 3, 2, 5, 30, 0.9, 0.9)
     _write_synthetic_pickle(str(tmp_path), 4, 2, 5, 30, 0.9, 0.9)
@@ -314,7 +314,7 @@ def test_compare_to_optimal_with_injected_agent(tmp_path):
 
 def test_load_optimal_pickle_config_mismatch_raises(tmp_path):
     import os, pickle, pytest
-    from quantum_repeater_sim.optimal_policy.compare_optimal import load_optimal_pickle
+    from simulator.optimal_policy.compare_optimal import load_optimal_pickle
     # Write a pickle whose filename says N=4 but whose stored config says N=99.
     fname = "optimal_policy_N4_ch2_co5_h30_pg0.90_ps0.90.pkl"
     payload = {"config": dict(N=99, n_ch=2, cutoff=5, horizon=30, p_gen=0.9, p_swap=0.9),
@@ -329,7 +329,7 @@ def test_load_optimal_pickle_config_mismatch_raises(tmp_path):
 def test_compare_to_optimal_degrades_without_pickle(tmp_path):
     import math
     from experiments import optimal_baseline as ob
-    from quantum_repeater_sim.optimal_policy.compare_optimal import compare_to_optimal
+    from simulator.optimal_policy.compare_optimal import compare_to_optimal
     # Empty policy_dir -> no pickles -> swap-asap-only rows with NaN optimal gap.
     report = compare_to_optimal(
         ckpt=None, policy_dir=str(tmp_path),

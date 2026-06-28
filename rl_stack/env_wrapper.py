@@ -30,8 +30,8 @@ from __future__ import annotations
 from typing import Dict, Tuple, Optional
 import numpy as np
 
-from quantum_repeater_sim.backends import make_backend
-from quantum_repeater_sim.repeater import NO_PARTNER
+from simulator.backends import make_backend
+from simulator.repeater import NO_PARTNER
 from rl_stack import potential
 
 # --- action constants ----------------------------------------------------
@@ -77,9 +77,7 @@ class QRNEnv:
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
                  topology = 'chain',
-                 gamma = 0.99,
-                 backend = 'legacy',
-                 fidelity_mode = 'analytic'):
+                 gamma = 0.99):
 
         if topology not in ['chain', 'grid', 'geant']:
             raise ValueError(f'Topology {topology} not supported')
@@ -91,11 +89,11 @@ class QRNEnv:
         self.topology = topology
 
         self.backend = make_backend(
-            backend, topology=topology, n_repeaters=n_repeaters, n_ch=n_ch,
+            topology=topology, n_repeaters=n_repeaters, n_ch=n_ch,
             spacing=spacing, p_gen=p_gen, p_swap=p_swap,
             p_gen_std=p_gen_std, p_swap_std=p_swap_std, cutoff=cutoff,
             F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
-            rng=self.rng, fidelity_mode=fidelity_mode)
+            rng=self.rng)
 
         self._topo = self.backend.topology()
         self.N = self._topo.N

@@ -294,8 +294,8 @@ def run_all(model_path: str, save_dir: str = "diagnostics",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="QRN Agent Diagnostics")
-    parser.add_argument("--model",    default="checkpoints/cluster_004/policy.pth")
-    parser.add_argument("--save_dir", default="checkpoints/cluster_004/diagnostics")
+    parser.add_argument("--model",    default="checkpoints/cluster/cluster_004/policy.pth")
+    parser.add_argument("--save_dir", default="checkpoints/cluster/cluster_004/diagnostics")
     parser.add_argument("--device",   default="cpu")
     parser.add_argument("--n_nodes",  type=int, default=5)
     parser.add_argument("--probe",    type=int, default=2)
