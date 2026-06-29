@@ -103,14 +103,6 @@ class QRNEnv:
         self.done = False
         self._pick_targets()
 
-    # Engine entangle/swap go through these seams so subclasses (the
-    # adversarial game) can intercept them via override instead of patching
-    # the slotted RepeaterNetwork.
-    def _engine_entangle(self, r1: int, r2: int) -> Dict:
-        return self.net.entangle(r1, r2)
-
-    def _engine_swap(self, r: int) -> Dict:
-        return self.net.swap(r)
 
 
 # ▄▄▄▄▄▄▄▄▄
@@ -337,10 +329,10 @@ class QRNEnv:
         pairs = list(zip(*np.nonzero(np.triu(self._topo.adjacency, k=1))))
         self.rng.shuffle(pairs)
         for r1, r2 in pairs:
-            self._engine_entangle(int(r1), int(r2))
+            self.net.entangle(int(r1), int(r2))
 
     def _exec_swap(self, r: int) -> Dict:
-        return self._engine_swap(r)
+        return self.net.swap(r)
 
     def _exec_purify(self, r: int) -> Dict:
         ns = self.net.node_state(r)
