@@ -182,15 +182,14 @@ class QRNAgent:
         rewards = rewards_pg[node_to_graph]
         dones   = dones_pg[node_to_graph]
 
-        # Per-node actions (concatenated across batch)
-        actions = torch.cat(
-            [torch.tensor(t["a"], dtype=torch.long, device=self.device)
-             for t in batch])
-
-        # Per-node next masks (concatenated across batch)
-        next_masks = torch.cat(
-            [torch.tensor(t["m_"], dtype=torch.bool, device=self.device)
-             for t in batch])
+        # Per-node actions / next masks: concatenate in NumPy, then ONE tensor
+        # call each (vs a torch.tensor per transition + torch.cat).
+        actions = torch.tensor(
+            np.concatenate([t["a"] for t in batch]),
+            dtype=torch.long, device=self.device)
+        next_masks = torch.tensor(
+            np.concatenate([t["m_"] for t in batch]),
+            dtype=torch.bool, device=self.device)
 
         # ── Current Q(s, a) ──
         q_all    = self.policy_net(states)

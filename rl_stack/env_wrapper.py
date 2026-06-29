@@ -202,24 +202,26 @@ class QRNEnv:
 #       ▀▀
 
 
-    def _can_swap_from(self, ns) -> bool:
-        """True if ns has ≥2 available qubits linked to *distinct* partners."""
+    @staticmethod
+    def _partner_counts(ns):
+        """Per-partner qubit counts over available (occupied, unlocked) qubits.
+        Returns None if fewer than 2 qubits are available. `bincount` over node
+        ids beats `np.unique` (no sort) for these tiny arrays."""
         avail = ns.occupied & (~ns.locked)
         if int(avail.sum()) < 2:
-            return False
+            return None
         partners = ns.partner_node[avail]
-        unique = np.unique(partners[partners != NO_PARTNER])
-        return len(unique) >= 2
+        return np.bincount(partners[partners != NO_PARTNER])
+
+    def _can_swap_from(self, ns) -> bool:
+        """True if ns has ≥2 available qubits linked to *distinct* partners."""
+        counts = self._partner_counts(ns)
+        return counts is not None and int(np.count_nonzero(counts)) >= 2
 
     def _can_purify_from(self, ns) -> bool:
         """True if ns has ≥2 available qubits linked to the *same* partner."""
-        avail = ns.occupied & (~ns.locked)
-        if int(avail.sum()) < 2:
-            return False
-        partners = ns.partner_node[avail]
-        _, counts = np.unique(partners[partners != NO_PARTNER],
-                              return_counts=True)
-        return bool(np.any(counts >= 2))
+        counts = self._partner_counts(ns)
+        return counts is not None and bool(np.any(counts >= 2))
 
 
 # ▄▄▄      ▄▄▄
