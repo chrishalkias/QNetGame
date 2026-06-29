@@ -1026,5 +1026,16 @@ def test_step_win_is_terminated_not_truncated():
     assert saw_win is True
 
 
+def test_sample_cutoff_range_is_int_in_band():
+    from rl_stack.agent import _sample_cutoff
+    rng = np.random.default_rng(0)
+    vals = [_sample_cutoff(rng, (10, 40)) for _ in range(200)]
+    assert all(isinstance(v, int) for v in vals)
+    assert min(vals) >= 10 and max(vals) <= 40
+    assert len(set(vals)) > 1                      # genuinely varied
+    # scalar passes through, draws no rng
+    assert _sample_cutoff(rng, 15) == 15
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

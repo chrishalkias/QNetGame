@@ -67,6 +67,14 @@ def _as_data(transition: Dict, key: str) -> Data:
     return d
 
 
+def _sample_cutoff(rng, cutoff):
+    """Scalar -> passthrough (no rng draw); (lo,hi) -> uniform int in [lo,hi]."""
+    if isinstance(cutoff, (tuple, list)) and len(cutoff) == 2:
+        lo, hi = int(cutoff[0]), int(cutoff[1])
+        return int(rng.integers(lo, hi + 1))
+    return int(cutoff)
+
+
 def _running_avg(vals, window=30):
     out = []
     for i in range(len(vals)):
@@ -403,9 +411,10 @@ class QRNAgent:
                 n_nodes = int(self.rng.choice(pool))
                 # single-element pool (int n_ch) draws no RNG -> stream identical to pre-change
                 n_ch_ep = int(self.rng.choice(n_ch_pool)) if len(n_ch_pool) > 1 else n_ch_pool[0]
-                # scalar p_gen/p_swap draw no RNG; (lo,hi) -> per-episode domain randomization
+                # scalar p_gen/p_swap/cutoff draw no RNG; (lo,hi) -> per-episode domain randomization
                 p_gen_ep = self._sample_rate(self.rng, p_gen)
                 p_swap_ep = self._sample_rate(self.rng, p_swap)
+                cutoff_ep = _sample_cutoff(self.rng, cutoff)
 
                 args = {
                     'n_repeaters': n_nodes,
@@ -415,7 +424,8 @@ class QRNAgent:
                     'p_swap': p_swap_ep,
                     'p_gen_std': p_gen_std,
                     'p_swap_std': p_swap_std,
-                    'cutoff': cutoff,
+                    'cutoff': cutoff_ep,
+                    'gamma': self.gamma,   # env PBRS gamma == DQN discount
                     'F0' : F0,
                     'channel_loss' : channel_loss,
                     'dt_seconds': dt_seconds,

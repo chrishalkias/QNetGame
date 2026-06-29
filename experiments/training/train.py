@@ -20,7 +20,8 @@ def parse_args():
     parser.add_argument("--n_lo", type=int, default=5)
     parser.add_argument("--n_hi", type=int, default=8)
     parser.add_argument("--curriculum", action='store_false')
-    parser.add_argument("--n_ch", type=int, default=4)
+    parser.add_argument("--n_ch", type=int, nargs="+", default=[4],
+                        help="n_ch pool, e.g. --n_ch 2 3 4 (per-episode draw)")
     parser.add_argument("--topology", type=str, default='chain')
     parser.add_argument("--p_gen", type=float, default=0.60,
                         help="per-network MEAN link-generation prob.")
@@ -31,6 +32,11 @@ def parse_args():
     parser.add_argument("--p_swap_std", type=float, default=0.0,
                         help="per-repeater spread of p_swap (0 = homogeneous)")
     parser.add_argument("--cutoff", type=int, default=6)
+    parser.add_argument("--cutoff_lo", type=int, default=None,
+                        help="with --cutoff_hi, sample cutoff per episode in [lo,hi]")
+    parser.add_argument("--cutoff_hi", type=int, default=None)
+    parser.add_argument("--gamma", type=float, default=0.995,
+                        help="DQN discount AND env PBRS gamma (kept matched)")
 
     # CC Variables
     parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
@@ -56,7 +62,7 @@ if __name__ == "__main__":
                      hidden=args.hidden,
                      batch_size=args.batch_size,
                      buffer_size=80_000,
-                     gamma=0.99, 
+                     gamma=args.gamma,
                      tau=0.005,
                      epsilon=1,)
 
@@ -69,7 +75,9 @@ if __name__ == "__main__":
         p_swap=args.p_swap,
         p_gen_std=args.p_gen_std,
         p_swap_std=args.p_swap_std,
-        cutoff=args.cutoff,
+        n_ch=args.n_ch,
+        cutoff=((args.cutoff_lo, args.cutoff_hi)
+                if args.cutoff_lo is not None else args.cutoff),
         channel_loss=args.channel_loss,
         F0=args.F0,
         dt_seconds=args.dt_seconds,
