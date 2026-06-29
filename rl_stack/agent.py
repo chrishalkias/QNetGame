@@ -439,8 +439,10 @@ class QRNAgent:
                     if disable_actions:
                         next_mask[:, disable_actions] = False
 
+                    # store terminated (not done): timeouts (truncated) must
+                    # bootstrap V(s') in the DQN target, only true wins zero it.
                     self.memory.add(obs, actions, reward,
-                                    next_obs, done, next_mask)
+                                    next_obs, info["terminated"], next_mask)
 
                     loss = self.train_step()
                     if loss is not None:

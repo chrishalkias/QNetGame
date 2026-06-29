@@ -1000,5 +1000,31 @@ class TestEnvRewireCorrectness(unittest.TestCase):
         self.assertTrue(reached)
 
 
+def test_step_reports_terminated_vs_truncated():
+    # max_steps=1, impossible delivery (p_gen=0) -> must truncate, not terminate
+    env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=0.0, p_swap=1.0, cutoff=20,
+                 max_steps=1, topology="chain", rng=np.random.default_rng(0))
+    env.reset()
+    _, _, done, info = env.step(np.zeros(env.N, dtype=int))
+    assert done is True
+    assert info["truncated"] is True
+    assert info["terminated"] is False
+
+
+def test_step_win_is_terminated_not_truncated():
+    # easy 2-node chain: delivers fast -> terminated True, truncated False
+    env = QRNEnv(n_repeaters=2, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
+                 max_steps=50, topology="chain", rng=np.random.default_rng(0))
+    env.reset()
+    saw_win = False
+    for _ in range(50):
+        _, _, done, info = env.step(np.zeros(env.N, dtype=int))
+        if done:
+            saw_win = info["terminated"]
+            assert info["terminated"] != info["truncated"]
+            break
+    assert saw_win is True
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

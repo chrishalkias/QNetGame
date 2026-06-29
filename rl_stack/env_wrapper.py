@@ -308,12 +308,8 @@ class QRNEnv:
             # Terminal: Φ(s_terminal) = 0 by PBRS convention
             shaping = -self._phi
             reward = fidelity * self.SUCCESS_REWARD + penalty + shaping
+            info["terminated"], info["truncated"] = True, False
             return self.get_observation(), reward, True, info
-
-        if self.steps >= self.max_steps:
-            self.done = True
-            shaping = -self._phi
-            return self.get_observation(), self.STEP_COST + penalty + shaping, True, info
 
         # Phase 4: auto-entangle for next step's observation
         self._auto_entangle()
@@ -323,7 +319,14 @@ class QRNEnv:
         shaping = self.gamma * phi_new - self._phi
         self._phi = phi_new
 
-        return self.get_observation(), self.STEP_COST + penalty + shaping, False, info
+        # A time-limit hit is truncation, NOT a true terminal: it takes the
+        # same non-terminal path above (auto-entangle + normal PBRS) so V(s')
+        # stays bootstrappable. terminated=False -> the DQN target bootstraps.
+        truncated = self.steps >= self.max_steps
+        self.done = truncated
+        info["terminated"], info["truncated"] = False, truncated
+        return (self.get_observation(),
+                self.STEP_COST + penalty + shaping, truncated, info)
 
 
 #  ▄▄▄▄▄▄▄
