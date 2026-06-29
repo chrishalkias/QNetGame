@@ -644,7 +644,7 @@ in time" while the agent decides, then all actions execute in one step.
 `get_observation()` returns `{"x": (N, 8) float32, "edge_index": (2, E)
 int64}` — a **homogeneous** graph.
 
-**Node features** `(N, 8)`:
+**Node features** `(N, 9)`:
 
 | Col | Feature |
 |---|---|
@@ -656,10 +656,12 @@ int64}` — a **homogeneous** graph.
 | 5 | `can_purify` — 1.0 if $\geq 2$ available qubits to same partner |
 | 6 | `p_gen` — per-repeater generation prob. (inhomogeneity signal) |
 | 7 | `p_swap` — per-repeater BSM prob. (inhomogeneity signal) |
+| 8 | `link_urgency` — mean(age / link_cutoff) over occupied qubits (0 if none) |
 
 Columns 4/5 are forced to 0 for source/dest. Columns 6/7 are constant
-across nodes when the network is homogeneous (std = 0). `edge_index` is
-the repeater adjacency (both directions).
+across nodes when the network is homogeneous (std = 0). Column 8 is 0
+for nodes with no occupied qubits and approaches 1 as links near expiry.
+`edge_index` is the repeater adjacency (both directions).
 
 Because all features are normalised and topology-agnostic, the GNN
 processes any chain length / graph size without retraining.

@@ -520,6 +520,7 @@ class RepeaterNetwork:
             partner_qubit=_freeze(rep.partner_qubit),
             fidelity=_freeze(fid),
             age=_freeze(rep.age.astype(np.int32)),
+            link_cutoff=_freeze(rep.link_cutoff.astype(np.int32)),
         )
 
 

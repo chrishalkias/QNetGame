@@ -368,8 +368,8 @@ class TestQRNEnvReset(unittest.TestCase):
 
     def test_reset_node_feature_shape(self):
         obs = self.env.reset()
-        # 8 features per node as documented in env_wrapper.get_observation.
-        self.assertEqual(obs["x"].shape, (5, 8))
+        # 9 features per node as documented in env_wrapper.get_observation.
+        self.assertEqual(obs["x"].shape, (5, 9))
 
     def test_reset_steps_and_done_reinitialised(self):
         self.env.reset()
@@ -397,9 +397,10 @@ class TestQRNEnvReset(unittest.TestCase):
 
 class TestObservationFeatures(unittest.TestCase):
     """
-    Verify all 8 node features:
+    Verify all 9 node features:
       [0] frac_occupied  [1] mean_fidelity  [2] in_endnode   [3] frac_available
       [4] can_swap       [5] can_purify     [6] p_gen        [7] p_swap
+      [8] link_urgency
     """
 
     def setUp(self):
@@ -409,7 +410,7 @@ class TestObservationFeatures(unittest.TestCase):
     def test_feature_values_in_valid_range(self):
         x = self.obs["x"]
         # Fractions, flags and per-repeater rates must all lie in [0, 1].
-        for col in range(8):
+        for col in range(9):
             self.assertTrue((x[:, col] >= 0).all() and (x[:, col] <= 1).all(),
                             f"Feature column {col} out of [0,1] range.")
 
@@ -967,7 +968,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                      cutoff=20, max_steps=40, topology="chain",
                      rng=np.random.default_rng(2024))
         obs = env.reset()
-        self.assertEqual(obs["x"].shape, (env.N, 8))
+        self.assertEqual(obs["x"].shape, (env.N, 9))
         self.assertEqual(obs["edge_index"].shape[0], 2)
         for _ in range(40):
             mask = env.get_action_mask()
@@ -976,7 +977,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                 self.assertTrue(mask[i, a[i]])
             obs, r, done, info = env.step(a)
             self.assertTrue(np.isfinite(r))
-            self.assertEqual(obs["x"].shape, (env.N, 8))
+            self.assertEqual(obs["x"].shape, (env.N, 9))
             self.assertTrue(np.all(obs["x"] >= -1e-6))
             self.assertTrue(np.all(obs["x"] <= 1.0 + 1e-6))
             if done:

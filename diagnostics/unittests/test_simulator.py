@@ -1032,8 +1032,8 @@ class TestEnvWrapper(unittest.TestCase):
     def test_observation_node_features_shape(self):
         env = QRNEnv(n_repeaters=6, topology="chain")
         obs = env.reset()
-        # Expected: (N, 8) node feature matrix.
-        self.assertEqual(obs["x"].shape, (6, 8))
+        # Expected: (N, 9) node feature matrix.
+        self.assertEqual(obs["x"].shape, (6, 9))
 
     def test_action_mask_shape_and_noop_always_true(self):
         env = QRNEnv(n_repeaters=5, topology="chain")

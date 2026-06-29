@@ -158,7 +158,7 @@ class QRNEnv:
     def get_observation(self) -> Dict[str, np.ndarray]:
         """Build size-agnostic node features + topology.
 
-        Features per node (8):
+        Features per node (9):
             [0] frac_occupied     — occupied / n_ch
             [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
             [2] in_endnode        — 1.0 if source OR dest (endpoints are symmetric)
@@ -167,12 +167,15 @@ class QRNEnv:
             [5] can_purify        — 1.0 if ≥2 available qubits to same partner
             [6] p_gen             — per-repeater link-generation prob. (inhomogeneity)
             [7] p_swap            — per-repeater BSM success prob. (inhomogeneity)
+            [8] link_urgency      — mean(age/link_cutoff) over occupied qubits (0 if none)
 
         Features [4] and [5] are forced to 0 for source / dest. Features [6]/[7]
         are constant across nodes when the network is homogeneous (std=0); they
         carry node-quality signal only under per-repeater inhomogeneity.
+        Feature [8] is 0 for nodes with no occupied qubits; ~1 means links are
+        about to expire.
         """
-        feats = np.zeros((self.N, 8), dtype=np.float32)
+        feats = np.zeros((self.N, 9), dtype=np.float32)
         for i in range(self.N):
             ns = self.net.node_state(i)
             occ = ns.occupied
@@ -190,6 +193,11 @@ class QRNEnv:
                 feats[i, 5] = 1.0 if self._can_purify_from(ns) else 0.0
             feats[i, 6] = ns.p_gen
             feats[i, 7] = ns.p_swap
+            if bool(occ.any()):
+                lc = np.maximum(ns.link_cutoff[occ], 1)
+                feats[i, 8] = float(np.mean(ns.age[occ] / lc))
+            else:
+                feats[i, 8] = 0.0
         src, dst = np.nonzero(self._topo.adjacency)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}

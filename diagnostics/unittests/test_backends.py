@@ -21,6 +21,7 @@ def test_nodestate_is_frozen():
         partner_qubit=_freeze(np.full(2, -1, np.int32)),
         fidelity=_freeze(np.zeros(2, np.float64)),
         age=_freeze(np.zeros(2, np.int32)),
+        link_cutoff=_freeze(np.full(2, 20, np.int32)),
     )
     with pytest.raises(FrozenInstanceError):
         ns.node_id = 5
@@ -43,6 +44,7 @@ def test_nodestate_autofreezes_arrays():
         partner_qubit=np.full(2, -1, np.int32),
         fidelity=np.zeros(2, np.float64),
         age=np.zeros(2, np.int32),
+        link_cutoff=np.full(2, 20, np.int32),
     )
     assert ns.occupied.flags.writeable is False
     assert occ.flags.writeable is True  # caller's array untouched
@@ -178,3 +180,27 @@ def test_fidelity_gated_swap_uses_node_state_snapshot():
     actions = fidelity_gated_swap(env, f_threshold=0.5)
     assert actions.shape == (env.N,)
     assert set(np.unique(actions)).issubset({0, 1})  # NOOP or SWAP only
+
+
+def test_node_state_exposes_link_cutoff():
+    net = _chain()
+    net.entangle(0, 1)
+    ns = net.node_state(0)
+    assert ns.link_cutoff.shape == (ns.n_ch,)
+    assert ns.link_cutoff.flags.writeable is False
+    qi = int(np.flatnonzero(ns.occupied)[0])
+    assert ns.link_cutoff[qi] >= 1
+
+
+def test_observation_has_urgency_feature():
+    import numpy as np
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack.agent import NODE_DIM
+    assert NODE_DIM == 9
+    env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
+                 topology="chain", rng=np.random.default_rng(0))
+    env.reset()
+    x = env.get_observation()["x"]
+    assert x.shape == (env.N, 9)
+    # urgency in [0,1]; fresh links -> small; empty node -> 0
+    assert (x[:, 8] >= 0).all() and (x[:, 8] <= 1).all()

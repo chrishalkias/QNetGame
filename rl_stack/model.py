@@ -13,7 +13,7 @@ class QNetwork(nn.Module):
     Output: (N, n_actions) Q-values per node.
     """
 
-    def __init__(self, node_dim: int = 8, hidden: int = 32, n_actions: int = 3):
+    def __init__(self, node_dim: int = 9, hidden: int = 32, n_actions: int = 3):
         super().__init__()
         self.conv1 = SAGEConv(node_dim, hidden)
         self.conv2 = SAGEConv(hidden, hidden)

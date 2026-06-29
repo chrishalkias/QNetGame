@@ -31,10 +31,11 @@ class NodeState:
     partner_qubit: np.ndarray  # int32 (n_ch,)  -1 = none
     fidelity: np.ndarray       # float (n_ch,)  F-domain, 0.0 if free
     age: np.ndarray            # int32 (n_ch,)
+    link_cutoff: np.ndarray    # int32 (n_ch,)  effective per-link cutoff
 
     def __post_init__(self):
         for field in ("occupied", "locked", "partner_node",
-                      "partner_qubit", "fidelity", "age"):
+                      "partner_qubit", "fidelity", "age", "link_cutoff"):
             arr = getattr(self, field)
             if arr.flags.writeable:
                 object.__setattr__(self, field, _freeze(arr))
