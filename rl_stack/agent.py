@@ -75,6 +75,23 @@ def _sample_cutoff(rng, cutoff):
     return int(cutoff)
 
 
+def _draw_winnable_cell(rng, wc, *, p_gen, p_swap, cutoff,
+                        n_pool, n_ch_pool, max_tries=50):
+    """Draw a cell (p_gen, p_swap, cutoff, N, n_ch). If `wc` is given, resample
+    until the cell is winnable (swap-asap can deliver), capped at `max_tries`;
+    if the cap is hit, the last draw is returned anyway."""
+    for _ in range(max_tries):
+        pg = QRNAgent._sample_rate(rng, p_gen)
+        ps = QRNAgent._sample_rate(rng, p_swap)
+        ct = _sample_cutoff(rng, cutoff)
+        n = int(rng.choice(n_pool))
+        nch = int(rng.choice(n_ch_pool)) if len(n_ch_pool) > 1 else int(n_ch_pool[0])
+        if wc is None or wc.winnable(p_gen=pg, p_swap=ps, cutoff=ct,
+                                     n_repeaters=n, n_ch=nch):
+            return pg, ps, ct, n, nch
+    return pg, ps, ct, n, nch
+
+
 def _running_avg(vals, window=30):
     out = []
     for i in range(len(vals)):
@@ -324,6 +341,7 @@ class QRNAgent:
               curriculum = True,
               curriculum_frac = 0.5,
               topology = 'chain',
+              prune_unwinnable = False,
               save_path = None,
               save_best = True,
               best_window = 200,
@@ -395,6 +413,13 @@ class QRNAgent:
         }
         eps_init, eps_fin = 1.0, 0.05
         n_ch_pool = self._normalize_n_ch(n_ch)
+        if prune_unwinnable:
+            from rl_stack.winnability import WinnabilityCache
+            self._wc = WinnabilityCache(
+                probe_steps=max(3 * max_steps, 200),
+                dt_seconds=dt_seconds, channel_loss=channel_loss, F0=F0)
+        else:
+            self._wc = None
         disable_actions = tuple(disable_actions)
         best_metric, best_ep, best_saved = -math.inf, -1, False
         best_eval = math.inf if eval_mode == 'min' else -math.inf
@@ -408,13 +433,13 @@ class QRNAgent:
                 # -- Curriculum: linearly widen max chain size --
                 pool = self._curriculum_pool(
                     ep, episodes, n_range, curriculum, curriculum_frac)
-                n_nodes = int(self.rng.choice(pool))
-                # single-element pool (int n_ch) draws no RNG -> stream identical to pre-change
-                n_ch_ep = int(self.rng.choice(n_ch_pool)) if len(n_ch_pool) > 1 else n_ch_pool[0]
-                # scalar p_gen/p_swap/cutoff draw no RNG; (lo,hi) -> per-episode domain randomization
-                p_gen_ep = self._sample_rate(self.rng, p_gen)
-                p_swap_ep = self._sample_rate(self.rng, p_swap)
-                cutoff_ep = _sample_cutoff(self.rng, cutoff)
+                # Joint per-episode cell draw; when prune_unwinnable, resample
+                # until swap-asap can deliver (skip physically-impossible cells).
+                # Scalar p_gen/p_swap/cutoff + single-element n_ch draw no RNG, so
+                # the no-prune scalar path keeps the pre-change RNG stream.
+                p_gen_ep, p_swap_ep, cutoff_ep, n_nodes, n_ch_ep = _draw_winnable_cell(
+                    self.rng, self._wc, p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+                    n_pool=pool, n_ch_pool=n_ch_pool)
 
                 args = {
                     'n_repeaters': n_nodes,

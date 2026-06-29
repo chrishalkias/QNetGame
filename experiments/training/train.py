@@ -23,10 +23,10 @@ def parse_args():
     parser.add_argument("--n_ch", type=int, nargs="+", default=[4],
                         help="n_ch pool, e.g. --n_ch 2 3 4 (per-episode draw)")
     parser.add_argument("--topology", type=str, default='chain')
-    parser.add_argument("--p_gen", type=float, default=0.60,
-                        help="per-network MEAN link-generation prob.")
-    parser.add_argument("--p_swap", type=float, default=0.85,
-                        help="per-network MEAN BSM success prob.")
+    parser.add_argument("--p_gen", type=float, nargs="+", default=[0.60],
+                        help="MEAN p_gen; pass two values for a (lo,hi) per-episode range")
+    parser.add_argument("--p_swap", type=float, nargs="+", default=[0.85],
+                        help="MEAN p_swap; pass two values for a (lo,hi) per-episode range")
     parser.add_argument("--p_gen_std", type=float, default=0.0,
                         help="per-repeater spread of p_gen (0 = homogeneous)")
     parser.add_argument("--p_swap_std", type=float, default=0.0,
@@ -47,6 +47,8 @@ def parse_args():
                         help="log per-episode greedy-agent vs swap-asap vs random "
                              "returns on a shared seeded net (+ training_compare.png)")
     parser.add_argument("--save_base_dir", type=str, default="checkpoints")
+    parser.add_argument("--prune_unwinnable", action="store_true",
+                        help="skip cells swap-asap can't deliver (winnability oracle)")
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -71,8 +73,8 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         n_range=list(range(args.n_lo, args.n_hi+1)),
         curriculum=args.curriculum,
-        p_gen=args.p_gen,
-        p_swap=args.p_swap,
+        p_gen=(args.p_gen[0] if len(args.p_gen) == 1 else tuple(args.p_gen[:2])),
+        p_swap=(args.p_swap[0] if len(args.p_swap) == 1 else tuple(args.p_swap[:2])),
         p_gen_std=args.p_gen_std,
         p_swap_std=args.p_swap_std,
         n_ch=args.n_ch,
@@ -83,5 +85,6 @@ if __name__ == "__main__":
         dt_seconds=args.dt_seconds,
         save_path=save_path,
         topology=args.topology,
+        prune_unwinnable=args.prune_unwinnable,
         compare=args.compare,
         plot=True,)

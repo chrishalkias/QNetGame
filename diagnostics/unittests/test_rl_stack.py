@@ -1037,5 +1037,34 @@ def test_sample_cutoff_range_is_int_in_band():
     assert _sample_cutoff(rng, 15) == 15
 
 
+def test_draw_winnable_cell_rejects_unwinnable():
+    from rl_stack import agent as A
+
+    class FakeWC:
+        def __init__(self):
+            self.n = 0
+        def winnable(self, **kw):
+            self.n += 1
+            return self.n >= 3            # first two draws rejected
+
+    wc = FakeWC()
+    rng = np.random.default_rng(0)
+    p_gen, p_swap, cutoff, n, nch = A._draw_winnable_cell(
+        rng, wc, p_gen=(0.4, 0.9), p_swap=(0.4, 0.9), cutoff=(10, 40),
+        n_pool=np.array([6]), n_ch_pool=np.array([4]), max_tries=10)
+    assert wc.n == 3                       # resampled until winnable
+    assert 0.4 <= p_gen <= 0.9 and 10 <= cutoff <= 40
+    assert n == 6 and nch == 4
+
+
+def test_draw_winnable_cell_no_oracle_passes_through():
+    from rl_stack import agent as A
+    rng = np.random.default_rng(0)
+    pg, ps, ct, n, nch = A._draw_winnable_cell(
+        rng, None, p_gen=0.7, p_swap=0.8, cutoff=15,
+        n_pool=np.array([5]), n_ch_pool=np.array([3]))
+    assert (pg, ps, ct, n, nch) == (0.7, 0.8, 15, 5, 3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
