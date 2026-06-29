@@ -195,7 +195,7 @@ class QRNEnv:
             feats[i, 7] = ns.p_swap
             if bool(occ.any()):
                 lc = np.maximum(ns.link_cutoff[occ], 1)
-                feats[i, 8] = float(np.mean(ns.age[occ] / lc))
+                feats[i, 8] = float(np.clip(np.mean(ns.age[occ] / lc), 0.0, 1.0))
             else:
                 feats[i, 8] = 0.0
         src, dst = np.nonzero(self._topo.adjacency)
