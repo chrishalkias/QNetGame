@@ -47,10 +47,24 @@ from matplotlib.colors import to_rgba
 NODE_DIM = 8   # must match env_wrapper get_observation feature count
 
 def _obs_to_data(obs: Dict[str, np.ndarray], device="cpu") -> Data:
+    x = torch.tensor(obs["x"], dtype=torch.float32, device=device)
     return Data(
-        x=torch.tensor(obs["x"], dtype=torch.float32, device=device),
+        x=x,
         edge_index=torch.tensor(obs["edge_index"], dtype=torch.long, device=device),
+        num_nodes=x.shape[0],   # set explicitly so PyG collation never re-infers it
     )
+
+
+def _as_data(transition: Dict, key: str) -> Data:
+    """Return the transition's state as a (CPU) PyG Data, converting once and
+    caching it back on the transition. A replayed transition is sampled many
+    times; this turns N conversions into one without touching the buffer API."""
+    v = transition[key]
+    if isinstance(v, Data):
+        return v
+    d = _obs_to_data(v)
+    transition[key] = d   # cache for the next time this transition is sampled
+    return d
 
 
 def _running_avg(vals, window=30):
@@ -154,9 +168,9 @@ class QRNAgent:
         batch = self.memory.sample(self.batch_size)
 
         states = Batch.from_data_list(
-            [_obs_to_data(t["s"]) for t in batch]).to(self.device)
+            [_as_data(t, "s") for t in batch]).to(self.device)
         next_states = Batch.from_data_list(
-            [_obs_to_data(t["s_"]) for t in batch]).to(self.device)
+            [_as_data(t, "s_") for t in batch]).to(self.device)
 
         # Per-graph scalars → broadcast to every node
         rewards_pg = torch.tensor(
