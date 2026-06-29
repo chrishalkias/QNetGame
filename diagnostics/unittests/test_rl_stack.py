@@ -1066,5 +1066,40 @@ def test_draw_winnable_cell_no_oracle_passes_through():
     assert (pg, ps, ct, n, nch) == (0.7, 0.8, 15, 5, 3)
 
 
+def test_bp_tree_reachability_is_exact_path_product():
+    from rl_stack.strategies import BeliefPropagationPolicy
+
+    adj = np.zeros((4, 4), dtype=float)
+    for i in range(3):
+        adj[i, i + 1] = adj[i + 1, i] = 1.0
+    edge_prob = np.zeros_like(adj)
+    edge_prob[0, 1] = edge_prob[1, 0] = 0.5
+    edge_prob[1, 2] = edge_prob[2, 1] = 0.25
+    edge_prob[2, 3] = edge_prob[3, 2] = 0.8
+
+    bp = BeliefPropagationPolicy(n_iters=1, damping=0.99)
+
+    assert np.allclose(bp.reachability(adj, edge_prob, root=0),
+                       [1.0, 0.5, 0.125, 0.1])
+
+
+def test_bp_policy_is_swap_only_and_mask_respecting():
+    from rl_stack.strategies import belief_propagation_policy
+
+    env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=1.0, p_swap=1.0,
+                 cutoff=30, F0=1.0, channel_loss=0.0,
+                 dt_seconds=0.0, max_steps=30, topology="chain",
+                 rng=np.random.default_rng(11))
+    env.reset()
+
+    mask = env.get_action_mask()
+    actions = belief_propagation_policy(env)
+
+    assert actions.shape == (env.N,)
+    assert not np.any(actions == PURIFY)
+    for i in range(env.N):
+        assert mask[i, actions[i]]
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

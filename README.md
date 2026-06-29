@@ -765,6 +765,7 @@ Compares the trained agent against heuristic baselines:
 | Strategy | Description |
 |---|---|
 | **SwapASAP** | Swap wherever possible |
+| **BeliefProp** | Swap scheduler using exact tree reachability messages on chains and loopy fallback on cyclic topologies |
 | **FidGatedSwap** | Swap only above a fidelity threshold, else hold |
 | **PurifySwap** | Purify if possible, otherwise swap |
 | **Random** | Uniform random valid action per node |
@@ -780,6 +781,7 @@ mask and returning valid `(N,)` int arrays:
 from rl_stack import strategies
 
 actions = strategies.swap_asap(env)
+actions = strategies.belief_propagation_policy(env)
 actions = strategies.purify_then_swap(env)
 actions = strategies.fidelity_gated_swap(env, f_threshold=0.5)
 actions = strategies.random_policy(env, rng)

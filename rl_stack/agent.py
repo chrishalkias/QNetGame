@@ -666,6 +666,7 @@ class QRNAgent:
         strat_fns = {
             "Agent":        None,
             "SwapASAP":     strategies.swap_asap,
+            "BeliefProp":   strategies.belief_propagation_policy,
             "FidGatedSwap": strategies.fidelity_gated_swap,
             "PurifySwap":   strategies.purify_then_swap,
             "Random":       None,
@@ -997,4 +998,3 @@ class QRNAgent:
         plt.savefig(os.path.join(save_dir, "validation_actions.png"),
                     dpi=150, bbox_inches="tight")
         plt.close()
-
