@@ -5,10 +5,9 @@
 #SBATCH --time=2:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
-#SBATCH --partition=gpu-short
-#SBATCH --gres=gpu:1
+#SBATCH --partition=cpu-zen4
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # COMPARE-vs-OPTIMAL: SWAP-ONLY agent on a homogeneous N=4 / n_ch=2 chain, with
@@ -33,12 +32,11 @@ mkdir -p checkpoints
 eval "$(/usr/bin/modulecmd bash purge)" 2>/dev/null || true
 eval "$(/usr/bin/modulecmd bash load ALICE/default)"
 eval "$(/usr/bin/modulecmd bash load Python/3.11.3-GCCcore-12.3.0)"
-eval "$(/usr/bin/modulecmd bash load CUDA/12.4.0)"
 source "$HOME/.venvs/qnetgame/bin/activate"
 export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 
 echo "Job $SLURM_JOB_ID started at $(date)"
-echo "Node: $(hostname), GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
+echo "Node: $(hostname)"
 
 python -u experiments/training/compare_optimal.py \
     --episodes 5000 \
