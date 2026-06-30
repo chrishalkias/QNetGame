@@ -30,15 +30,17 @@ def get_q(model, features, node):
         return model(data).cpu().numpy()[node]
 
 
-def make_chain(probe, occ, fid, t_rem, can_swap=0, can_purify=0):
-    feats = np.zeros((5, 8), dtype=np.float32)
-    feats[0] = [0.25, 0.70, 1, 0, 0.25, 0, 0, t_rem]
-    feats[1] = [0.50, 0.70, 0, 0, 0.50, 1, 0, t_rem]
-    feats[2] = [0.50, 0.70, 0, 0, 0.50, 1, 0, t_rem]
-    feats[3] = [0.50, 0.70, 0, 0, 0.50, 1, 0, t_rem]
-    feats[4] = [0.25, 0.70, 0, 1, 0.25, 0, 0, t_rem]
+def make_chain(probe, occ, fid, urgency, can_swap=0, can_purify=0):
+    # current 9-feat schema: [occ,fid,is_target,avail,can_swap,can_purify,p_gen,p_swap,urgency]
+    pg, ps = 0.7, 0.7
+    feats = np.zeros((5, 9), dtype=np.float32)
+    feats[0] = [0.25, 0.70, 1, 0.25, 0, 0, pg, ps, 0.0]   # source
+    feats[1] = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
+    feats[2] = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
+    feats[3] = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
+    feats[4] = [0.25, 0.70, 1, 0.25, 0, 0, pg, ps, 0.0]   # dest
     avail = 1.0 - occ
-    feats[probe] = [occ, fid, 0, 0, avail, can_swap, can_purify, t_rem]
+    feats[probe] = [occ, fid, 0, avail, can_swap, can_purify, pg, ps, urgency]
     return feats
 
 
@@ -74,9 +76,9 @@ def run_probes(model_path):
 
     # ---- PROBE C: Q-values across time sweep ----
     print(f"\n{'=' * 65}")
-    print("PROBE C: Q-values vs time_remaining (can_swap=1, F=0.7)")
+    print("PROBE C: Q-values vs link-urgency (can_swap=1, F=0.7)")
     print("=" * 65)
-    print(f"{'t_rem':>6} | {'Q(wait)':>10} {'Q(swap)':>10} {'Q(purify)':>10} | "
+    print(f"{'urgency':>7} | {'Q(wait)':>10} {'Q(swap)':>10} {'Q(purify)':>10} | "
           f"{'best':>8} {'swap-wait':>12}")
     for t in np.arange(0.05, 1.01, 0.05):
         q = get_q(model, make_chain(probe, 0.5, 0.7, t, can_swap=1), probe)

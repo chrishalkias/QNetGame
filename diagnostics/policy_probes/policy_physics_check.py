@@ -32,17 +32,19 @@ def get_q(model, features: np.ndarray, node: int) -> np.ndarray:
     return q[node]
 
 
-def make_chain(probe: int, occ: float, fid: float, t_rem: float,
+def make_chain(probe: int, occ: float, fid: float, urgency: float,
                can_swap: float = 0, can_purify: float = 0) -> np.ndarray:
-    """Build a 5-node chain with controlled probe node features."""
+    """Build a 5-node chain with controlled probe node features.
+    Current 9-feat schema: [occ,fid,is_target,avail,can_swap,can_purify,p_gen,p_swap,urgency]."""
     avail = 1.0 - occ
-    feats = np.zeros((5, 8), dtype=np.float32)
-    feats[0] = [0.25, 0.70, 1, 0, 0.25, 0, 0, t_rem]
-    feats[1] = [0.50, 0.70, 0, 0, 0.50, 1, 0, t_rem]
-    feats[2] = [0.50, 0.70, 0, 0, 0.50, 1, 0, t_rem]
-    feats[3] = [0.50, 0.70, 0, 0, 0.50, 1, 0, t_rem]
-    feats[4] = [0.25, 0.70, 0, 1, 0.25, 0, 0, t_rem]
-    feats[probe] = [occ, fid, 0, 0, avail, can_swap, can_purify, t_rem]
+    pg, ps = 0.7, 0.7
+    feats = np.zeros((5, 9), dtype=np.float32)
+    feats[0] = [0.25, 0.70, 1, 0.25, 0, 0, pg, ps, 0.0]   # source
+    feats[1] = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
+    feats[2] = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
+    feats[3] = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
+    feats[4] = [0.25, 0.70, 1, 0.25, 0, 0, pg, ps, 0.0]   # dest
+    feats[probe] = [occ, fid, 0, avail, can_swap, can_purify, pg, ps, urgency]
     return feats
 
 
@@ -86,19 +88,19 @@ def run_checks(model_path: str, hidden: int = 64):
 
     # ================================================================
     print("\n" + "=" * 65)
-    print("CHECK 2: Time pressure should make agent more swap-eager")
+    print("CHECK 2: High link-urgency should make agent more swap-eager")
     print("=" * 65)
-    # With little time left, the agent should prefer swapping even at
-    # moderate fidelity rather than waiting
-    q_early = get_q(model, make_chain(probe, 0.5, 0.6, 0.9, can_swap=1), probe)
-    q_late = get_q(model, make_chain(probe, 0.5, 0.6, 0.1, can_swap=1), probe)
+    # Stale (high-urgency) links are close to expiry, so the agent should
+    # prefer swapping to use them rather than waiting
+    q_early = get_q(model, make_chain(probe, 0.5, 0.6, 0.1, can_swap=1), probe)  # fresh
+    q_late = get_q(model, make_chain(probe, 0.5, 0.6, 0.9, can_swap=1), probe)   # stale
 
     adv_early = q_early[SWAP] - q_early[NOOP]
     adv_late = q_late[SWAP] - q_late[NOOP]
 
-    check("Swap advantage increases under time pressure",
+    check("Swap advantage increases with link-urgency",
           adv_late > adv_early,
-          f"adv(t=0.9)={adv_early:.4f}, adv(t=0.1)={adv_late:.4f}")
+          f"adv(urg=0.1)={adv_early:.4f}, adv(urg=0.9)={adv_late:.4f}")
 
     # ================================================================
     print("\n" + "=" * 65)
@@ -139,13 +141,13 @@ def run_checks(model_path: str, hidden: int = 64):
     # ================================================================
     print("\n" + "=" * 65)
     print("CHECK 6: Swap should beat purify when both available and "
-          "time is short")
+          "links are stale")
     print("=" * 65)
-    # Under time pressure, swapping to extend the chain is more urgent
+    # Under high link-urgency, swapping to extend the chain is more urgent
     # than purifying to improve fidelity
-    q_both = get_q(model, make_chain(probe, 0.5, 0.65, 0.15,
+    q_both = get_q(model, make_chain(probe, 0.5, 0.65, 0.9,
                                       can_swap=1, can_purify=1), probe)
-    check("Q(swap) > Q(purify) under time pressure (t=0.15, F=0.65)",
+    check("Q(swap) > Q(purify) under high urgency (urg=0.9, F=0.65)",
           q_both[SWAP] > q_both[PURIFY],
           f"Q(swap)={q_both[SWAP]:.4f}, Q(purify)={q_both[PURIFY]:.4f}")
 

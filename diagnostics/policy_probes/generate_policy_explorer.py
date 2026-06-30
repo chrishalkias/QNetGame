@@ -19,9 +19,8 @@ from rl_stack.env_wrapper import N_ACTIONS
 
 
 def _export_weights(model_path: str, hidden: int = 64) -> dict:
-    model = QNetwork(node_dim=8, hidden=hidden, n_actions=N_ACTIONS)
-    model.load_state_dict(
-        torch.load(model_path, map_location="cpu", weights_only=True))
+    from rl_stack.model import load_qnet
+    model = load_qnet(model_path)               # node_dim/hidden inferred from checkpoint
     model.eval()
     weights = {}
     for name, param in model.state_dict().items():
@@ -255,10 +254,10 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     <div class="control-group" style="margin-top: 12px;">
       <div class="control-label">
-        <span>Time Remaining</span>
-        <span class="control-value" id="val-time">0.50</span>
+        <span>Link Urgency</span>
+        <span class="control-value" id="val-urgency">0.50</span>
       </div>
-      <input type="range" id="sl-time" min="0.0" max="1.0" step="0.01" value="0.5" oninput="update()">
+      <input type="range" id="sl-urgency" min="0.0" max="1.0" step="0.01" value="0.5" oninput="update()">
     </div>
   </div>
 
@@ -376,13 +375,14 @@ function forward(features) {
 // ---- UI State ----
 let probeNode = 2;
 
-function getContextFeatures(tRem) {
+function getContextFeatures(urgency) {
+  // current 9-feat schema: [occ,fid,is_target,avail,can_swap,can_purify,p_gen,p_swap,urgency]
   return [
-    [0.25, 0.70, 1, 0, 0.25, 0, 0, tRem],  // node 0 (source)
-    [0.50, 0.70, 0, 0, 0.50, 1, 0, tRem],  // node 1 (interior)
-    [0.50, 0.70, 0, 0, 0.50, 1, 0, tRem],  // node 2 (interior)
-    [0.50, 0.70, 0, 0, 0.50, 1, 0, tRem],  // node 3 (interior)
-    [0.25, 0.70, 0, 1, 0.25, 0, 0, tRem],  // node 4 (dest)
+    [0.25, 0.70, 1, 0.25, 0, 0, 0.7, 0.7, 0.0],  // node 0 (source)
+    [0.50, 0.70, 0, 0.50, 1, 0, 0.7, 0.7, 0.0],  // node 1 (interior)
+    [0.50, 0.70, 0, 0.50, 1, 0, 0.7, 0.7, 0.0],  // node 2 (interior)
+    [0.50, 0.70, 0, 0.50, 1, 0, 0.7, 0.7, 0.0],  // node 3 (interior)
+    [0.25, 0.70, 1, 0.25, 0, 0, 0.7, 0.7, 0.0],  // node 4 (dest)
   ];
 }
 
@@ -392,7 +392,7 @@ function readSliders() {
     fid:    parseFloat(document.getElementById('sl-fid').value),
     swap:   document.getElementById('tgl-swap').checked ? 1 : 0,
     purify: document.getElementById('tgl-purify').checked ? 1 : 0,
-    time:   parseFloat(document.getElementById('sl-time').value),
+    urgency: parseFloat(document.getElementById('sl-urgency').value),
   };
 }
 
@@ -401,14 +401,14 @@ function update() {
 
   document.getElementById('val-occ').textContent   = s.occ.toFixed(2);
   document.getElementById('val-fid').textContent   = s.fid.toFixed(2);
-  document.getElementById('val-time').textContent  = s.time.toFixed(2);
+  document.getElementById('val-urgency').textContent  = s.urgency.toFixed(2);
 
   const avail = 1.0 - s.occ;
-  const ctx = getContextFeatures(s.time);
+  const ctx = getContextFeatures(s.urgency);
   const features = [];
   for (let i = 0; i < 5; i++) {
     if (i === probeNode) {
-      features.push([s.occ, s.fid, 0, 0, avail, s.swap, s.purify, s.time]);
+      features.push([s.occ, s.fid, 0, avail, s.swap, s.purify, 0.7, 0.7, s.urgency]);
     } else {
       features.push([...ctx[i]]);
     }
@@ -456,12 +456,12 @@ function selectNode(n) {
 }
 
 const PRESETS = {
-  highFid:     { occ: 0.5,  fid: 0.95, swap: true,  purify: false, time: 0.5 },
-  lowFid:      { occ: 0.5,  fid: 0.35, swap: true,  purify: false, time: 0.5 },
-  earlyGame:   { occ: 0.25, fid: 0.80, swap: false, purify: false, time: 0.9 },
-  lateGame:    { occ: 0.75, fid: 0.60, swap: true,  purify: true,  time: 0.1 },
-  swapReady:   { occ: 0.5,  fid: 0.75, swap: true,  purify: false, time: 0.5 },
-  purifyReady: { occ: 0.5,  fid: 0.60, swap: false, purify: true,  time: 0.5 },
+  highFid:     { occ: 0.5,  fid: 0.95, swap: true,  purify: false, urgency: 0.5 },
+  lowFid:      { occ: 0.5,  fid: 0.35, swap: true,  purify: false, urgency: 0.5 },
+  earlyGame:   { occ: 0.25, fid: 0.80, swap: false, purify: false, urgency: 0.1 },
+  lateGame:    { occ: 0.75, fid: 0.60, swap: true,  purify: true,  urgency: 0.9 },
+  swapReady:   { occ: 0.5,  fid: 0.75, swap: true,  purify: false, urgency: 0.5 },
+  purifyReady: { occ: 0.5,  fid: 0.60, swap: false, purify: true,  urgency: 0.5 },
 };
 
 function applyPreset(name) {
@@ -470,7 +470,7 @@ function applyPreset(name) {
   document.getElementById('sl-fid').value   = p.fid;
   document.getElementById('tgl-swap').checked   = p.swap;
   document.getElementById('tgl-purify').checked = p.purify;
-  document.getElementById('sl-time').value  = p.time;
+  document.getElementById('sl-urgency').value  = p.urgency;
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
   event.target.classList.add('active');
   update();

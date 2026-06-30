@@ -31,7 +31,9 @@ from rl_stack.env_wrapper import NOOP, SWAP, PURIFY, N_ACTIONS
 _ANAMES  = {NOOP: "Wait", SWAP: "Swap", PURIFY: "Purify"}
 _ACOLORS = {NOOP: "#aaaaaa", SWAP: "#cc4444", PURIFY: "#44aa44"}
 
-T_REM = 0.5   # mid-episode time remaining used for all neutral nodes
+NODE_DIM = 9                    # current obs schema (rl_stack/env_wrapper.py):
+P_GEN_FIX = P_SWAP_FIX = 0.7    # [occ,fid,is_target,avail,can_swap,can_purify,
+URGENCY = 0.0                   #  p_gen,p_swap,urgency]; held at representative vals
 
 
 # -- shared helpers -----------------------------------
@@ -54,16 +56,14 @@ def _neutral_chain(n_nodes: int, probe: int,
     All non-probe interior nodes get neutral mid-range features.
     probe_feats: length-8 array for the probe node.
     """
-    feats = np.zeros((n_nodes, 8), dtype=np.float32)
+    feats = np.zeros((n_nodes, NODE_DIM), dtype=np.float32)
     for i in range(n_nodes):
-        if i == 0:
-            feats[i] = [0.25, 0.6, 1, 0, 0.25, 0, 0, T_REM]   # source
-        elif i == n_nodes - 1:
-            feats[i] = [0.25, 0.6, 0, 1, 0.25, 0, 0, T_REM]   # dest
+        if i in (0, n_nodes - 1):                                       # source / dest
+            feats[i] = [0.25, 0.6, 1, 0.25, 0, 0, P_GEN_FIX, P_SWAP_FIX, URGENCY]
         elif i == probe:
             feats[i] = probe_feats
-        else:
-            feats[i] = [0.5, 0.7, 0, 0, 0.5, 1, 0, T_REM]     # interior
+        else:                                                           # interior
+            feats[i] = [0.5, 0.7, 0, 0.5, 1, 0, P_GEN_FIX, P_SWAP_FIX, URGENCY]
     return feats
 
 
@@ -99,7 +99,7 @@ def plot_swap_preference(model, save_dir=".", resolution=40, device="cpu",
     for i, f1 in enumerate(f_range):
         for j, f2 in enumerate(f_range):
             mean_f = (f1 + f2) / 2.0
-            pf = np.array([0.5, mean_f, 0, 0, 0.5, 1, 0, T_REM], dtype=np.float32)
+            pf = np.array([0.5, mean_f, 0, 0.5, 1, 0, P_GEN_FIX, P_SWAP_FIX, URGENCY], dtype=np.float32)
             feats = _neutral_chain(n_nodes, probe, pf)
             # Propagate link fidelity hints to source/dest
             feats[0, 1] = f1
@@ -152,7 +152,7 @@ def plot_purify_preference(model, save_dir=".", resolution=40, device="cpu",
     for i, f1 in enumerate(f_range):
         for j, f2 in enumerate(f_range):
             mean_f = (f1 + f2) / 2.0
-            pf = np.array([0.5, mean_f, 0, 0, 0.5, 0, 1, T_REM], dtype=np.float32)
+            pf = np.array([0.5, mean_f, 0, 0.5, 0, 1, P_GEN_FIX, P_SWAP_FIX, URGENCY], dtype=np.float32)
             feats = _neutral_chain(n_nodes, probe, pf)
 
             obs = _make_obs(n_nodes, feats)
@@ -192,13 +192,13 @@ def plot_best_action_map(model, save_dir=".", resolution=30, device="cpu",
             avail    = occ
             can_swap = 1.0 if avail >= 0.5 else 0.0
             can_pur  = 1.0 if avail >= 0.5 else 0.0
-            pf = np.array([occ, fid, 0, 0, avail, can_swap, can_pur, T_REM],
+            pf = np.array([occ, fid, 0, avail, can_swap, can_pur, P_GEN_FIX, P_SWAP_FIX, URGENCY],
                           dtype=np.float32)
             # neighbouring interior nodes share same occ/fid context
             feats = _neutral_chain(n_nodes, probe, pf)
             for k in range(1, n_nodes - 1):
                 if k != probe:
-                    feats[k] = [occ, fid, 0, 0, avail, can_swap, 0, T_REM]
+                    feats[k] = [occ, fid, 0, avail, can_swap, 0, P_GEN_FIX, P_SWAP_FIX, URGENCY]
 
             obs = _make_obs(n_nodes, feats)
             q   = _get_q(model, obs, device)
@@ -238,12 +238,12 @@ def plot_swap_vs_wait(model, save_dir=".", resolution=40, device="cpu",
         for j, fid in enumerate(fid_range):
             occ      = max(avail, 0.5)
             can_swap = 1.0 if avail >= 0.5 else 0.0
-            pf = np.array([occ, fid, 0, 0, avail, can_swap, 0, T_REM],
+            pf = np.array([occ, fid, 0, avail, can_swap, 0, P_GEN_FIX, P_SWAP_FIX, URGENCY],
                           dtype=np.float32)
             feats = _neutral_chain(n_nodes, probe, pf)
             for k in range(1, n_nodes - 1):
                 if k != probe:
-                    feats[k] = [occ, fid, 0, 0, avail, can_swap, 0, T_REM]
+                    feats[k] = [occ, fid, 0, avail, can_swap, 0, P_GEN_FIX, P_SWAP_FIX, URGENCY]
 
             obs = _make_obs(n_nodes, feats)
             q   = _get_q(model, obs, device)

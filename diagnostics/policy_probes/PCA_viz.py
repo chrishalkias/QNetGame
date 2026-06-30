@@ -40,7 +40,9 @@ ACTION_COLORS = {NOOP: "#aaaaaa", SWAP: "#cc4444", PURIFY: "#44aa44"}
 N_NODES       = 5
 PROBE_NODE    = 2          # middle node of the 5-chain
 RESOLUTION    = 25         # grid points per axis (25³ = 15 625 observations)
-DEFAULT_T_REM = 0.5        # fixed time-remaining for neighbour nodes
+NODE_DIM      = 9          # current obs schema (rl_stack/env_wrapper.py)
+P_GEN_FIX     = 0.7        # p_gen/p_swap held at a representative in-dist value
+P_SWAP_FIX    = 0.7
 
 
                                            
@@ -52,7 +54,7 @@ DEFAULT_T_REM = 0.5        # fixed time-remaining for neighbour nodes
 #                    ██                      
 #                    ▀▀           
            
-def _make_obs(fid: float, occ: float, t_rem: float,
+def _make_obs(fid: float, occ: float, urgency: float,
               n_nodes: int = N_NODES, probe: int = PROBE_NODE) -> dict:
     """Synthetic n_nodes chain; sweep probe node features.
 
@@ -61,17 +63,17 @@ def _make_obs(fid: float, occ: float, t_rem: float,
     """
     avail    = occ
     can_swap = 1.0 if avail >= 0.5 else 0.0
-    feats    = np.zeros((n_nodes, 8), dtype=np.float32)
+    pg, ps   = P_GEN_FIX, P_SWAP_FIX
+    feats    = np.zeros((n_nodes, NODE_DIM), dtype=np.float32)
 
+    # current 9-feat schema: [occ, fid, is_target, avail, can_swap, can_purify, p_gen, p_swap, urgency]
     for i in range(n_nodes):
-        if i == 0:
-            feats[i] = [0.25, 0.70, 1, 0, 0.25, 0, 0, DEFAULT_T_REM]
-        elif i == n_nodes - 1:
-            feats[i] = [0.25, 0.70, 0, 1, 0.25, 0, 0, DEFAULT_T_REM]
+        if i in (0, n_nodes - 1):                                  # source / dest
+            feats[i] = [0.25, 0.70, 1, 0.25, 0, 0, pg, ps, 0.0]
         elif i == probe:
-            feats[i] = [occ, fid, 0, 0, avail, can_swap, 0, t_rem]
+            feats[i] = [occ, fid, 0, avail, can_swap, 0, pg, ps, urgency]
         else:
-            feats[i] = [0.50, 0.70, 0, 0, 0.50, 1, 0, DEFAULT_T_REM]
+            feats[i] = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
 
     src, dst = [], []
     for i in range(n_nodes - 1):
@@ -92,12 +94,12 @@ def collect_embeddings(
     Returns
     -------
     embeddings : (M, 64)  — post-conv3 node embedding for the probe node
-    features   : (M, 3)   — [fidelity, occupancy, time_remaining]
+    features   : (M, 3)   — [fidelity, occupancy, link_urgency]
     best_action: (M,)     — argmax Q-value index
     """
-    fid_vals   = np.linspace(0.25, 1.0, resolution)
-    occ_vals   = np.linspace(0.0,  1.0, resolution)
-    t_rem_vals = np.linspace(0.05, 1.0, resolution)
+    fid_vals     = np.linspace(0.25, 1.0, resolution)
+    occ_vals     = np.linspace(0.0,  1.0, resolution)
+    urgency_vals = np.linspace(0.0,  1.0, resolution)
 
     embeddings   = []
     features_out = []
@@ -114,8 +116,8 @@ def collect_embeddings(
     with torch.no_grad():
         for fid in fid_vals:
             for occ in occ_vals:
-                for t_rem in t_rem_vals:
-                    obs  = _make_obs(float(fid), float(occ), float(t_rem),
+                for urgency in urgency_vals:
+                    obs  = _make_obs(float(fid), float(occ), float(urgency),
                                      n_nodes, probe)
                     data = _obs_to_data(obs, device)
 
@@ -127,7 +129,7 @@ def collect_embeddings(
                     best_a     = int(q[probe].argmax())
 
                     embeddings.append(probe_emb)
-                    features_out.append([fid, occ, t_rem])
+                    features_out.append([fid, occ, urgency])
                     best_actions.append(best_a)
 
     handle.remove()
@@ -175,7 +177,7 @@ def plot_pca(
 
     fid_vals   = feats[:, 0]
     occ_vals   = feats[:, 1]
-    t_rem_vals = feats[:, 2]
+    urgency_vals = feats[:, 2]
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     fig.suptitle(
@@ -217,8 +219,8 @@ def plot_pca(
     # ── Panel 4: time remaining ────────────────────────────────────────────
     ax = axes[1, 1]
     sc = ax.scatter(coords[:, 0], coords[:, 1],
-                    c=t_rem_vals, cmap="coolwarm", **dot)
-    fig.colorbar(sc, ax=ax, label="Time remaining")
+                    c=urgency_vals, cmap="coolwarm", **dot)
+    fig.colorbar(sc, ax=ax, label="Link urgency")
     ax.set_title("Time remaining")
     ax.set_xlabel(f"PC1 ({var1:.1f}%)")
     ax.set_ylabel(f"PC2 ({var2:.1f}%)")

@@ -252,8 +252,14 @@ def main():
     parser.add_argument("--ckpt", default=DEFAULT_CKPT)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--target", type=int, default=TARGET_EMB_PER_N)
+    parser.add_argument("--save_dir", default=None,
+                        help="output dir (default: <ckpt dir>/diagnostics)")
     args = parser.parse_args()
 
+    global FIG_DIR, FIG_PATH, STATS_PATH
+    FIG_DIR = args.save_dir or os.path.join(os.path.dirname(args.ckpt), "diagnostics")
+    FIG_PATH = os.path.join(FIG_DIR, "interpretability_aggregate.png")
+    STATS_PATH = os.path.join(FIG_DIR, "interpretability_stats.txt")
     os.makedirs(FIG_DIR, exist_ok=True)
     torch.manual_seed(SEED)
     np.random.seed(SEED)

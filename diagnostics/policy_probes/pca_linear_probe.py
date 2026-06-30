@@ -40,37 +40,31 @@ DEFAULT_SAVE_DIR = "checkpoints/cluster/cluster_004/diagnostics"
 DEFAULT_RESOLUTION = 25
 DEFAULT_N_NODES = 10
 DEFAULT_PROBE = 5
-DEFAULT_T_REM = 0.5
+NODE_DIM = 9            # current observation schema (rl_stack/env_wrapper.py)
+P_GEN_FIX = 0.7         # p_gen/p_swap held at a representative in-distribution
+P_SWAP_FIX = 0.7        # value (training range [0.4, 0.9]) in the synthetic sweep
 
 
 def _make_obs(
     fidelity: float,
     occupancy: float,
-    time_remaining: float,
+    urgency: float,
     n_nodes: int,
     probe: int,
-    node_dim: int,
 ) -> dict[str, np.ndarray]:
-    """Build the same synthetic chain sweep used by the original PCA plot."""
-    if node_dim not in (8, 10):
-        raise ValueError(f"unsupported checkpoint node dimension: {node_dim}")
-    features = np.zeros((n_nodes, node_dim), dtype=np.float32)
+    """Synthetic chain sweep in the current 9-feature schema:
+    [occ, fid, is_target, avail, can_swap, can_purify, p_gen, p_swap, urgency]."""
+    pg, ps = P_GEN_FIX, P_SWAP_FIX
+    features = np.zeros((n_nodes, NODE_DIM), dtype=np.float32)
     for node in range(n_nodes):
-        if node == 0:
-            values = [0.25, 0.70, 1, 0, 0.25, 0, 0, DEFAULT_T_REM]
-        elif node == n_nodes - 1:
-            values = [0.25, 0.70, 0, 1, 0.25, 0, 0, DEFAULT_T_REM]
+        if node in (0, n_nodes - 1):                          # source / dest
+            values = [0.25, 0.70, 1, 0.25, 0, 0, pg, ps, 0.0]
         elif node == probe:
             can_swap = 1.0 if occupancy >= 0.5 else 0.0
-            values = [
-                occupancy, fidelity, 0, 0, occupancy, can_swap, 0,
-                time_remaining,
-            ]
+            values = [occupancy, fidelity, 0, occupancy, can_swap, 0, pg, ps, urgency]
         else:
-            values = [0.50, 0.70, 0, 0, 0.50, 1, 0, DEFAULT_T_REM]
-        features[node, :8] = values
-        if node_dim == 10:
-            features[node, 8:] = [0.5, 0.7]
+            values = [0.50, 0.70, 0, 0.50, 1, 0, pg, ps, 0.0]
+        features[node] = values
 
     src, dst = [], []
     for node in range(n_nodes - 1):
@@ -89,7 +83,7 @@ def collect_embeddings(
     n_nodes: int,
     probe: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sweep fidelity, occupancy, and time; capture probe-node conv3 output."""
+    """Sweep fidelity, occupancy, and link-urgency; capture probe-node conv3 output."""
     if resolution < 2:
         raise ValueError("resolution must be at least 2")
     if not 0 < probe < n_nodes - 1:
@@ -97,8 +91,7 @@ def collect_embeddings(
 
     fidelity_values = np.linspace(0.25, 1.0, resolution)
     occupancy_values = np.linspace(0.0, 1.0, resolution)
-    time_values = np.linspace(0.05, 1.0, resolution)
-    node_dim = int(model.conv1.lin_l.in_channels)
+    urgency_values = np.linspace(0.0, 1.0, resolution)
 
     embeddings = []
     features_out = []
@@ -113,14 +106,14 @@ def collect_embeddings(
         with torch.no_grad():
             for fidelity in fidelity_values:
                 for occupancy in occupancy_values:
-                    for time_remaining in time_values:
+                    for urgency in urgency_values:
                         obs = _make_obs(
                             float(fidelity), float(occupancy),
-                            float(time_remaining), n_nodes, probe, node_dim)
+                            float(urgency), n_nodes, probe)
                         hook_output.clear()
                         q_values = model(_obs_to_data(obs, device))
                         embeddings.append(hook_output[0][probe].numpy())
-                        features_out.append([fidelity, occupancy, time_remaining])
+                        features_out.append([fidelity, occupancy, urgency])
                         actions.append(int(q_values[probe].argmax()))
     finally:
         handle.remove()
