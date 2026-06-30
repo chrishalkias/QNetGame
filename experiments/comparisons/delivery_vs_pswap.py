@@ -1,7 +1,7 @@
-"""#4  Agent delivery time T vs p_swap, one line per p_gen (5 lines).
+"""#4  Delivery time T vs p_swap, one line per p_gen (5 lines), two panels.
 
-Fixed N, cutoff, n_ch. Maps the agent's delivery-time surface over the
-(p_swap, p_gen) operating regime (agent only).
+Left panel = agent, right panel = purify-then-swap (shared y-axis), each over the
+(p_swap, p_gen) operating regime at fixed N, cutoff, n_ch.
 
   eval:  PYTHONPATH=. python experiments/comparisons/delivery_vs_pswap.py --ckpt ...
   plot:  PYTHONPATH=. python experiments/comparisons/delivery_vs_pswap.py --plot
@@ -10,14 +10,16 @@ from __future__ import annotations
 import argparse
 from experiments.comparisons import _common as C
 
+PANELS = [("agent", "Agent"), ("purify_swap", "Purify-then-swap")]
+
 
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--augment_swapasap", action="store_true",
-                    help="backfill the swap-ASAP baseline into an existing --out json "
-                         "(MC-evals only swap-ASAP, keeps the agent column as-is)")
+    ap.add_argument("--augment_baselines", action="store_true",
+                    help="backfill missing baseline columns (swap_asap, purify_swap) "
+                         "into an existing --out json, keeping the agent column as-is")
     ap.add_argument("--ckpt", default="checkpoints/omni_nopen_3k/policy.pth")
     ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--N", type=int, default=10)
@@ -40,14 +42,35 @@ def run_eval(a):
     rows = []
     for pg in a.p_gens:
         for ps in a.p_swaps:
-            Ta, sea = C.eval_T(pols["agent"], a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
-            Ts, ses = C.eval_T(pols["swap_asap"], a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
-            rows.append(dict(p_gen=pg, p_swap=ps, N=a.N, n_ch=a.n_ch, cutoff=a.cutoff,
-                             T_agent=Ta, se_agent=sea, T_swap_asap=Ts, se_swap_asap=ses))
-            print(f"  p_gen={pg:.1f} p_swap={ps:.1f}  agent={Ta:7.3f}±{sea:.3f}  "
-                  f"swapASAP={Ts:7.3f}±{ses:.3f}", flush=True)
+            row = dict(p_gen=pg, p_swap=ps, N=a.N, n_ch=a.n_ch, cutoff=a.cutoff)
+            for name in ("agent", "swap_asap", "purify_swap"):
+                T, se = C.eval_T(pols[name], a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
+                row[f"T_{name}"], row[f"se_{name}"] = T, se
+            rows.append(row)
+            print(f"  p_gen={pg:.1f} p_swap={ps:.1f}  agent={row['T_agent']:7.2f} "
+                  f"purifyswap={row['T_purify_swap']:7.2f}", flush=True)
             C.save_json(rows, a.out)
     print(f"saved -> {a.out}")
+
+
+def run_augment(a):
+    """Backfill baseline columns (no checkpoint, no agent re-eval). Resumable:
+    skips cells that already have the column."""
+    from rl_stack import strategies
+    fns = {"swap_asap":   lambda env, obs: strategies.swap_asap(env),
+           "purify_swap": lambda env, obs: strategies.purify_then_swap(env)}
+    rows = C.load_json(a.out)
+    for name, fn in fns.items():
+        todo = [r for r in rows if r.get(f"T_{name}") is None]
+        print(f"{name}: {len(todo)}/{len(rows)} cells (H={a.horizon}, mc_eps={a.mc_eps})")
+        for r in todo:
+            T, se = C.eval_T(fn, r["N"], r["n_ch"], r["p_gen"], r["p_swap"],
+                             r["cutoff"], a.horizon, a.mc_eps)
+            r[f"T_{name}"], r[f"se_{name}"] = T, se
+            print(f"  {name} p_gen={r['p_gen']:.1f} p_swap={r['p_swap']:.1f}  T={T:7.2f}",
+                  flush=True)
+            C.save_json(rows, a.out)
+    print(f"augmented -> {a.out}")
 
 
 def run_plot(a):
@@ -57,60 +80,34 @@ def run_plot(a):
     from matplotlib.lines import Line2D
     rows = C.load_json(a.out)
     pgs = sorted({r["p_gen"] for r in rows})
-    has_swap = "T_swap_asap" in rows[0]
     cmap = plt.get_cmap("viridis")
+    cols = [cmap(i / max(len(pgs) - 1, 1)) for i in range(len(pgs))]
     plt.rcParams.update(C.PLOT_RC)
-    fig, ax = plt.subplots(figsize=(6.4, 4.2), constrained_layout=True)
-    color_handles = []
-    for i, pg in enumerate(pgs):
-        sub = sorted([r for r in rows if r["p_gen"] == pg], key=lambda r: r["p_swap"])
-        xs = [r["p_swap"] for r in sub]
-        col = cmap(i / max(len(pgs) - 1, 1))
-        T = np.array([r["T_agent"] for r in sub]); se = np.array([r["se_agent"] for r in sub])
-        ax.plot(xs, T, marker="o", color=col, lw=1.7, ms=4)
-        ax.fill_between(xs, T - se, T + se, color=col, alpha=0.15, lw=0)
-        if has_swap:                                   # swap-ASAP overlay, dashed, same colour
-            Ts = np.array([r["T_swap_asap"] for r in sub])
-            ax.plot(xs, Ts, color=col, lw=1.3, ls="--", marker="x", ms=4)
-        color_handles.append(Line2D([], [], color=col, lw=2, label=rf"$p_\mathrm{{gen}}={pg}$"))
-    ax.set_xlabel(r"$p_\mathrm{swap}$")
-    ax.set_ylabel("delivery time $T$ (avg steps to termination)")
-    ax.set_title(rf"Agent (solid) vs swap-ASAP (dashed) "
+    fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.2), sharey=True, constrained_layout=True)
+    for ax, (key, title) in zip(axes, PANELS):
+        for i, pg in enumerate(pgs):
+            sub = sorted([r for r in rows if r["p_gen"] == pg], key=lambda r: r["p_swap"])
+            xs = [r["p_swap"] for r in sub]
+            T = np.array([r[f"T_{key}"] for r in sub])
+            se = np.array([r[f"se_{key}"] for r in sub])
+            ax.plot(xs, T, marker="o", color=cols[i], lw=1.7, ms=4)
+            ax.fill_between(xs, T - se, T + se, color=cols[i], alpha=0.15, lw=0)
+        ax.set_title(title)
+        ax.set_xlabel(r"$p_\mathrm{swap}$")
+        ax.grid(alpha=0.3)
+    axes[0].set_ylabel("delivery time $T$ (avg steps to termination)")
+    handles = [Line2D([], [], color=cols[i], lw=2, label=rf"$p_\mathrm{{gen}}={pg}$")
+               for i, pg in enumerate(pgs)]
+    axes[1].legend(handles=handles, frameon=False, title=r"$p_\mathrm{gen}$", fontsize=8)
+    fig.suptitle(rf"Delivery time vs $p_\mathrm{{swap}}$ "
                  rf"($N={rows[0]['N']}$, $n_\mathrm{{ch}}={rows[0]['n_ch']}$, "
-                 rf"cutoff $={rows[0]['cutoff']}$)")
-    ax.grid(alpha=0.3)
-    leg1 = ax.legend(handles=color_handles, frameon=False, loc="upper right",
-                     title=r"$p_\mathrm{gen}$", fontsize=8)
-    ax.add_artist(leg1)
-    if has_swap:
-        style = [Line2D([], [], color="k", lw=1.7, label="Agent"),
-                 Line2D([], [], color="k", lw=1.3, ls="--", marker="x", ms=4, label="Swap-ASAP")]
-        ax.legend(handles=style, frameon=False, loc="center right", fontsize=8)
+                 rf"cutoff $={rows[0]['cutoff']}$)", fontsize=11)
     C.savefig(fig, a.fig)
-
-
-def run_augment(a):
-    """Add swap-ASAP T to an existing agent-only json without re-evaluating the
-    (expensive) agent column. swap-ASAP needs no checkpoint."""
-    from rl_stack import strategies
-    swap_fn = lambda env, obs: strategies.swap_asap(env)
-    rows = C.load_json(a.out)
-    todo = [r for r in rows if r.get("T_swap_asap") is None]
-    print(f"augmenting {len(todo)}/{len(rows)} cells with swap-ASAP "
-          f"({len(rows) - len(todo)} already done; H={a.horizon}, mc_eps={a.mc_eps})")
-    for r in todo:                                   # resumable: skip done cells
-        Ts, ses = C.eval_T(swap_fn, r["N"], r["n_ch"], r["p_gen"], r["p_swap"],
-                           r["cutoff"], a.horizon, a.mc_eps)
-        r["T_swap_asap"], r["se_swap_asap"] = Ts, ses
-        print(f"  p_gen={r['p_gen']:.1f} p_swap={r['p_swap']:.1f}  "
-              f"agent={r['T_agent']:7.2f}  swapASAP={Ts:7.2f}", flush=True)
-        C.save_json(rows, a.out)
-    print(f"augmented -> {a.out}")
 
 
 if __name__ == "__main__":
     a = parse_args()
-    if a.augment_swapasap:
+    if a.augment_baselines:
         run_augment(a)
     elif a.plot:
         run_plot(a)
