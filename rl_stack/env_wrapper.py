@@ -60,7 +60,13 @@ class QRNEnv:
 
     STEP_COST       = -0.01
     SUCCESS_REWARD  =  1.0
-    FAILED_ACTION   = -0.05
+    # ponytail: 0 = no penalty for failed ops. The mask already blocks invalid
+    # actions, so this term only ever fired on STOCHASTIC swap/purify failures
+    # (rng > p_swap) — punishing the agent for the env's coin-flip and training
+    # it swap-shy. Failure is already costed naturally (lost links → -PBRS +
+    # step cost). Restore a small negative only to penalize genuinely-invalid
+    # attempts if masking is ever disabled.
+    FAILED_ACTION   =  0.0
 
     def __init__(self,
                  n_repeaters = 5,
