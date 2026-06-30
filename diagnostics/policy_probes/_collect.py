@@ -17,7 +17,7 @@ from rl_stack.env_wrapper import QRNEnv
 FEATURE_NAMES = ["occ", "fidelity", "is_target", "avail", "can_swap",
                  "can_purify", "p_gen", "p_swap", "urgency"]
 ACTION_NAMES = ["NOOP", "SWAP", "PURIFY"]
-ACTION_COLORS = ["#bdbdbd", "#1f77b4", "#2ca02c"]   # noop, swap, purify
+ACTION_COLORS = ["#d9d9d9", "#1f63d6", "#1ba31b"]   # noop (grey), swap (blue), purify (green)
 
 
 def greedy(model, x, edge_index, mask, device):
