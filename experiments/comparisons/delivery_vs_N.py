@@ -23,6 +23,9 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true",
                     help="plot from --out json instead of evaluating")
+    ap.add_argument("--metric", choices=["T", "delta"], default="T",
+                    help="T = delivery-time lines; delta = %% reduction of agent "
+                         "vs swap-ASAP (headline generalization plot, #2)")
     ap.add_argument("--ckpt", default="checkpoints/omni_nopen_3k/policy.pth")
     ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--p_gen", type=float, default=0.4)
@@ -79,6 +82,31 @@ def run_plot(args):
 
     rows = json.load(open(args.out))
     Ns = [r["N"] for r in rows]
+
+    if args.metric == "delta":
+        # #2 headline: % delivery-time reduction of agent vs swap-ASAP.
+        Ta = np.array([r["T_agent"] for r in rows])
+        Ts = np.array([r["T_swap_asap"] for r in rows])
+        delta = 100.0 * (Ts - Ta) / Ts
+        plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
+        fig, ax = plt.subplots(figsize=(6.0, 4.0), constrained_layout=True)
+        ax.plot(Ns, delta, marker="o", color="tab:blue", lw=1.8, ms=5)
+        ax.axhline(0, color="k", lw=0.8, ls="-")
+        ax.axvline(args.n_train_max, color="grey", ls=":", lw=1.3)
+        ax.text(args.n_train_max + 0.08, ax.get_ylim()[1], " out-of-distribution →",
+                color="grey", fontsize=8, va="top")
+        pg, ps = rows[0]["p_gen"], rows[0]["p_swap"]
+        ax.set_xlabel("chain size $N$")
+        ax.set_ylabel("delivery-time reduction vs swap-ASAP (%)")
+        ax.set_title(rf"Agent generalization "
+                     rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
+                     rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$)")
+        ax.set_xticks(Ns); ax.grid(alpha=0.3)
+        os.makedirs(os.path.dirname(args.fig) or ".", exist_ok=True)
+        for ext in ("png", "pdf"):
+            fig.savefig(f"{args.fig}_delta.{ext}", bbox_inches="tight")
+        print(f"saved -> {args.fig}_delta.png / .pdf")
+        return
     series = [("agent", "Agent", "tab:blue", "o"),
               ("swap_asap", "Swap-ASAP", "tab:orange", "s"),
               ("purify_swap", "Purify-then-swap", "tab:green", "^")]
