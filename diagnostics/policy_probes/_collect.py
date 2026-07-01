@@ -31,14 +31,23 @@ def greedy(model, x, edge_index, mask, device):
 
 def collect(ckpt, *, episodes=200, sizes=range(4, 13), n_chs=(2, 3, 4),
             p_lo=0.4, p_hi=0.9, cut_lo=10, cut_hi=40, max_steps=200,
-            device="cpu", seed=0):
+            device="cpu", seed=0, layer="head"):
     """Return dict with flat per-decision arrays (X, A, H, margin), the per-step
-    states + idx map (for permutation), and the loaded model."""
+    states + idx map (for permutation), and the loaded model.
+
+    `layer` picks the captured representation:
+      "conv3" = graph-encoder output (2 layers before Q);
+      "head"  = ReLU inside the Q head, i.e. the penultimate (decision) layer."""
     model = load_qnet(ckpt, device)
     model.eval()
     cap = {}
-    handle = model.conv3.register_forward_hook(
-        lambda m, i, o: cap.__setitem__("h", torch.relu(o).detach().cpu().numpy()))
+    if layer == "conv3":
+        mod, post = model.conv3, lambda o: torch.relu(o).detach().cpu().numpy()
+    elif layer == "head":
+        mod, post = model.head[1], lambda o: o.detach().cpu().numpy()  # ReLU output
+    else:
+        raise ValueError(f"unknown layer {layer}")
+    handle = mod.register_forward_hook(lambda m, i, o: cap.__setitem__("h", post(o)))
     rng = np.random.default_rng(seed)
     states, X, A, H, margin, idx = [], [], [], [], [], []
     try:

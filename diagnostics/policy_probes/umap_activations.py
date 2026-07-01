@@ -22,9 +22,14 @@ def parse_args():
     ap.add_argument("--max_points", type=int, default=8000)
     ap.add_argument("--n_neighbors", type=int, default=30)
     ap.add_argument("--min_dist", type=float, default=0.1)
+    ap.add_argument("--layer", choices=["head", "conv3"], default="head",
+                    help="head = penultimate decision layer; conv3 = graph encoder")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save_dir", default=None)
     return ap.parse_args()
+
+
+_LNAME = {"conv3": r"conv$_3$ (graph encoder)", "head": "head (penultimate, pre-Q)"}
 
 
 def main():
@@ -38,7 +43,7 @@ def main():
     else:
         emb, A, margin, X = _embed.collect_embed(a, "umap", npz)
     _embed.render(emb, A, margin, X, out, "umap_activations",
-                  r"UMAP of conv$_3$ embeddings")
+                  rf"UMAP of {_LNAME[a.layer]} embeddings")
 
 
 if __name__ == "__main__":

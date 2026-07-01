@@ -23,9 +23,14 @@ def parse_args():
     ap.add_argument("--episodes", type=int, default=300)
     ap.add_argument("--max_points", type=int, default=8000)
     ap.add_argument("--perplexity", type=float, default=40.0)
+    ap.add_argument("--layer", choices=["head", "conv3"], default="head",
+                    help="head = penultimate decision layer; conv3 = graph encoder")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save_dir", default=None)
     return ap.parse_args()
+
+
+_LNAME = {"conv3": r"conv$_3$ (graph encoder)", "head": "head (penultimate, pre-Q)"}
 
 
 def main():
@@ -39,7 +44,7 @@ def main():
     else:
         emb, A, margin, X = _embed.collect_embed(a, "tsne", npz)
     _embed.render(emb, A, margin, X, out, "tsne_activations",
-                  r"t-SNE of conv$_3$ embeddings")
+                  rf"t-SNE of {_LNAME[a.layer]} embeddings")
 
 
 if __name__ == "__main__":

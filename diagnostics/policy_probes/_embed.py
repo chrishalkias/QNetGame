@@ -27,14 +27,21 @@ def embed(method, H, seed, perplexity=40.0, n_neighbors=30, min_dist=0.1):
 
 
 def collect_embed(a, method, npz):
-    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed)
+    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed,
+                  layer=getattr(a, "layer", "head"))
     H, A, margin, X = d["H"], d["A"], d["margin"], d["X"]
     rng = np.random.default_rng(a.seed)
     if len(H) > a.max_points:
         keep = rng.choice(len(H), a.max_points, replace=False)
         H, A, margin, X = H[keep], A[keep], margin[keep], X[keep]
-    print(f"{method} on {len(H)} points ...", flush=True)
-    emb = embed(method, H, a.seed, perplexity=getattr(a, "perplexity", 40.0),
+    # standardize + PCA-reduce before the 2-D embedding (denoise; stop a few
+    # high-variance dims from dominating the Euclidean distances)
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.decomposition import PCA
+    Hp = StandardScaler().fit_transform(H)
+    Hp = PCA(n_components=min(50, Hp.shape[1]), random_state=a.seed).fit_transform(Hp)
+    print(f"{method} on {len(Hp)} points ({Hp.shape[1]}-D after PCA) ...", flush=True)
+    emb = embed(method, Hp, a.seed, perplexity=getattr(a, "perplexity", 40.0),
                 n_neighbors=getattr(a, "n_neighbors", 30),
                 min_dist=getattr(a, "min_dist", 0.1))
     np.savez(npz, emb=emb, A=A, margin=margin, X=X)
