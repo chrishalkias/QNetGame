@@ -16,7 +16,7 @@ from diagnostics.policy_probes import _collect as C
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_3k/policy.pth")
+    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_15k/policy.pth")
     ap.add_argument("--episodes", type=int, default=300)
     ap.add_argument("--bins", type=int, default=12)
     ap.add_argument("--min_count", type=int, default=5,

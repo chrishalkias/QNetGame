@@ -20,7 +20,7 @@ def parse_args():
     ap.add_argument("--augment_baselines", action="store_true",
                     help="backfill missing baseline columns (swap_asap, purify_swap) "
                          "into an existing --out json, keeping the agent column as-is")
-    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_3k/policy.pth")
+    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_15k/policy.pth")
     ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--N", type=int, default=10)
     ap.add_argument("--p_gens", type=float, nargs="+", default=[0.4, 0.5, 0.6, 0.7, 0.8])

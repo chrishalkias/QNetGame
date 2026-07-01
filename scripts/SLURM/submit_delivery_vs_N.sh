@@ -12,12 +12,12 @@
 # Delivery time T vs chain size N at fixed (p_gen=0.4, p_swap=0.8), comparing a
 # trained agent against swap-ASAP and purify-then-swap. N: 10..15, dotted line at
 # N=12 (training ceiling -> N>12 is zero-shot OOD).
-#   sbatch scripts/SLURM/submit_delivery_vs_N.sh [run_id]   (default omni_nopen_3k)
+#   sbatch scripts/SLURM/submit_delivery_vs_N.sh [run_id]   (default omni_nopen_15k)
 
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p slurm_logs results/comparisons
-RUN="${1:-omni_nopen_3k}"
+RUN="${1:-omni_nopen_15k}"
 
 eval "$(/usr/bin/modulecmd bash purge)" 2>/dev/null || true
 eval "$(/usr/bin/modulecmd bash load ALICE/default)"

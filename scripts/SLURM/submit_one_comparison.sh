@@ -26,6 +26,6 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)  module=$1"
 
 python -u experiments/comparisons/"$1" \
-    --ckpt checkpoints/omni_nopen_3k/policy.pth --mc_eps 1000 "${@:2}"
+    --ckpt checkpoints/omni_nopen_15k/policy.pth --mc_eps 1000 "${@:2}"
 
 echo "done $(date)"
