@@ -3,4 +3,6 @@ numpy>=1.26            # NetSquid pin removed
 torch==2.6.0
 torch_geometric==2.7.0
 networkx==3.6.1
+scikit-learn>=1.5        # PCA / t-SNE in diagnostics/policy_probes
+umap-learn>=0.5          # UMAP embedding in diagnostics/policy_probes
 pytest==9.0.2
