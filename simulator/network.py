@@ -182,6 +182,11 @@ class RepeaterNetwork:
         # Swapping would try to create a self-link at the remote node.
         ra_check = int(rep.partner_repeater[qa])
         rb_check = int(rep.partner_repeater[qb])
+        # Guard: an occupied but partner-less qubit (NO_PARTNER) is an orphan
+        # (e.g. left by a resolution race); swapping it would queue a NO_PARTNER
+        # endpoint that silently indexes repeaters[-1] at resolution. Never swap it.
+        if ra_check == NO_PARTNER or rb_check == NO_PARTNER:
+            result["reason"] = "orphan_qubit"; return result
         if ra_check == rb_check:
             result["reason"] = "same_partner"; return result
 
@@ -418,10 +423,14 @@ class RepeaterNetwork:
                     rep1.free_qubit(q1_sac)
                 if s2_valid:
                     rep2.free_qubit(q2_sac)
-                # Unlock any stale locks left on the sacrifice slots
-                if rep1.locked[q1_sac]:
+                # Release only OUR lingering lock. A slot whose generation no
+                # longer matches this event was reallocated and re-locked by a
+                # newer in-flight op — unlocking it there would orphan that op's
+                # qubit (occupied + unlocked + NO_PARTNER), which then gets swapped
+                # and queues a NO_PARTNER(-1) endpoint. Leave such locks untouched.
+                if int(rep1.generation_id[q1_sac]) == ev["gen_sac1"] and rep1.locked[q1_sac]:
                     rep1.unlock_qubit(q1_sac)
-                if rep2.locked[q2_sac]:
+                if int(rep2.generation_id[q2_sac]) == ev["gen_sac2"] and rep2.locked[q2_sac]:
                     rep2.unlock_qubit(q2_sac)
 
             # Guard: kept qubits may have been freed by expiry or reallocated
@@ -460,8 +469,12 @@ class RepeaterNetwork:
                     rid = rep.rid
                     self._break_link(rid, q)
                 else:
-                    # Slot was reallocated; just clear any zombie lock.
-                    if rep.locked[q]:
+                    # Slot no longer holds our link. Clear a lingering lock ONLY
+                    # if the slot is still ours (e.g. freed by expiry, generation
+                    # unchanged). If it was reallocated (generation differs) the
+                    # lock now belongs to a newer in-flight op — leave it, else we
+                    # orphan that op's qubit.
+                    if int(rep.generation_id[q]) == ev[gen_key] and rep.locked[q]:
                         rep.unlock_qubit(q)
 
                                                    

@@ -707,6 +707,66 @@ class TestGhostLinkResolution(unittest.TestCase):
         # No zombie links on R0.
         self.assertEqual(net.repeaters[0].num_occupied(), 0)
 
+    def test_purify_resolve_preserves_reallocated_slot_lock(self):
+        """Regression (CC-delay orphan crash): a deferred FAILED purify whose
+        sacrifice slot was reallocated and re-locked by a concurrent in-flight op
+        must NOT release that new lock.  The old cleanup unlocked any locked slot
+        on generation-ID mismatch, orphaning a qubit a pending swap still held;
+        the swap then queued a NO_PARTNER(-1) endpoint (which indexes
+        repeaters[-1]) -> ValueError at resolution."""
+        net = _perfect_chain(3, cutoff=100)
+        net.entangle(0, 1)
+        net.entangle(0, 1)                        # two parallel 0-1 pairs
+        r0, r1 = net.repeaters[0], net.repeaters[1]
+        q1s = r0.occupied_indices()
+        q1_sac, q1_keep = int(q1s[0]), int(q1s[1])
+        q2_sac = int(r0.partner_qubit[q1_sac])
+        q2_keep = int(r0.partner_qubit[q1_keep])
+        for r, q in ((r0, q1_sac), (r0, q1_keep), (r1, q2_sac), (r1, q2_keep)):
+            r.lock_qubit(q)
+        ev = {
+            "type": "purify", "timer": 0, "success": False,
+            "r1": 0, "r2": 1,
+            "q1_sac": q1_sac, "q2_sac": q2_sac,
+            "q1_keep": q1_keep, "q2_keep": q2_keep, "p_new": 0.0,
+            "gen_keep1": int(r0.generation_id[q1_keep]),
+            "gen_keep2": int(r1.generation_id[q2_keep]),
+            "gen_sac1": int(r0.generation_id[q1_sac]),
+            "gen_sac2": int(r1.generation_id[q2_sac]),
+        }
+        # During the CC delay the sacrifice slot on R0 was freed, REALLOCATED
+        # (generation bumped) and re-locked by a concurrent swap that cleared its
+        # partner pointer; the other three slots were already cleaned up.
+        r1.free_qubit(q2_sac); r0.free_qubit(q1_keep); r1.free_qubit(q2_keep)
+        r0.generation_id[q1_sac] += 1             # reallocated -> event gen is stale
+        r0.partner_repeater[q1_sac] = NO_PARTNER
+        r0.partner_qubit[q1_sac] = NO_PARTNER
+        self.assertTrue(r0.locked[q1_sac])        # concurrent op holds the lock
+
+        net.pending_events.append(ev)
+        net.age_links(discard_expired=False)
+
+        self.assertTrue(
+            r0.locked[q1_sac],
+            "purify resolution released a lock on a reallocated slot it no longer "
+            "owns -> orphans the qubit held by a concurrent in-flight op.",
+        )
+
+    def test_swap_rejects_orphan_qubit(self):
+        """Defense-in-depth: an occupied but partner-less (NO_PARTNER) qubit is an
+        orphan and must never be swapped -- swapping it would queue a NO_PARTNER
+        endpoint that silently indexes repeaters[-1].  swap() must refuse it."""
+        net = _perfect_chain(3, cutoff=100)
+        net.entangle(0, 1)
+        net.entangle(1, 2)                        # node 1: links to 0 and 2
+        r1 = net.repeaters[1]
+        orphan = int(r1.occupied_indices()[0])
+        r1.partner_repeater[orphan] = NO_PARTNER  # occupied, unlocked, no partner
+        r1.partner_qubit[orphan] = NO_PARTNER
+        res = net.swap(1)
+        self.assertFalse(res["success"],
+                         "swap must refuse to swap an orphan (NO_PARTNER) qubit")
+
 
 class TestAsymmetricCutoff(unittest.TestCase):
     """

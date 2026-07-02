@@ -175,6 +175,9 @@ class Repeater:
             p           : The Werner parameter at t=0
             link_age    : The age of the link on register (can be >0 due to CC)
         """
+        if partner_rid == NO_PARTNER:
+            raise ValueError('set_link called with NO_PARTNER partner_rid '
+                             '(orphan qubit — would index repeaters[-1])')
         if partner_rid == self.rid:
             raise ValueError('Attempting to generate inter-node entanglement')
         
