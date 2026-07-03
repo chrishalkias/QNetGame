@@ -20,11 +20,41 @@ def build_policies(ckpt, hidden=64):
     }
 
 
-def eval_T(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps):
-    """(mean T, standard error) for one policy at one config."""
+def eval_T(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps,
+           p_gen_std=0.0, p_swap_std=0.0):
+    """(mean T, standard error) for one policy at one config. p_gen_std/
+    p_swap_std > 0 -> per-repeater inhomogeneous chain."""
     from experiments.heatmap import optimal_baseline as ob
-    T, sd = ob.mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps)
+    T, sd = ob.mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps,
+                       p_gen_std=p_gen_std, p_swap_std=p_swap_std)
     return float(T), float(sd / math.sqrt(mc_eps))
+
+
+def eval_T_and_F(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=42):
+    """(T mean, T se, F mean, F se). T = delivery time censored at H (matches
+    optimal_baseline.mc_eval). F = mean terminal fidelity over *delivered*
+    episodes only (censored/truncated episodes carry no delivery fidelity)."""
+    from rl_stack.env_wrapper import QRNEnv
+    rng = np.random.default_rng(seed)
+    times, fids = [], []
+    for _ in range(mc_eps):
+        env = QRNEnv(N, n_ch=n_ch, p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+                     F0=1.0, channel_loss=0.0, dt_seconds=0.0, max_steps=H,
+                     topology="chain", rng=np.random.default_rng(int(rng.integers(2**32))))
+        obs = env.reset()
+        step, done, info = 0, False, {}
+        for step in range(H):
+            obs, _, done, info = env.step(policy_fn(env, obs))
+            if done:
+                break
+        delivered = done and info.get("fidelity", 0.0) > 0
+        times.append(step + 1 if delivered else H)
+        if delivered:
+            fids.append(float(info["fidelity"]))
+    T = np.asarray(times, float)
+    _se = lambda x: float(np.std(x) / math.sqrt(len(x))) if len(x) else 0.0
+    F = float(np.mean(fids)) if fids else float("nan")
+    return float(np.mean(T)), _se(T), F, _se(fids)
 
 
 def action_fractions(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=42):
@@ -67,6 +97,5 @@ ACTION_LABELS = ["NOOP", "SWAP", "PURIFY"]
 
 def savefig(fig, stem):
     os.makedirs(os.path.dirname(stem) or ".", exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(f"{stem}.{ext}", bbox_inches="tight")
-    print(f"saved -> {stem}.png / .pdf")
+    fig.savefig(f"{stem}.pdf", bbox_inches="tight")
+    print(f"saved -> {stem}.pdf")

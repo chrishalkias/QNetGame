@@ -35,6 +35,10 @@ def parse_args():
     ap.add_argument("--n_train_max", type=int, default=12,
                     help="training ceiling; dotted line, N>this is out-of-distribution")
     ap.add_argument("--n_ch", type=int, default=4)
+    ap.add_argument("--p_gen_std", type=float, default=0.0,
+                    help="per-repeater inhomogeneity spread on p_gen (0 = homogeneous)")
+    ap.add_argument("--p_swap_std", type=float, default=0.0,
+                    help="per-repeater inhomogeneity spread on p_swap (0 = homogeneous)")
     ap.add_argument("--cutoff", type=int, default=20)
     ap.add_argument("--horizon", type=int, default=300)
     ap.add_argument("--mc_eps", type=int, default=2000)
@@ -60,10 +64,12 @@ def run_eval(args):
     rows = []
     for N in Ns:
         row = dict(N=N, p_gen=args.p_gen, p_swap=args.p_swap, n_ch=args.n_ch,
-                   cutoff=args.cutoff, horizon=args.horizon, mc_eps=args.mc_eps)
+                   cutoff=args.cutoff, horizon=args.horizon, mc_eps=args.mc_eps,
+                   p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std)
         for name, fn in policies.items():
             T, sd = ob.mc_eval(fn, N, args.n_ch, args.p_gen, args.p_swap,
-                               args.cutoff, args.horizon, args.mc_eps)
+                               args.cutoff, args.horizon, args.mc_eps,
+                               p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std)
             row[f"T_{name}"] = T
             row[f"se_{name}"] = sd / math.sqrt(args.mc_eps)
             print(f"  N={N:>2} {name:<12} T={T:7.3f} ± {row[f'se_{name}']:.3f}",
@@ -82,6 +88,8 @@ def run_plot(args):
 
     rows = json.load(open(args.out))
     Ns = [r["N"] for r in rows]
+    sig = rows[0].get("p_gen_std", 0.0)
+    inh = rf", $\sigma_\mathrm{{inh}}={sig:g}$" if sig else ""   # inhomogeneity tag
 
     if args.metric == "delta":
         # #2 headline: % delivery-time reduction of agent vs swap-ASAP.
@@ -100,12 +108,11 @@ def run_plot(args):
         ax.set_ylabel("delivery-time reduction vs swap-ASAP (%)")
         ax.set_title(rf"Agent generalization "
                      rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
-                     rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$)")
+                     rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}${inh})")
         ax.set_xticks(Ns); ax.grid(alpha=0.3)
         os.makedirs(os.path.dirname(args.fig) or ".", exist_ok=True)
-        for ext in ("png", "pdf"):
-            fig.savefig(f"{args.fig}_delta.{ext}", bbox_inches="tight")
-        print(f"saved -> {args.fig}_delta.png / .pdf")
+        fig.savefig(f"{args.fig}_delta.pdf", bbox_inches="tight")
+        print(f"saved -> {args.fig}_delta.pdf")
         return
     series = [("agent", "Agent", "tab:blue", "o"),
               ("swap_asap", "Swap-ASAP", "tab:orange", "s"),
@@ -129,15 +136,14 @@ def run_plot(args):
     ax.set_ylabel("delivery time $T$ (avg steps to termination)")
     ax.set_title(rf"Delivery time vs chain size "
                  rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
-                 rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$)")
+                 rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}${inh})")
     ax.set_xticks(Ns)
     ax.grid(alpha=0.3)
     ax.legend(frameon=False)
 
     os.makedirs(os.path.dirname(args.fig) or ".", exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(f"{args.fig}.{ext}", bbox_inches="tight")
-    print(f"saved -> {args.fig}.png / .pdf")
+    fig.savefig(f"{args.fig}.pdf", bbox_inches="tight")
+    print(f"saved -> {args.fig}.pdf")
 
 
 if __name__ == "__main__":

@@ -48,9 +48,8 @@ def main():
                  r"($p_\mathrm{gen}=0.4$, $p_\mathrm{swap}=0.8$, $n_\mathrm{ch}=4$, cutoff $=20$)")
     ax.set_xticks(Ns); ax.grid(alpha=0.3); ax.legend(frameon=False, fontsize=8)
     os.makedirs(os.path.dirname(a.fig) or ".", exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(f"{a.fig}.{ext}", bbox_inches="tight")
-    print(f"saved -> {a.fig}.png / .pdf")
+    fig.savefig(f"{a.fig}.pdf", bbox_inches="tight")
+    print(f"saved -> {a.fig}.pdf")
 
 
 if __name__ == "__main__":

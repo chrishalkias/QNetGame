@@ -1,7 +1,7 @@
-"""#4  Delivery time T vs p_swap, one line per p_gen (5 lines), two panels.
+"""#4  Delivery time T vs p_swap, one line per p_gen (5 lines), single panel.
 
-Left panel = agent, right panel = purify-then-swap (shared y-axis), each over the
-(p_swap, p_gen) operating regime at fixed N, cutoff, n_ch.
+Agent (solid) and purify-then-swap (dashed) overlaid on one axis, coloured by
+p_gen, over the (p_swap, p_gen) operating regime at fixed N, cutoff, n_ch.
 
   eval:  PYTHONPATH=. python experiments/comparisons/delivery_vs_pswap.py --ckpt ...
   plot:  PYTHONPATH=. python experiments/comparisons/delivery_vs_pswap.py --plot
@@ -83,23 +83,30 @@ def run_plot(a):
     cmap = plt.get_cmap("viridis")
     cols = [cmap(i / max(len(pgs) - 1, 1)) for i in range(len(pgs))]
     plt.rcParams.update(C.PLOT_RC)
-    fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.2), sharey=True, constrained_layout=True)
-    for ax, (key, title) in zip(axes, PANELS):
-        for i, pg in enumerate(pgs):
-            sub = sorted([r for r in rows if r["p_gen"] == pg], key=lambda r: r["p_swap"])
-            xs = [r["p_swap"] for r in sub]
+    fig, ax = plt.subplots(figsize=(6.4, 4.4), constrained_layout=True)
+    # agent solid, purify-then-swap dashed; both coloured by p_gen
+    styles = [("agent", "-", "o"), ("purify_swap", "--", "s")]
+    for i, pg in enumerate(pgs):
+        sub = sorted([r for r in rows if r["p_gen"] == pg], key=lambda r: r["p_swap"])
+        xs = [r["p_swap"] for r in sub]
+        for key, ls, mk in styles:
             T = np.array([r[f"T_{key}"] for r in sub])
             se = np.array([r[f"se_{key}"] for r in sub])
-            ax.plot(xs, T, marker="o", color=cols[i], lw=1.7, ms=4)
-            ax.fill_between(xs, T - se, T + se, color=cols[i], alpha=0.15, lw=0)
-        ax.set_title(title)
-        ax.set_xlabel(r"$p_\mathrm{swap}$")
-        ax.grid(alpha=0.3)
-    axes[0].set_ylabel("delivery time $T$ (avg steps to termination)")
-    handles = [Line2D([], [], color=cols[i], lw=2, label=rf"$p_\mathrm{{gen}}={pg}$")
-               for i, pg in enumerate(pgs)]
-    axes[1].legend(handles=handles, frameon=False, title=r"$p_\mathrm{gen}$", fontsize=8)
-    fig.suptitle(rf"Delivery time vs $p_\mathrm{{swap}}$ "
+            ax.plot(xs, T, marker=mk, ls=ls, color=cols[i], lw=1.7, ms=4)
+            ax.fill_between(xs, T - se, T + se, color=cols[i], alpha=0.12, lw=0)
+    ax.set_xlabel(r"$p_\mathrm{swap}$")
+    ax.set_ylabel("delivery time $T$ (avg steps to termination)")
+    ax.grid(alpha=0.3)
+    # two legends: p_gen colour + policy line-style
+    pg_handles = [Line2D([], [], color=cols[i], lw=2, label=rf"${pg}$")
+                  for i, pg in enumerate(pgs)]
+    style_handles = [Line2D([], [], color="grey", ls="-", marker="o", label="Agent"),
+                     Line2D([], [], color="grey", ls="--", marker="s", label="Purify-then-swap")]
+    leg1 = ax.legend(handles=pg_handles, frameon=False, title=r"$p_\mathrm{gen}$",
+                     fontsize=8, loc="upper right")
+    ax.add_artist(leg1)
+    ax.legend(handles=style_handles, frameon=False, fontsize=8, loc="lower left")
+    ax.set_title(rf"Delivery time vs $p_\mathrm{{swap}}$ "
                  rf"($N={rows[0]['N']}$, $n_\mathrm{{ch}}={rows[0]['n_ch']}$, "
                  rf"cutoff $={rows[0]['cutoff']}$)", fontsize=11)
     C.savefig(fig, a.fig)

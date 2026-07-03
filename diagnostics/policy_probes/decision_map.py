@@ -76,9 +76,8 @@ def main():
                loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.08))
     fig.suptitle("Dominant action over real rollouts (grey = under-sampled)", y=1.02)
     stem = os.path.join(out, "decision_map")
-    for ext in ("png", "pdf"):
-        fig.savefig(f"{stem}.{ext}", bbox_inches="tight")
-    print(f"saved -> {stem}.png / .pdf")
+    fig.savefig(f"{stem}.pdf", bbox_inches="tight")
+    print(f"saved -> {stem}.pdf")
 
 
 if __name__ == "__main__":

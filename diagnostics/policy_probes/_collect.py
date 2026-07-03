@@ -31,7 +31,7 @@ def greedy(model, x, edge_index, mask, device):
 
 def collect(ckpt, *, episodes=200, sizes=range(4, 13), n_chs=(2, 3, 4),
             p_lo=0.4, p_hi=0.9, cut_lo=10, cut_hi=40, max_steps=200,
-            device="cpu", seed=0, layer="head"):
+            device="cpu", seed=0, layer="head", dt_seconds=0.0):
     """Return dict with flat per-decision arrays (X, A, H, margin), the per-step
     states + idx map (for permutation), and the loaded model.
 
@@ -58,7 +58,7 @@ def collect(ckpt, *, episodes=200, sizes=range(4, 13), n_chs=(2, 3, 4),
                          p_swap=float(rng.uniform(p_lo, p_hi)),
                          cutoff=int(rng.integers(cut_lo, cut_hi + 1)),
                          p_gen_std=0.15, p_swap_std=0.15, F0=1.0,
-                         channel_loss=0.0, dt_seconds=0.0, max_steps=max_steps,
+                         channel_loss=0.0, dt_seconds=dt_seconds, max_steps=max_steps,
                          topology="chain",
                          rng=np.random.default_rng(int(rng.integers(2**31))))
             obs = env.reset()

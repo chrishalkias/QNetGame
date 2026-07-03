@@ -33,11 +33,20 @@ def parse_args():
     ap.add_argument("--episodes", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save_dir", default=None)
+    ap.add_argument("--color", default="#4C72B0",
+                    help="bar color (CC-delay agent uses purple by convention)")
+    ap.add_argument("--dt_seconds", type=float, default=0.0,
+                    help="CC delay per step (2.5e-4 = 1 step/hop at spacing=50)")
+    ap.add_argument("--max_steps", type=int, default=200,
+                    help="episode cap for rollout collection (bump under CC delays)")
+    ap.add_argument("--bold", default=None,
+                    help="feature name whose y-label to render bold, e.g. urgency")
     return ap.parse_args()
 
 
 def compute(a, out):
-    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed)
+    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed,
+                  dt_seconds=a.dt_seconds, max_steps=a.max_steps)
     model, states, idx, base = d["model"], d["states"], d["idx"], d["A"]
     rng = np.random.default_rng(a.seed)
     flip = {}
@@ -56,7 +65,7 @@ def compute(a, out):
     return flip
 
 
-def render(flip, out):
+def render(flip, out, color="#4C72B0", bold=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -69,8 +78,15 @@ def render(flip, out):
         })
         names = sorted(flip, key=flip.get)
         vals = [flip[n] for n in names]
+        # under usetex, \textbf bolds; else set_fontweight below (mathtext path)
+        ylab = lambda n: (r"\textbf{%s}" % LABELS[n]
+                          if (bold == n and usetex) else LABELS[n])
         fig, ax = plt.subplots(figsize=(6.4, 4.2), constrained_layout=True)
-        bars = ax.barh([LABELS[n] for n in names], vals, color="#4C72B0")
+        bars = ax.barh([ylab(n) for n in names], vals, color=color)
+        if bold and not usetex:
+            for lb in ax.get_yticklabels():
+                if lb.get_text() == LABELS.get(bold):
+                    lb.set_fontweight("bold")
         for b, v in zip(bars, vals):
             ax.text(v + 0.002, b.get_y() + b.get_height() / 2,
                     f"{v:.3f}", va="center", ha="left", fontsize=9)
@@ -83,15 +99,13 @@ def render(flip, out):
     stem = os.path.join(out, "feature_importance")
     try:
         fig = draw(True)
-        for ext in ("pdf", "png"):
-            fig.savefig(f"{stem}.{ext}", bbox_inches="tight")
+        fig.savefig(f"{stem}.pdf", bbox_inches="tight")
     except (RuntimeError, FileNotFoundError) as e:
         print(f"[usetex unavailable ({e}); falling back to mathtext]")
         plt.close("all")
         fig = draw(False)
-        for ext in ("pdf", "png"):
-            fig.savefig(f"{stem}.{ext}", bbox_inches="tight")
-    print(f"saved -> {stem}.png / .pdf")
+        fig.savefig(f"{stem}.pdf", bbox_inches="tight")
+    print(f"saved -> {stem}.pdf")
 
 
 def main():
@@ -102,7 +116,7 @@ def main():
         flip = json.load(open(os.path.join(out, "feature_importance.json")))
     else:
         flip = compute(a, out)
-    render(flip, out)
+    render(flip, out, a.color, a.bold)
 
 
 if __name__ == "__main__":

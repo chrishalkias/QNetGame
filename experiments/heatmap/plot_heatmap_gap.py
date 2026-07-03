@@ -78,9 +78,15 @@ def main():
         ax.set_yticks(pgs)
         ax.text(-0.18, 1.05, lab, transform=ax.transAxes, fontweight="bold",
                 fontsize=11, va="top")
-        if len(pgs) > 1 and len(pss) > 1 and np.nanmin(M) < 0 < np.nanmax(M):
-            ax.contour(pss, pgs, M, levels=[0.0], colors="k",
-                       linewidths=0.9, linestyles="--")
+        # label the two extreme cells: most-negative (bluest) + most-positive
+        # (reddest). White text on saturated cells, black on near-white ones.
+        if not np.all(np.isnan(M)):
+            for idx in (np.nanargmin(M), np.nanargmax(M)):
+                ei, ej = np.unravel_index(idx, M.shape)
+                v = M[ei, ej]
+                tc = "white" if abs(v) > 0.5 * vmax else "black"
+                ax.text(pss[ej], pgs[ei], f"{v:.0f}", ha="center",
+                        va="center", fontsize=8, fontweight="bold", color=tc)
         if args.annotate:
             for i, pg in enumerate(pgs):
                 for j, ps in enumerate(pss):
@@ -93,9 +99,8 @@ def main():
     fig.suptitle(args.suptitle.replace("{N}", str(args.N)), fontsize=10)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    for ext in ("pdf", "png"):
-        fig.savefig(f"{args.out}.{ext}", dpi=300, bbox_inches="tight")
-    print(f"saved -> {args.out}.pdf / .png   ({n_clip} cells saturate |gap|>{vmax:.0f}%)")
+    fig.savefig(f"{args.out}.pdf", dpi=300, bbox_inches="tight")
+    print(f"saved -> {args.out}.pdf   ({n_clip} cells saturate |gap|>{vmax:.0f}%)")
     print(f"swap-only gap%: mean={np.nanmean(G_swo):+.2f} "
           f"range=[{np.nanmin(G_swo):+.1f}, {np.nanmax(G_swo):+.1f}]")
     print(f"purify    gap%: mean={np.nanmean(G_pur):+.2f} "
