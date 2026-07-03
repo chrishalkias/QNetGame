@@ -345,6 +345,9 @@ class QRNAgent:
               save_path = None,
               save_best = True,
               best_window = 200,
+              eps_init = 1.0,
+              eps_fin = 0.05,
+              lr_decay = None,
               eval_fn = None,
               eval_every = 0,
               eval_patience = 0,
@@ -411,7 +414,11 @@ class QRNAgent:
             "cutoff": cutoff, "max_steps": max_steps, "episodes": episodes,
             "disable_actions": list(disable_actions),
         }
-        eps_init, eps_fin = 1.0, 0.05
+        # eps_init/eps_fin now come from the signature (fine-tuning wants a LOW
+        # eps_init so a warm-started policy isn't scrambled). lr_decay enables an
+        # exponential LR schedule (default None = constant LR, unchanged).
+        sched = (optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=lr_decay)
+                 if lr_decay is not None else None)
         n_ch_pool = self._normalize_n_ch(n_ch)
         if prune_unwinnable:
             from rl_stack.winnability import WinnabilityCache
@@ -494,6 +501,8 @@ class QRNAgent:
                         1 + math.cos(math.pi * ep / max(episodes, 1)))
                 else:
                     self.epsilon = eps_fin
+                if sched is not None and ep_loss:   # only after a real optimizer step
+                    sched.step()
 
                 metrics["reward"].append(score)
                 metrics["loss"].append(

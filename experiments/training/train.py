@@ -4,12 +4,16 @@ Train an RL agent on a specified system topology
 
 import argparse
 import os
+import numpy as np
+import torch
 from rl_stack import QRNAgent
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train QRNAgent")
     # Algorithm Variables
     parser.add_argument("--run_id", type=str, default="xxx")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="seeds torch (net init) + agent RNG; vary for independent agents")
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=64)
@@ -54,11 +58,14 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
+    # Reproducibility: seed torch (network init) + the agent RNG (action sampling,
+    # curriculum + per-episode cell draws). Distinct seeds -> independent agents.
+    torch.manual_seed(args.seed)
+
     # Generate unique save directory to prevent checkpoint overwriting
     run_name = str(args.run_id)
     save_path = os.path.join(args.save_base_dir, run_name)
     os.makedirs(save_path, exist_ok=True)
-    
 
     agent = QRNAgent(lr=args.lr,
                      hidden=args.hidden,
@@ -66,7 +73,8 @@ if __name__ == "__main__":
                      buffer_size=80_000,
                      gamma=args.gamma,
                      tau=0.005,
-                     epsilon=1,)
+                     epsilon=1,
+                     rng=np.random.default_rng(args.seed),)
 
     metrics = agent.train(
         episodes=args.episodes,
