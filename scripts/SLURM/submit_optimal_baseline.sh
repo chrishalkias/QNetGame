@@ -81,7 +81,7 @@ python -u experiments/heatmap/optimal_baseline.py \
     --horizon 30 \
     --mc_eps 5000 \
     --mc_eps_opt 4000 \
-    --ckpt checkpoints/cluster/cluster_004/policy.pth \
+    --ckpt checkpoints/legacy/cluster/cluster_004/policy.pth \
     --out_json results/optimal/optimal_baseline.json \
     --policy_dir results/optimal/optimal_policies \
     --save_policy

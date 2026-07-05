@@ -386,6 +386,17 @@ class RepeaterNetwork:
                 rep_b.free_qubit(qb_r)
             return
 
+        # [Guard] Both remote endpoints have collapsed onto the SAME node
+        # (ra == rb): a deferred swap cannot form an inter-node link between two
+        # qubits on one repeater. Immediate swap() refuses this via the
+        # same_partner guard; the deferred path must too (else set_link raises
+        # "Attempting to generate inter-node entanglement"). Drop the void swap
+        # and free both locked survivors, mirroring the expiry cleanup above.
+        if int(ra) == int(rb):
+            rep_a.free_qubit(qa_r)
+            rep_b.free_qubit(qb_r)
+            return
+
         ec = min(rep_a.cutoff, rep_b.cutoff)
         # Each qubit retains its own memory age; use max so future
         # decoherence tracks the older qubit (swap already accounts for

@@ -15,7 +15,7 @@
 # checkpoint changes. Outputs to *_nopen.json (originals untouched). Plot locally
 # with experiments/heatmap/plot_heatmap_gap.py after download.
 #
-# Inputs needed on the cluster (both present): checkpoints/omni_nopen_15k/policy.pth
+# Inputs needed on the cluster (both present): checkpoints/omni_initial/omni_nopen_15k/policy.pth
 # and results/heatmaps/heatmap_Topt_N4_9x9.json (agent-independent DP optimum).
 
 set -euo pipefail
@@ -29,7 +29,7 @@ source "$HOME/.venvs/qnetgame/bin/activate"
 export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)"
 
-CK=checkpoints/omni_nopen_15k/policy.pth
+CK=checkpoints/omni_initial/omni_nopen_15k/policy.pth
 MC=${MC:-2000}
 GAP=results/heatmaps/heatmap_gap_N4_9x9_nopen.json
 HEUR=results/heatmaps/heatmap_heur_N4_9x9_nopen.json

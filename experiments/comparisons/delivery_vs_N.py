@@ -10,7 +10,7 @@ ceiling (N_train_max) past which the agent extrapolates (zero-shot).
 Two modes (one file):
   eval (default, for the cluster) -> MC-evaluates and writes a JSON
       PYTHONPATH=. python experiments/comparisons/delivery_vs_N.py \
-          --ckpt checkpoints/omni_nopen_15k/policy.pth
+          --ckpt checkpoints/omni_initial/omni_nopen_15k/policy.pth
   plot (--plot, local) -> reads the JSON and renders the lineplot
       PYTHONPATH=. python experiments/comparisons/delivery_vs_N.py --plot
 """
@@ -26,7 +26,7 @@ def parse_args():
     ap.add_argument("--metric", choices=["T", "delta"], default="T",
                     help="T = delivery-time lines; delta = %% reduction of agent "
                          "vs swap-ASAP (headline generalization plot, #2)")
-    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_15k/policy.pth")
+    ap.add_argument("--ckpt", default="checkpoints/omni_initial/omni_nopen_15k/policy.pth")
     ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--p_gen", type=float, default=0.4)
     ap.add_argument("--p_swap", type=float, default=0.8)
@@ -40,6 +40,12 @@ def parse_args():
     ap.add_argument("--p_swap_std", type=float, default=0.0,
                     help="per-repeater inhomogeneity spread on p_swap (0 = homogeneous)")
     ap.add_argument("--cutoff", type=int, default=20)
+    ap.add_argument("--agent_only", action="store_true",
+                    help="evaluate only the agent policy (skip the ckpt-independent "
+                         "heuristics); used for the seed-sweep curves")
+    ap.add_argument("--fidelity", action="store_true",
+                    help="also measure end-to-end fidelity F (agent + "
+                         "purify-then-swap) and overlay it on a twin axis")
     ap.add_argument("--horizon", type=int, default=300)
     ap.add_argument("--mc_eps", type=int, default=2000)
     ap.add_argument("--out", default="results/comparisons/delivery_vs_N.json")
@@ -52,14 +58,14 @@ def run_eval(args):
     from rl_stack import strategies
 
     agent_fn = ob.make_agent_fn(args.ckpt, hidden=args.hidden)
-    policies = {
-        "agent":       agent_fn,
-        "swap_asap":   lambda env, obs: strategies.swap_asap(env),
-        "purify_swap": lambda env, obs: strategies.purify_then_swap(env),
-    }
+    policies = {"agent": agent_fn}
+    if not args.agent_only:   # heuristics are ckpt-independent -> skip in seed sweeps
+        policies["swap_asap"] = lambda env, obs: strategies.swap_asap(env)
+        policies["purify_swap"] = lambda env, obs: strategies.purify_then_swap(env)
     Ns = list(range(args.n_lo, args.n_hi + 1))
     print(f"N={Ns} p_gen={args.p_gen} p_swap={args.p_swap} n_ch={args.n_ch} "
-          f"cutoff={args.cutoff} H={args.horizon} mc_eps={args.mc_eps}")
+          f"cutoff={args.cutoff} H={args.horizon} mc_eps={args.mc_eps} "
+          f"fidelity={args.fidelity}")
 
     rows = []
     for N in Ns:
@@ -74,6 +80,16 @@ def run_eval(args):
             row[f"se_{name}"] = sd / math.sqrt(args.mc_eps)
             print(f"  N={N:>2} {name:<12} T={T:7.3f} ± {row[f'se_{name}']:.3f}",
                   flush=True)
+        if args.fidelity:
+            # end-to-end F over delivered episodes, agent + purify-then-swap only
+            from experiments.comparisons._common import eval_T_and_F
+            for name in ("agent", "purify_swap"):
+                _, _, F, seF = eval_T_and_F(policies[name], N, args.n_ch,
+                                            args.p_gen, args.p_swap, args.cutoff,
+                                            args.horizon, args.mc_eps)
+                row[f"F_{name}"] = F
+                row[f"seF_{name}"] = seF
+                print(f"  N={N:>2} {name:<12} F={F:.4f} ± {seF:.4f}", flush=True)
         rows.append(row)
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         json.dump(rows, open(args.out, "w"), indent=2)   # incremental save
@@ -139,7 +155,24 @@ def run_plot(args):
                  rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}${inh})")
     ax.set_xticks(Ns)
     ax.grid(alpha=0.3)
-    ax.legend(frameon=False)
+
+    # optional twin axis: end-to-end fidelity F (dashed), agent + purify-then-swap
+    if "F_agent" in rows[0]:
+        ax2 = ax.twinx()
+        for key, color, mk in (("agent", "tab:blue", "o"),
+                               ("purify_swap", "tab:green", "^")):
+            F = np.array([r[f"F_{key}"] for r in rows])
+            seF = np.array([r.get(f"seF_{key}", 0.0) for r in rows])
+            lab = dict(agent="Agent", purify_swap="Purify-then-swap")[key]
+            ax2.plot(Ns, F, marker=mk, color=color, ls="--", lw=1.4, ms=4,
+                     label=rf"{lab} $F$")
+            ax2.fill_between(Ns, F - seF, F + seF, color=color, alpha=0.12, lw=0)
+        ax2.set_ylabel("end-to-end fidelity $F$")
+        h1, l1 = ax.get_legend_handles_labels()
+        h2, l2 = ax2.get_legend_handles_labels()
+        ax.legend(h1 + h2, l1 + l2, frameon=False, fontsize=8, loc="upper left")
+    else:
+        ax.legend(frameon=False)
 
     os.makedirs(os.path.dirname(args.fig) or ".", exist_ok=True)
     fig.savefig(f"{args.fig}.pdf", bbox_inches="tight")

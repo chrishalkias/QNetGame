@@ -25,7 +25,7 @@ C_FIBER_KM_S = 200_000.0   # matches RepeaterNetwork.c_fiber
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_15k/policy.pth")
+    ap.add_argument("--ckpt", default="checkpoints/omni_initial/omni_nopen_15k/policy.pth")
     ap.add_argument("--run_id", default="ft_ccdelay_2k")
     ap.add_argument("--save_base_dir", default="checkpoints")
     ap.add_argument("--episodes", type=int, default=2000)

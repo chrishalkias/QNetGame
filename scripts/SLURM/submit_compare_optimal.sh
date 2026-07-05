@@ -46,4 +46,4 @@ python -u experiments/training/compare_optimal.py \
     --save_base_dir checkpoints
 
 echo "Job completed at $(date)"
-echo "Crossover plot: checkpoints/cluster/compare_optimal/training_compare.png"
+echo "Crossover plot: checkpoints/legacy/cluster/compare_optimal/training_compare.png"

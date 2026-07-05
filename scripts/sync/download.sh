@@ -9,7 +9,7 @@
 #
 # Override host/path/dirs via env, e.g.:
 #   REMOTE_HOST=chalkiasc1@alice-gw ./scripts/download.sh
-#   PULL_DIRS="checkpoints/cluster/inhomo_001" ./scripts/download.sh   # one subdir
+#   PULL_DIRS="checkpoints/legacy/cluster/inhomo_001" ./scripts/download.sh   # one subdir
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 

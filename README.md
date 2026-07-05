@@ -14,10 +14,10 @@ communication delays, designed as the environment for a Reinforcement
 Learning pipeline. The core simulator is pure Python/NumPy; an optional
 `torch` / `torch_geometric` stack provides a GNN-based Double-DQN agent.
 
-The physics lives behind a **pluggable backend interface** (`legacy` NumPy
-backend). The RL agent trains on small chains and
-**generalises zero-shot** to larger / differently-parameterised networks,
-including a 24-node GÉANT topology.
+The RL agent trains on small chains and **generalises zero-shot** to larger /
+differently-parameterised networks, including a 24-node GÉANT topology. `QRNEnv`
+drives a `RepeaterNetwork` directly and reads state only through immutable,
+fidelity-domain snapshots, there is no backend-abstraction layer.
 
 **Dependencies:** NumPy (core). `torch` + `torch_geometric` for the RL
 stack.
@@ -29,19 +29,18 @@ stack.
 1. [Quick Start](#1-quick-start)
 2. [Physics Model](#2-physics-model)
 3. [Architecture Overview](#3-architecture-overview)
-4. [`repeater.py` — The Repeater Class](#4-repeaterpy--the-repeater-class)
-5. [`network.py` — The Network and Its Actions](#5-networkpy--the-network-and-its-actions)
-6. [Physics Backends](#6-physics-backends)
+4. [`repeater.py`, The Repeater Class](#4-repeaterpy--the-repeater-class)
+5. [`network.py`, The Network and Its Actions](#5-networkpy--the-network-and-its-actions)
+6. [Physics Engine & Read Snapshots](#6-physics-engine--read-snapshots)
 7. [Classical Communication Delays](#7-classical-communication-delays)
 8. [Runnable Examples](#8-runnable-examples)
 9. [Known Limitations](#9-known-limitations)
-10. [`rl_stack` — RL Agent Module](#10-rl_stack--rl-agent-module)
+10. [`rl_stack`, RL Agent Module](#10-rl_stack--rl-agent-module)
 11. [Training / Validation](#11-training--validation)
 12. [PBRS Reward Shaping (`potential.py`)](#12-pbrs-reward-shaping-potentialpy)
-13. [Adversarial Game (`rl_stack/adversarial_game`)](#13-adversarial-game-rl_stackadversarial_game)
-14. [Optimal-Policy Benchmark](#14-optimal-policy-benchmark)
-15. [Repository Layout & Runners](#15-repository-layout--runners)
-16. [Test Suites](#16-test-suites)
+13. [Optimal-Policy Benchmark](#13-optimal-policy-benchmark)
+14. [Repository Layout & Runners](#14-repository-layout--runners)
+15. [Test Suites](#15-test-suites)
 
 ---
 
@@ -65,7 +64,7 @@ for step in range(100):
     # ... inspect net.get_all_links() ...
 ```
 
-**RL environment** (the agent's view — node features + topology):
+**RL environment** (the agent's view, node features + topology):
 
 ```python
 import numpy as np
@@ -75,7 +74,7 @@ env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.8, p_swap=0.7,
              cutoff=15, topology='chain',
              rng=np.random.default_rng(0))
 
-obs  = env.get_observation()          # {"x": (N,10), "edge_index": (2,E)}
+obs  = env.get_observation()          # {"x": (N,9), "edge_index": (2,E)}
 mask = env.get_action_mask()          # (N, 3) bool: NOOP / SWAP / PURIFY
 actions = np.zeros(env.N, dtype=int)  # one action per node
 obs, reward, done, info = env.step(actions)
@@ -207,7 +206,7 @@ on the next `age_links()` call).
     ▼                               ▼
 ┌──────────────────────────────────────────────────────────┐
 │                        QRNEnv                              │
-│  get_observation() → {"x": (N,10), "edge_index": (2,E)}    │
+│  get_observation() → {"x": (N,9), "edge_index": (2,E)}     │
 │  get_action_mask() → (N, 3)  NOOP / SWAP / PURIFY          │
 │  step(actions): purify → swap → age → e2e → auto-entangle  │
 └───────────────────────────┬────────────────────────────────┘
@@ -223,17 +222,18 @@ on the next `age_links()` call).
 
 **One RL step (`QRNEnv.step`):**
 
-1. Execute agent actions — **purify first, then swap** (purify-before-swap
+1. Execute agent actions, **purify first, then swap** (purify-before-swap
    ensures freshly-improved links get swapped).
-2. `backend.advance()` — tick the clock, resolve pending classical events,
+2. `net.age_links()`, tick the clock, resolve pending classical events,
    decohere, expire old links.
-3. Check end-to-end; compute reward (step cost + failed-action penalty +
-   PBRS shaping; success pays `fidelity × SUCCESS_REWARD`).
+3. Check end-to-end; compute reward (step cost + PBRS shaping; success pays
+   `fidelity × SUCCESS_REWARD`). Failed actions are **not** penalised
+   (`FAILED_ACTION = 0.0`; see §10.2).
 4. Auto-entangle every adjacent pair so the next observation is fresh.
 
 ---
 
-## 4. `repeater.py` — The Repeater Class
+## 4. `repeater.py`, The Repeater Class
 
 ### 4.1 Per-Qubit Data Layout
 
@@ -253,12 +253,12 @@ Each `Repeater` stores its state in parallel NumPy arrays of length
 
 ### 4.2 Two Query Layers
 
-**Raw queries** (include locked qubits — used internally by aging,
+**Raw queries** (include locked qubits, used internally by aging,
 symmetry checks, observation builder):
 
 - `occupied_indices()`, `free_indices()`, `num_occupied()`
 
-**Agent-facing queries** (exclude locked qubits — used by action
+**Agent-facing queries** (exclude locked qubits, used by action
 functions and masks):
 
 - `available_indices()`, `has_free_qubit()`, `can_swap()`, `qubits_to(rid)`
@@ -268,21 +268,19 @@ waiting for a classical message.
 
 ### 4.3 Swap Pair Selection
 
-`select_swap_pair(network_positions)` is fully vectorised.
+`select_swap_pair(network_positions, rng=None)` is fully vectorised.
 `np.triu_indices(k, k=1)` generates all $\binom{k}{2}$ pair indices
 over the available qubits, then a single NumPy call evaluates the
-objective (distance for `FARTHEST`, Werner product for `STRONGEST`).
+objective (distance for `FARTHEST`, Werner product for `STRONGEST`);
+`RANDOM` draws a uniform pair from `rng`.
 
-### 4.4 Feature Vectors
-
-| Method | Shape | Columns |
-|---|---|---|
-| `feature_vector()` | `(6,)` | `pos_x, pos_y, frac_occupied, mean_fidelity, p_gen, p_swap` |
-| `qubit_features()` | `(n_ch, 6)` | `is_occupied, werner_p, fidelity, partner_rid, age_norm, is_locked` |
+> Note: `Repeater` no longer builds observation features. The agent's node
+> features are assembled entirely in `rl_stack/env_wrapper.py::get_observation`
+> (see §10.4), reading immutable `NodeState` snapshots.
 
 ---
 
-## 5. `network.py` — The Network and Its Actions
+## 5. `network.py`, The Network and Its Actions
 
 ### 5.1 Constructor
 
@@ -291,7 +289,7 @@ RepeaterNetwork(
     repeaters: list[Repeater],
     adjacency: np.ndarray,       # (N, N) symmetric
     channel_loss=0.02,
-    F0=0.98,
+    F0=1.0,
     distance_dep_gen=True,
     rng=None,                    # np.random.Generator for reproducibility
     dt_seconds=1e-4,             # physical time per tick; 0 disables delays
@@ -385,9 +383,9 @@ net = build_grid(rows=3, cols=3, n_ch=4, spacing=50.0, ...)
 net = build_GEANT(n_ch=4, p_gen=0.8, p_swap=0.5, cutoff=20, ...)
 ```
 
-- `build_chain` — 1-D line.
-- `build_grid` — 2-D lattice with 4-connectivity.
-- `build_GEANT` — the GÉANT pan-European research network (24 nodes,
+- `build_chain`, 1-D line.
+- `build_grid`, 2-D lattice with 4-connectivity.
+- `build_GEANT`, the GÉANT pan-European research network (24 nodes,
   37 links), node positions from member-state capital lat/lon projected
   to a flat km plane.
 
@@ -395,24 +393,27 @@ All forward `**kwargs` to `RepeaterNetwork`.
 
 ---
 
-## 6. Physics Engine
+## 6. Physics Engine & Read Snapshots
 
 `QRNEnv` drives a `RepeaterNetwork` (`simulator/network.py`) directly. The
 engine exposes immutable, fidelity-domain read snapshots so the agent reads
-state without being able to mutate it.
+state without being able to mutate it. (There is no `PhysicsBackend` layer ,
+that abstraction was removed; older docs referencing `simulator/backends/` are
+stale.)
 
 ### 6.1 Read snapshots (`simulator/snapshots.py`)
 
 | Object | Role |
 |---|---|
-| `RepeaterNetwork` | the engine: `node_state(i)`, `topology()`, `all_links()`, `entangle/swap/purify`, `age_links()` |
-| `NodeState` | frozen per-node snapshot: `occupied`, `locked`, `partner_node`, `fidelity`, `n_ch`, `p_gen`, `p_swap` |
-| `LinkState` | frozen link record (endpoints, fidelity, age) |
-| `Topology` | `N`, `adjacency`, positions — the static graph |
+| `RepeaterNetwork` | the engine: `node_state(i)`, `topology()`, `get_all_links()`, `entangle/swap/purify`, `age_links()` |
+| `NodeState` | frozen per-node snapshot: `occupied`, `locked`, `partner_node`, `partner_qubit`, `fidelity`, `age`, `link_cutoff`, `n_ch`, `p_gen`, `p_swap` |
+| `Topology` | `N`, `adjacency`, `positions`, the static graph |
 
-`NodeState` / `LinkState` / `Topology` are frozen dataclasses with
-read-only arrays (immutable snapshots — the agent can't mutate physics
-state through the observation).
+`NodeState` and `Topology` are the only two snapshot types: frozen dataclasses
+with read-only arrays, so the agent cannot mutate physics state through the
+observation. Werner `p` is engine-internal; only fidelity `F` crosses this
+boundary. Raw link rows come from `RepeaterNetwork.get_all_links()`, not a
+snapshot dataclass.
 
 ### 6.2 `build_network(topology, ...)`
 
@@ -453,7 +454,7 @@ act on unrelated parts of the network.
 the measurement is local and no classical communication is needed to
 know it failed.
 
-**Edge case — expiry during delay:** if a locked qubit's age exceeds its
+**Edge case, expiry during delay:** if a locked qubit's age exceeds its
 cutoff before the event resolves, `age_links()` frees it. When the
 event later resolves, guard checks detect the freed qubit and clean up
 any remaining locks without corrupting state.
@@ -587,7 +588,7 @@ arrays.
 
 ---
 
-## 10. `rl_stack` — RL Agent Module
+## 10. `rl_stack`, RL Agent Module
 
 A Double-DQN agent (`rl_stack`) that learns multi-node routing policies
 on quantum repeater networks and generalises zero-shot to larger,
@@ -603,14 +604,14 @@ Each `QRNEnv.step(actions)`:
 1. **Agent actions:** one action per node from `{NOOP=0, SWAP=1,
    PURIFY=2}`, masked so only valid actions are chosen. Purifications
    execute before swaps. Actions at source/dest are forced to NOOP.
-2. **Age links:** `backend.advance()` — resolve pending classical
+2. **Age links:** `net.age_links()`, resolve pending classical
    events, apply decoherence, expire old links.
 3. **Check e-e:** if source and dest share a direct entangled link, the
    episode terminates successfully.
 4. **Auto-entangle:** every adjacent pair attempts generation (the
    background physical process) so the next observation is fresh.
 
-**Entanglement generation is not an agent action** — it is handled
+**Entanglement generation is not an agent action**, it is handled
 entirely by the automatic background step.
 
 ### 10.2 Reward
@@ -619,8 +620,15 @@ entirely by the automatic background step.
 |---|---|---|
 | `STEP_COST` | `-0.01` | every non-success step |
 | `SUCCESS_REWARD` | `+1.0` × end-to-end fidelity | on connection |
-| `FAILED_ACTION` | `-0.05` per failed action | swap/purify that fails |
+| `FAILED_ACTION` | `0.0` (disabled) | see note below |
 | PBRS shaping | $\gamma\Phi(s') - \Phi(s)$ | every step (see §12) |
+
+`FAILED_ACTION` is **deliberately zero**. It was previously `-0.05` and caused a
+**swap-shy** policy: the penalty fired on *stochastic* BSM failures
+($\text{rng} > p_{\text{swap}}$), punishing the agent for the environment's coin
+flip on its only productive action, so the policy collapsed to NOOP. Masking
+already blocks invalid actions and lost links are costed via PBRS, so the penalty
+was double-counting. Do not reintroduce it.
 
 The potential $\Phi$ is a topology-general path-progress signal in
 $[0,1]$; by PBRS convention $\Phi(s_{\text{terminal}}) = 0$, so the
@@ -636,27 +644,27 @@ Per node, 3 discrete actions:
 | 1 | `SWAP` | $\geq 2$ available qubits to **distinct** partners |
 | 2 | `PURIFY` | $\geq 2$ available qubits to the **same** partner |
 
-The agent outputs `(N,)` actions simultaneously — the system is "frozen
+The agent outputs `(N,)` actions simultaneously, the system is "frozen
 in time" while the agent decides, then all actions execute in one step.
 
 ### 10.4 Observation Space
 
-`get_observation()` returns `{"x": (N, 8) float32, "edge_index": (2, E)
-int64}` — a **homogeneous** graph.
+`get_observation()` returns `{"x": (N, 9) float32, "edge_index": (2, E)
+int64}`, a **homogeneous** graph.
 
 **Node features** `(N, 9)`:
 
 | Col | Feature |
 |---|---|
-| 0 | `frac_occupied` — occupied / n_ch |
-| 1 | `mean_fidelity` — avg F of available (unlocked) qubits (0 if none) |
-| 2 | `in_endnode` — 1.0 if source OR dest (endpoints are symmetric) |
-| 3 | `frac_available` — available (unlocked occupied) / n_ch |
-| 4 | `can_swap` — 1.0 if $\geq 2$ available qubits to distinct partners |
-| 5 | `can_purify` — 1.0 if $\geq 2$ available qubits to same partner |
-| 6 | `p_gen` — per-repeater generation prob. (inhomogeneity signal) |
-| 7 | `p_swap` — per-repeater BSM prob. (inhomogeneity signal) |
-| 8 | `link_urgency` — mean(age / link_cutoff) over occupied qubits (0 if none) |
+| 0 | `frac_occupied`, occupied / n_ch |
+| 1 | `mean_fidelity`, avg F of available (unlocked) qubits (0 if none) |
+| 2 | `in_endnode`, 1.0 if source OR dest (endpoints are symmetric) |
+| 3 | `frac_available`, available (unlocked occupied) / n_ch |
+| 4 | `can_swap`, 1.0 if $\geq 2$ available qubits to distinct partners |
+| 5 | `can_purify`, 1.0 if $\geq 2$ available qubits to same partner |
+| 6 | `p_gen`, per-repeater generation prob. (inhomogeneity signal) |
+| 7 | `p_swap`, per-repeater BSM prob. (inhomogeneity signal) |
+| 8 | `link_urgency`, mean(age / link_cutoff) over occupied qubits (0 if none) |
 
 Columns 4/5 are forced to 0 for source/dest. Columns 6/7 are constant
 across nodes when the network is homogeneous (std = 0). Column 8 is 0
@@ -669,13 +677,14 @@ processes any chain length / graph size without retraining.
 ### 10.5 Replay Buffer (`buffer.py`)
 
 Circular buffer storing `(state, actions, reward, next_state, done,
-mask)`:
+next_mask)`. The stored **next-state action mask** is what lets the DQN target
+avoid selecting physically-impossible successor actions (§11):
 
 ```python
 from rl_stack import ReplayBuffer
 
 buf = ReplayBuffer(max_size=50_000)
-buf.add(obs, actions, reward, next_obs, done)
+buf.add(obs, actions, reward, next_obs, done, next_mask)
 batch = buf.sample(64)
 ```
 
@@ -684,9 +693,9 @@ batch = buf.sample(64)
 `QNetwork`: three `SAGEConv` layers + a 2-layer MLP head.
 
 ```
-Input: (N, 8)
+Input: (N, 9)
       ↓
-SAGEConv(8→64) → ReLU
+SAGEConv(9→64) → ReLU
       ↓
 SAGEConv(64→64) → ReLU         GNN encoder
       ↓
@@ -700,7 +709,9 @@ Linear(64→3)
 ```
 
 All layers are local (message-passing + per-node linear), so the model
-is size-agnostic by construction.
+is size-agnostic by construction. `load_qnet(path)` infers `(node_dim, hidden)`
+from the checkpoint's `conv1.lin_l.weight`, so you never have to specify the
+architecture (all real checkpoints use `hidden=64`; the class default is 32).
 
 ---
 
@@ -740,8 +751,10 @@ metrics = agent.train(
   settled late window); final weights go to `policy_final.pth`.
 - **Early stopping:** with `eval_fn` + `eval_every` + `eval_patience`,
   training stops when the probe stops improving.
-- **Pluggable backend:** physics lives behind the `legacy` backend.
-- **Double DQN + Polyak averaging (τ=0.005) + gradient clipping.**
+- **Winnability pruning:** `--prune_unwinnable` resamples each episode's cell
+  until swap-asap can deliver it (`WinnabilityCache`), so no episodes are wasted
+  on unsolvable configs.
+- **Double DQN + Polyak averaging (τ=0.005) + gradient clipping (max-norm 10).**
 - **`disable_actions`:** mask action indices in both selection and the
   Double-DQN target (e.g. ablate PURIFY).
 - **`compare=True`:** log greedy-agent vs swap-asap vs random returns,
@@ -792,13 +805,13 @@ actions = strategies.random_policy(env, rng)
 Train on small chains (N=4–7), test on larger ones (N=10–20+) or other
 topologies:
 
-1. **Node features are normalised** — fractions and binary flags.
-2. **GNN is local** — `SAGEConv` aggregates from 1-hop neighbours
+1. **Node features are normalised**, fractions and binary flags.
+2. **GNN is local**, `SAGEConv` aggregates from 1-hop neighbours
    (N-independent).
-3. **Action space is per-node** — 3 actions for any topology/size.
-4. **Domain randomisation** — heterogeneous `p_gen`/`p_swap` prevents
+3. **Action space is per-node**, 3 actions for any topology/size.
+4. **Domain randomisation**, heterogeneous `p_gen`/`p_swap` prevents
    overfitting to a parameter regime.
-5. **Curriculum** — progressive difficulty teaches general patterns
+5. **Curriculum**, progressive difficulty teaches general patterns
    before scaling up.
 
 ---
@@ -820,55 +833,43 @@ GÉANT).
 
 ---
 
-## 13. Adversarial Game (`rl_stack/adversarial_game`)
+## 13. Optimal-Policy Benchmark
 
-A two-player extension where an adversary sabotages links while the
-router tries to deliver end-to-end entanglement.
-
-| Component | Role |
-|---|---|
-| `AdversaryAgent` | Double-DQN adversary; per-qubit actions `{NOOP=0, DESTROY=1}` |
-| `AdversaryFlavor` | sabotage budget / targeting style |
-| `SabotageTarget` | decoded (node, qubit-pair) target |
-| `AdversarialQRNEnv` | env exposing both the router and adversary action interfaces |
-
-`train.py` / `evaluate.py` drive adversarial training and evaluation.
-
----
-
-## 14. Optimal-Policy Benchmark
-
-`simulator/optimal_policy/` benchmarks the RL agent against a
-dynamic-programming "optimal" policy.
+The **exact** dynamic-programming optimum is computed in
+`experiments/heatmap/optimal_baseline.py` (finite-horizon backward induction over
+the enumerated MDP; tractable for `n_ch=2`, `N ≤ 4–5`). `simulator/optimal_policy/`
+holds the *consumers* of a pickled optimal policy plus study/report helpers:
 
 | Script | Purpose |
 |---|---|
-| `compare_optimal.py` | DP-optimal vs agent delivery-time comparison |
-| `pgen_pswap_study.py` | sweep over $(p_{\text{gen}}, p_{\text{swap}})$ |
-| `report.py` | aggregate / plot results |
+| `simulator/optimal_policy/compare_optimal.py` | DP-optimal vs agent delivery-time comparison |
+| `simulator/optimal_policy/pgen_pswap_study.py` | sweep over $(p_{\text{gen}}, p_{\text{swap}})$ |
+| `simulator/optimal_policy/report.py` | aggregate / plot results |
 
 > Note: the DP "optimal" optimises only over `{NOOP, SWAP}`; the agent can
-> beat it via `PURIFY`, so its delivery time is **not** a universal lower
-> bound — it is the swap-only optimum.
+> beat it via `PURIFY` (which frees a memory slot), so its delivery time is
+> **not** a universal lower bound, it is the swap-only optimum.
 
 ---
 
-## 15. Repository Layout & Runners
+## 14. Repository Layout & Runners
 
 ```
-simulator/        core simulator (NumPy)
+simulator/        core simulator (NumPy only, imports without torch)
   repeater.py, network.py    engine + build_network()
-  snapshots.py               frozen NodeState / LinkState / Topology
-  optimal_policy/            DP-optimal benchmark
-rl_stack/                    Double-DQN RL stack
+  snapshots.py               frozen NodeState / Topology (F-domain read boundary)
+  optimal_policy/            consumers of the pickled DP-optimal policy + reports
+rl_stack/                    Double-DQN RL stack (torch imports guarded)
   env_wrapper.py  agent.py  model.py  buffer.py  strategies.py  potential.py
-  adversarial_game/          two-player adversarial extension
+  winnability.py             swap-asap winnability oracle (training cell pruning)
 experiments/                 entry-point scripts (argparse at top of file)
-  train.py  validation.py  batch_validate.py
-  optimal_baseline.py  compare_optimal.py  replot.py
+  training/                  train.py  validation.py  batch_validate.py  ...
+  heatmap/                   optimal_baseline.py (exact DP)  eval_*  plot_*
+  comparisons/               paper figure suite (delivery_vs_* , _common.py)
+  baselines/                 sweep_heuristics.py (gather-once heuristic tables)
 diagnostics/
-  unittests/                 pytest / unittest suites
-  policy_probes/             PCA + linear-probe interpretability tools
+  unittests/                 pytest suites (see §15)
+  policy_probes/             feature_importance.py  decision_map.py  _collect.py
 scripts/
   local/                     local train.sh / test.sh
   SLURM/                     cluster submit_*.sh
@@ -876,24 +877,23 @@ scripts/
 ```
 
 Runner scripts in `experiments/` put their `argparse` at the top of the
-file so the available flags are visible at a glance; they are invoked by
-the `scripts/` shell wrappers.
+file so the available flags are visible at a glance; they are invoked (with
+`PYTHONPATH=.`) by the `scripts/` shell wrappers.
 
 ---
 
-## 16. Test Suites
+## 15. Test Suites
 
-`unittest` / `pytest` suites live in `diagnostics/unittests/`.
+`pytest` suites live in `diagnostics/unittests/` (6 files, ~230 tests).
 
 | File | Covers |
 |---|---|
-| `test_simulator.py` | physics: Werner↔fidelity, decoherence, BBPSSW, swap product rule, classical delay, distance scaling; core mechanics; RL-loophole edge cases (ghost links, asymmetric cutoff, locking integrity, self-swap) |
-| `test_rl_stack.py` | Double-DQN update rule, Polyak averaging, masked-target argmax, graph batching, `QRNEnv` reset/step/features, `QRNAgent.select_actions`, `ReplayBuffer` |
-| `test_backends.py` | `RepeaterNetwork` read snapshots + `build_network`, frozen/read-only `NodeState`/`Topology` |
-| `test_potential.py` | `bfs_hops` and `path_progress` PBRS potential |
-| `test_game.py` | curriculum / `QRNAgent` helpers (e.g. `_normalize_n_ch`) |
-| `test_adversarial_game.py` | adversary agent / `AdversarialQRNEnv` |
-| `test_pca_linear_probe*.py` | interpretability probe utilities |
+| `test_simulator.py` | physics: Werner↔fidelity, decoherence, BBPSSW, swap product rule, classical (CC) delay timing, distance scaling; RL-loophole edge cases (ghost links, asymmetric cutoff, locking integrity, self-swap) |
+| `test_rl_stack.py` | Double-DQN update rule, Polyak averaging, masked-target argmax, done-mask, graph batching + reward broadcast, `QRNEnv` reset/step/features, `QRNAgent.select_actions`, `ReplayBuffer` |
+| `test_backends.py` | `RepeaterNetwork` read snapshots + `build_network`, inhomogeneity sampling (incl. `std=0` RNG-stream neutrality), frozen/read-only `NodeState`/`Topology`, urgency feature |
+| `test_potential.py` | `bfs_hops` and `path_progress` PBRS potential (incl. the adjacent-blob anti-exploit case) |
+| `test_game.py` | curriculum pool, rate/cutoff/n_ch draws, best/final checkpointing, early stopping, optimal-pickle round-trip |
+| `test_winnability.py` | the swap-asap winnability oracle |
 
 ### Running
 
@@ -907,8 +907,7 @@ python -m pytest diagnostics/unittests/test_simulator.py -v
 
 ### Dependencies
 
-`numpy` (core); `torch`, `torch_geometric` (RL-stack and backend-import
-tests).
+`numpy` (core); `torch`, `torch_geometric` (RL-stack tests).
 
 ### Disclaimer
 

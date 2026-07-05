@@ -15,7 +15,7 @@ Both metrics are:
 Usage
 -----
     python experiments/training/batch_validate.py \
-        --model checkpoints/cluster/cluster_004/policy.pth \
+        --model checkpoints/legacy/cluster/cluster_004/policy.pth \
         --episodes 200 \
         --save_dir results/batch_validate
 """

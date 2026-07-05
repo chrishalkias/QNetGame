@@ -8,8 +8,8 @@ where gap% = 100 * (T_agent - T_opt) / T_opt. gap < 0 means the agent beats the
 swap-only optimum (only possible for the purify agent, by freeing memory).
 
   PYTHONPATH=. python experiments/heatmap/eval_heatmap_gap.py \
-      --ckpt_purify checkpoints/local/heat_purify/policy.pth \
-      --ckpt_swaponly checkpoints/local/heat_swaponly/policy.pth
+      --ckpt_purify checkpoints/legacy/local/heat_purify/policy.pth \
+      --ckpt_swaponly checkpoints/legacy/local/heat_swaponly/policy.pth
 """
 from __future__ import annotations
 import argparse, json, math, os

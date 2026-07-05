@@ -25,7 +25,7 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)"
 
 python -u experiments/temp/finetune_ccdelay.py \
-    --ckpt checkpoints/omni_nopen_15k/policy.pth \
+    --ckpt checkpoints/omni_initial/omni_nopen_15k/policy.pth \
     --run_id ft_ccdelay_2k --episodes 2000 "$@"
 
 echo "done $(date)"

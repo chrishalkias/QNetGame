@@ -16,7 +16,7 @@ def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_15k/policy.pth")
+    ap.add_argument("--ckpt", default="checkpoints/omni_initial/omni_nopen_15k/policy.pth")
     ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--N", type=int, default=10)
     ap.add_argument("--p_gen", type=float, default=0.5)

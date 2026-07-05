@@ -29,7 +29,7 @@ def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true", help="render from existing json")
-    ap.add_argument("--ckpt", default="checkpoints/omni_nopen_15k/policy.pth")
+    ap.add_argument("--ckpt", default="checkpoints/omni_initial/omni_nopen_15k/policy.pth")
     ap.add_argument("--episodes", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save_dir", default=None)

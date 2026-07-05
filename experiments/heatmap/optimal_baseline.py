@@ -403,7 +403,7 @@ def parse_args(argv=None):
     p.add_argument("--mc_eps_opt", type=int, default=4000,
                    help="Monte-Carlo episodes validating the DP optimum")
     p.add_argument("--ckpt", type=str,
-                   default="checkpoints/cluster/cluster_004/policy.pth",
+                   default="checkpoints/legacy/cluster/cluster_004/policy.pth",
                    help="agent checkpoint for the gap-to-optimal column (optional)")
     p.add_argument("--out_json", type=str, default="results/optimal/optimal_baseline.json")
     p.add_argument("--policy_dir", type=str, default="results/optimal/optimal_policies")

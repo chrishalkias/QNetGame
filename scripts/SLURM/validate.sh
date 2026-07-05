@@ -25,7 +25,7 @@ echo "Job $SLURM_JOB_ID started at $(date)"
 echo "Node: $(hostname)"
 
 python -u experiments/training/batch_validate.py \
-    --model checkpoints/cluster/cluster_004/policy.pth \
+    --model checkpoints/legacy/cluster/cluster_004/policy.pth \
     --episodes 200 \
     --seed 42 \
     --save_dir results/batch_validate \

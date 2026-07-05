@@ -54,4 +54,4 @@ python -u experiments/training/train.py \
     --save_base_dir checkpoints
 
 echo "Job completed at $(date)"
-echo "Checkpoint: checkpoints/cluster/inhomo_001/policy.pth"
+echo "Checkpoint: checkpoints/legacy/cluster/inhomo_001/policy.pth"

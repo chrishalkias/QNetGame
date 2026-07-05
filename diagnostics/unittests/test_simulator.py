@@ -675,6 +675,38 @@ class TestGhostLinkResolution(unittest.TestCase):
         self.assertEqual(net.repeaters[0].num_occupied(), 0)
         self.assertEqual(net.repeaters[2].num_occupied(), 0)
 
+    def test_self_link_swap_dropped(self):
+        """A deferred swap whose two remote endpoints have collapsed onto the
+        SAME node (ra == rb) must be dropped and both survivors freed, never
+        crash set_link with a self-link. Regression for the CC-delay
+        _resolve_swap 'Attempting to generate inter-node entanglement' ValueError.
+        """
+        net = build_chain(3, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
+                          F0=1.0, channel_loss=0.0, dt_seconds=1e-6,
+                          distance_dep_gen=False, rng=np.random.default_rng(0))
+        rep0 = net.repeaters[0]
+        q_a, q_b = 0, 1
+        for q in (q_a, q_b):                      # two locked remotes on ONE node,
+            rep0.status[q] = QUBIT_OCCUPIED       # back-pointers cleared as swap() does
+            rep0.partner_repeater[q] = NO_PARTNER
+            rep0.partner_qubit[q] = NO_PARTNER
+            rep0.lock_qubit(q)
+        net.pending_events.append({
+            "type": "swap", "timer": 0,
+            "ra": 0, "qa_r": q_a, "rb": 0, "qb_r": q_b, "p_new": 0.9,
+            "gen_a": int(rep0.generation_id[q_a]),
+            "gen_b": int(rep0.generation_id[q_b]),
+        })
+        # Must resolve WITHOUT raising the self-link ValueError.
+        net.age_links(discard_expired=False)
+        # Both survivors freed + unlocked, and NO self-link was created.
+        self.assertEqual(int(rep0.status[q_a]), QUBIT_FREE)
+        self.assertEqual(int(rep0.status[q_b]), QUBIT_FREE)
+        self.assertFalse(bool(rep0.locked[q_a]))
+        self.assertFalse(bool(rep0.locked[q_b]))
+        self.assertNotEqual(int(rep0.partner_repeater[q_a]), 0)   # not linked to self
+        self.assertEqual(len(net.pending_events), 0)
+
     def test_ghost_purify_abort(self):
         """Kept qubit expires during purify delay → both sides cleaned up."""
         net = _perfect_chain(3, cutoff=100)
