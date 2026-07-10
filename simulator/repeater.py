@@ -17,10 +17,16 @@ def werner_to_fidelity(p):
     return (3.0 * np.asarray(p, dtype=np.float64) + 1.0) / 4.0
 
 def bbpssw_success_prob(f1, f2):
-    # Simplified BBPSSW success probability for Werner states.
-    # Equivalent to (3*p1*p2 + 1)/4 in Werner parameters.
-    # Yields 0.25 at F=0.25 (fully mixed), 1 at F=1 (perfect).
-    return (4/3 * f1 * f2) - 1/3 * (f1 + f2) + 1/3
+    """Canonical BBPSSW success probability on two Werner pairs.
+
+    Bennett et al., PRL 76, 722 (1996). In fidelities the twirled BBPSSW
+    density matrix gives P_succ = (8*F1*F2 - 2*(F1+F2) + 5)/9; in Werner
+    parameters this is (p1*p2 + 1)/2. It is exactly 1/9 of the denominator
+    of ``bbpssw_new_fidelity`` (both derive from the one BBPSSW density
+    matrix), so the two are self-consistent. Anchors: 5/9 at F1=F2=0.5, 1 at
+    F1=F2=1.
+    """
+    return (8 * f1 * f2 - 2 * (f1 + f2) + 5) / 9
 
 def bbpssw_new_fidelity(f1, f2):
     """Post-purification fidelity given two input fidelities (BBPSSW protocol)."""

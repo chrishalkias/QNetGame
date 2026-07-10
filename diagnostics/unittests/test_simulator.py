@@ -145,16 +145,41 @@ class TestBBPSSWPurification(unittest.TestCase):
     """
     BBPSSW protocol (Bennett et al. 1996).
 
-    Success prob: P_suc = (8/9)*p1*p2 - (2/9)*(p1+p2) + 5/9
-      where p1, p2 are Werner parameters.
+    Success prob (in fidelities): P_suc = (8*F1*F2 - 2*(F1+F2) + 5)/9
+      equivalently in Werner parameters P_suc = (p1*p2 + 1)/2.
     New Werner:   p_new = (1-(p1+p2)+10*p1*p2) / (5-2*(p1+p2)+8*p1*p2)
     """
 
     def test_success_prob_identical_states(self):
-        # For two identical states with F = 0.9, check against formula.
+        # Canonical BBPSSW success rate for two identical F=0.9 Werner pairs.
+        # In fidelities: (8*F1*F2 - 2*(F1+F2) + 5)/9; for F1=F2=f this is
+        # (8*f*f - 4*f + 5)/9 = (8*0.81 - 3.6 + 5)/9 = 7.88/9 = 0.875556.
         f = 0.9
-        expected = (4/3)*f*f - (2/3)*f + 1/3
+        expected = (8*f*f - 4*f + 5)/9
         self.assertAlmostEqual(float(bbpssw_success_prob(f, f)), expected, places=9)
+
+    def test_success_prob_canonical_anchor_half(self):
+        # At F1=F2=0.5 (fully separable Werner p=1/3) the canonical BBPSSW rate
+        # is 5/9. The old non-canonical (3*p1*p2+1)/4 map gives 1/3 here.
+        self.assertAlmostEqual(float(bbpssw_success_prob(0.5, 0.5)), 5/9, places=12)
+
+    def test_success_prob_equals_werner_form(self):
+        # Canonical rate in Werner params: (p1*p2 + 1)/2. Cross-check the
+        # fidelity-domain function against it over several inputs.
+        for f1, f2 in [(0.5, 0.5), (0.7, 0.9), (0.6, 0.85), (1.0, 1.0)]:
+            p1, p2 = fidelity_to_werner(f1), fidelity_to_werner(f2)
+            expected = (float(p1)*float(p2) + 1)/2
+            self.assertAlmostEqual(float(bbpssw_success_prob(f1, f2)),
+                                   expected, places=12)
+
+    def test_success_prob_is_ninth_of_new_fidelity_denominator(self):
+        # Internal-consistency: the success rate must be exactly 1/9 of the
+        # denominator of bbpssw_new_fidelity (both come from one twirled
+        # BBPSSW density matrix). D = 5 - 2*(F1+F2) + 8*F1*F2.
+        for f1, f2 in [(0.5, 0.5), (0.7, 0.9), (0.6, 0.85)]:
+            denom = 5 - 2*(f1 + f2) + 8*f1*f2
+            self.assertAlmostEqual(float(bbpssw_success_prob(f1, f2)),
+                                   denom/9, places=12)
 
     def test_new_fidelity_higher_than_inputs(self):
         # A successful purification must strictly improve fidelity.
@@ -208,6 +233,52 @@ class TestEntanglementSwapping(unittest.TestCase):
         actual_initial_p = float(rep0.initial_werner[occupied[0]])
         self.assertAlmostEqual(actual_initial_p, expected_p_new, places=5)
 
+    def test_swap_resolution_single_counts_decoherence(self):
+        # HIGH-1 (swap): the resolved link's value must be exactly the product
+        # of the two links' decohered Werner values at resolution time, with
+        # NO extra decay factor re-applied by set_link.
+        # Setup: two links p0=1 aged to exactly 5 ticks each, tau=cutoff=20.
+        #   each decohered value w = e^(-5/20); product = e^(-10/20) ~ 0.6065.
+        #   Resolved link age must be age_A + age_B = 10.
+        # Old (buggy) code re-applied max(age)=5 on top: e^(-10/20)*e^(-5/20)
+        #   = e^(-15/20) ~ 0.4724, and stored age 5.
+        tau = 20
+        net = _perfect_chain(3, cutoff=tau)
+        net.entangle(0, 1)
+        net.entangle(1, 2)
+        for _ in range(5):                       # age both links to exactly 5
+            net.age_links(discard_expired=False)
+        res = net.swap(1)
+        self.assertTrue(res["success"])
+        # Resolve directly (no intervening age tick) so ages stay 5 + 5.
+        net._resolve_swap(net.pending_events[0])
+        rep0 = net.repeaters[0]
+        occ = rep0.occupied_indices()
+        self.assertEqual(len(occ), 1, "R0 should hold exactly the new link.")
+        q = int(occ[0])
+        self.assertAlmostEqual(float(rep0.werner_param[q]),
+                               math.exp(-10 / tau), places=5)
+        self.assertEqual(int(rep0.age[q]), 10)
+
+    def test_swap_resolution_future_decay_from_resolution_value(self):
+        # HIGH-1 (swap) invariant (c): k ticks after resolution the value is
+        # (resolution value)*exp(-k/tau). resolution value = e^(-10/20); after
+        # 3 more ticks -> e^(-13/20).
+        tau = 20
+        net = _perfect_chain(3, cutoff=tau)
+        net.entangle(0, 1)
+        net.entangle(1, 2)
+        for _ in range(5):
+            net.age_links(discard_expired=False)
+        net.swap(1)
+        net._resolve_swap(net.pending_events[0])
+        rep0 = net.repeaters[0]
+        q = int(rep0.occupied_indices()[0])
+        for _ in range(3):
+            rep0.age_occupied()
+        self.assertAlmostEqual(float(rep0.werner_param[q]),
+                               math.exp(-13 / tau), places=5)
+
     def test_local_qubits_freed_after_bsm(self):
         # BSM physically consumes both local qubits immediately.
         net = _perfect_chain(3, cutoff=50)
@@ -217,6 +288,52 @@ class TestEntanglementSwapping(unittest.TestCase):
         # R1 should have no occupied qubits right after the BSM.
         self.assertEqual(net.repeaters[1].num_occupied(), 0,
                          "BSM must destroy local qubits instantly.")
+
+
+class TestPurifyResolutionDecoherence(unittest.TestCase):
+    """HIGH-1 (purify): the resolved kept-pair value must equal the BBPSSW
+    output of the decision-time fidelities (ev['p_new']) with NO extra decay
+    factor, and the resolved age must be age_A + age_B."""
+
+    def test_purify_resolution_single_counts_decoherence(self):
+        # Two parallel links between R0 and R1, both p0=1 aged to 5, tau=20.
+        # Decision fidelities come from w=e^(-5/20); p_new = BBPSSW output in
+        # Werner. Resolved werner must equal p_new exactly (no *e^(-age/tau)).
+        # Old code wrote p_new*e^(-5/20). Resolved age must be 5+5 = 10.
+        tau = 20
+        net = build_chain(2, n_ch=4, spacing=50.0,
+                          p_gen=1.0, p_swap=1.0, cutoff=tau,
+                          F0=1.0, channel_loss=0.0, dt_seconds=1e-4,
+                          distance_dep_gen=False, rng=np.random.default_rng(0))
+        net.entangle(0, 1)
+        net.entangle(0, 1)
+        for _ in range(5):
+            net.age_links(discard_expired=False)
+
+        # Force the BBPSSW coin to succeed deterministically (rng.random()==0).
+        class _ZeroRNG:
+            def random(self):
+                return 0.0
+        net.rng = _ZeroRNG()
+
+        res = net.purify(0, 1)
+        self.assertEqual(res["reason"], "pending")
+        ev = net.pending_events[0]
+        self.assertTrue(ev["success"])
+        p_new = float(ev["p_new"])
+        # Resolve directly (no age tick) so kept-pair ages stay 5 + 5.
+        net._resolve_purify(ev)
+        rep0 = net.repeaters[0]
+        occ = rep0.occupied_indices()
+        self.assertEqual(len(occ), 1, "R0 should hold exactly the kept pair.")
+        q = int(occ[0])
+        self.assertAlmostEqual(float(rep0.werner_param[q]), p_new, places=5)
+        self.assertEqual(int(rep0.age[q]), 10)
+        # invariant (c): 3 more ticks -> p_new * e^(-3/tau).
+        for _ in range(3):
+            rep0.age_occupied()
+        self.assertAlmostEqual(float(rep0.werner_param[q]),
+                               p_new * math.exp(-3 / tau), places=5)
 
 
 class TestClassicalDelay(unittest.TestCase):
@@ -264,6 +381,56 @@ class TestClassicalDelay(unittest.TestCase):
         self.assertEqual(net.repeaters[0].num_locked(), 1)
         self.assertEqual(net.repeaters[2].num_locked(), 1)
 
+    def test_cc_delay_resolves_after_k_ticks_no_off_by_one(self):
+        # MEDIUM-1: a timer-k event must resolve k age_links calls after the
+        # queuing step. The queuing step in the real env has its OWN age_links
+        # (the "same-step" call), which counts as the 1st; delay=0 resolves
+        # there. Here dt is tuned so d_max=50 km gives delay = 2:
+        #   ceil(50 / (200000 * 2e-4)) = ceil(50/40) = ceil(1.25) = 2.
+        # So: age_links call 1 (same step) -> no; call 2 (1st subsequent) -> no;
+        # call 3 (2nd subsequent) -> resolve. The old off-by-one resolved on
+        # call 2. We assert the event is still pending after 2 calls and gone
+        # (link formed) after 3.
+        net = build_chain(3, n_ch=4, spacing=50.0,
+                          p_gen=1.0, p_swap=1.0, cutoff=50,
+                          F0=1.0, channel_loss=0.0,
+                          dt_seconds=2e-4,
+                          distance_dep_gen=False,
+                          rng=np.random.default_rng(0))
+        self.assertEqual(net._classical_delay_steps(50.0), 2)
+        net.entangle(0, 1)
+        net.entangle(1, 2)
+        net.swap(1)
+        self.assertEqual(net.pending_events[0]["timer"], 2)
+
+        net.age_links(discard_expired=False)  # call 1 (same step)
+        self.assertEqual(len(net.pending_events), 1, "resolved too early (call 1)")
+        net.age_links(discard_expired=False)  # call 2 (1st subsequent)
+        self.assertEqual(len(net.pending_events), 1, "resolved too early (call 2)")
+        net.age_links(discard_expired=False)  # call 3 (2nd subsequent)
+        self.assertEqual(len(net.pending_events), 0, "should have resolved (call 3)")
+        rep0 = net.repeaters[0]
+        occ = rep0.occupied_indices()
+        self.assertEqual(len(occ), 1)
+        self.assertEqual(int(rep0.partner_repeater[int(occ[0])]), 2,
+                         "R0 must now hold the swapped long link to R2.")
+
+    def test_cc_delay_zero_resolves_same_step(self):
+        # Constraint: dt <= 0 (SOTA default) gives delay 0 and MUST resolve in
+        # the queuing step's own age_links (the first call after swap).
+        net = build_chain(3, n_ch=4, spacing=50.0,
+                          p_gen=1.0, p_swap=1.0, cutoff=50,
+                          F0=1.0, channel_loss=0.0,
+                          dt_seconds=0.0,
+                          distance_dep_gen=False,
+                          rng=np.random.default_rng(0))
+        net.entangle(0, 1)
+        net.entangle(1, 2)
+        net.swap(1)
+        self.assertEqual(net.pending_events[0]["timer"], 0)
+        net.age_links(discard_expired=False)  # same-step call
+        self.assertEqual(len(net.pending_events), 0, "delay-0 must resolve same step")
+
 
 class TestDistanceDependency(unittest.TestCase):
     """
@@ -286,15 +453,40 @@ class TestDistanceDependency(unittest.TestCase):
         self.assertAlmostEqual(net._gen_prob(0, 1), expected, places=6)
 
     def test_initial_fidelity_scaling(self):
+        # Depolarizing loss damps the Werner parameter: p0 = w(F0)*exp(-loss*d),
+        # reported as F = werner_to_fidelity(p0). At F0=1 the baseline w(1)=1, so
+        # p0 = exp(-loss*d) and F = (3*exp(-loss*d) + 1)/4.
+        # d=50, loss=0.02: exp(-1)=0.3678794; F=(3*0.3678794+1)/4=0.5259096.
         loss, d = 0.02, 50.0
         net = self._make_two_node(d, loss)
-        expected_fid = 1.0 * math.exp(-loss * d)
+        expected_fid = (3 * math.exp(-loss * d) + 1) / 4
         self.assertAlmostEqual(net._gen_fidelity(0, 1), expected_fid, places=6)
 
     def test_zero_loss_unity_fidelity(self):
         net = self._make_two_node(50.0, 0.0)
         self.assertAlmostEqual(net._gen_fidelity(0, 1), 1.0, places=9)
         self.assertAlmostEqual(net._gen_prob(0, 1), 1.0, places=9)
+
+    def test_generated_fidelity_never_below_quarter(self):
+        # HIGH-2: fiber loss is a depolarizing channel — it must damp the Werner
+        # parameter p (F -> 1/4 as d -> inf), not the fidelity itself. The old
+        # F0*exp(-loss*d) fell below the 1/4 mixed-state floor past ~69 km.
+        loss, F0 = 0.02, 1.0
+        for d in [50.0, 69.0, 100.0, 300.0, 1000.0]:
+            net = self._make_two_node(d, loss)
+            f = float(net._gen_fidelity(0, 1))
+            self.assertGreaterEqual(f, 0.25 - 1e-12,
+                                    f"generated F={f} below 1/4 floor at d={d}")
+
+    def test_depolarizing_loss_damps_werner(self):
+        # Explicit depolarizing form: p0 = w(F0)*exp(-loss*d), so the reported
+        # fidelity is werner_to_fidelity(p0). At F0=1, d=100, loss=0.02:
+        #   p0 = exp(-2) ~ 0.13534, F = (3*0.13534 + 1)/4 ~ 0.35150.
+        loss, d, F0 = 0.02, 100.0, 1.0
+        net = self._make_two_node(d, loss)
+        p0 = fidelity_to_werner(F0) * math.exp(-loss * d)
+        expected_f = (3 * p0 + 1) / 4
+        self.assertAlmostEqual(float(net._gen_fidelity(0, 1)), expected_f, places=6)
 
 
                            

@@ -103,8 +103,19 @@ class RepeaterNetwork:
         return p_avg
 
     def _gen_fidelity(self, r1: int, r2: int) -> float:
-        """Returns the fidelity of the generated elementary link"""
-        return self.F0 * np.exp(-self.channel_loss * self.distance(r1, r2))
+        """Returns the fidelity of the generated elementary link.
+
+        Modeling choice: ``channel_loss`` is one coefficient split across two
+        physical effects on a fibre span, with different exponents:
+          * generation RATE (``_gen_prob``): photon transmission ~ exp(-loss*d/2)
+          * link FIDELITY (here): distance-dependent DEPOLARIZATION of the
+            Werner parameter, p0 = w(F0)*exp(-loss*d).
+        Damping p (not F) keeps F above the F=1/4 maximally-mixed floor at any
+        distance, as a depolarizing channel must; F0*exp(-loss*d) would drive F
+        below 1/4 (unphysical) past ~69 km. At loss=0 this reduces to F0 exactly.
+        """
+        p0 = fidelity_to_werner(self.F0) * np.exp(-self.channel_loss * self.distance(r1, r2))
+        return float(werner_to_fidelity(p0))
 
 # ▄▄▄                          ▄▄▄▄▄▄▄                                                      
 # ███      ▀▀        ▄▄       ███▀▀▀▀▀                                 ██   ▀▀              
@@ -328,7 +339,11 @@ class RepeaterNetwork:
 
         for ev in self.pending_events:
             ev["timer"] -= 1 # reduce timer by one step (event is closer to resolution)
-            if ev["timer"] > 0:
+            # A timer-k event resolves k age_links calls after the queuing step,
+            # counting that step's own age_links as the first. delay 0 -> timer
+            # 0 -> resolves in the same step (SOTA default); delay k>=1 defers to
+            # k subsequent calls. Resolution fires only once timer goes negative.
+            if ev["timer"] >= 0:
                 still_pending.append(ev)
                 continue
             else:
@@ -398,14 +413,21 @@ class RepeaterNetwork:
             return
 
         ec = min(rep_a.cutoff, rep_b.cutoff)
-        # Each qubit retains its own memory age; use max so future
-        # decoherence tracks the older qubit (swap already accounts for
-        # both pre-swap Werner params via p_new = p_A * p_B).
-        inherited_age = max(int(rep_a.age[qa_r]), int(rep_b.age[qb_r]))
-        rep_a.set_link(qa_r, rb, qb_r, ev["p_new"],
-                       link_age=inherited_age, effective_cutoff=ec)
-        rep_b.set_link(qb_r, ra, qa_r, ev["p_new"],
-                       link_age=inherited_age, effective_cutoff=ec)
+        # Sum-ages history. The resolved value must be exactly the product of
+        # the two remote links' already-decohered Werner values at resolution
+        # (w_A*w_B); set_link must not re-apply decay on top (that would
+        # double-count the pre-swap decoherence). Storing the baseline product
+        # p0_A*p0_B with age = age_A + age_B reproduces w_A*w_B exactly and lets
+        # future decay continue from it: for a shared cutoff tau,
+        # p0_A*p0_B*exp(-(age_A+age_B)/tau) = (p0_A*e^{-age_A/tau})(p0_B*e^{-age_B/tau}).
+        # Exact for the homogeneous per-link cutoffs used everywhere today; an
+        # approximation only if the two links carried different cutoffs.
+        base = float(rep_a.initial_werner[qa_r]) * float(rep_b.initial_werner[qb_r])
+        summed_age = int(rep_a.age[qa_r]) + int(rep_b.age[qb_r])
+        rep_a.set_link(qa_r, rb, qb_r, base,
+                       link_age=summed_age, effective_cutoff=ec)
+        rep_b.set_link(qb_r, ra, qa_r, base,
+                       link_age=summed_age, effective_cutoff=ec)
         rep_a.unlock_qubit(qa_r)
         rep_b.unlock_qubit(qb_r)
 
@@ -455,13 +477,21 @@ class RepeaterNetwork:
                 return
 
             ec = min(rep1.cutoff, rep2.cutoff)
-            # Purification keeps the pair in place; each qubit retains its own
-            # memory age.  Use max so future decoherence tracks the older qubit.
-            inherited_age = max(int(rep1.age[q1_keep]), int(rep2.age[q2_keep]))
-            rep1.set_link(q1_keep, r2, q2_keep, ev["p_new"],
-                          link_age=inherited_age, effective_cutoff=ec)
-            rep2.set_link(q2_keep, r1, q1_keep, ev["p_new"],
-                          link_age=inherited_age, effective_cutoff=ec)
+            # Sum-ages history. ev["p_new"] is the BBPSSW output of the
+            # decision-time fidelities and IS the intended resolution value:
+            # set_link must not re-apply decay on top (double-counting). BBPSSW
+            # is nonlinear so we cannot factor a clean p0 product as with swap;
+            # instead back-solve the baseline that reproduces p_new after the
+            # summed-age decay: base = p_new*exp(+age/tau) (may exceed 1 as a
+            # bookkeeping constant), so werner = base*exp(-age/tau) = p_new now
+            # and future decay continues from p_new. Age = age_A + age_B.
+            summed_age = int(rep1.age[q1_keep]) + int(rep2.age[q2_keep])
+            safe_ec = max(int(ec), 1)
+            base = float(ev["p_new"]) * np.exp(summed_age / safe_ec)
+            rep1.set_link(q1_keep, r2, q2_keep, base,
+                          link_age=summed_age, effective_cutoff=ec)
+            rep2.set_link(q2_keep, r1, q1_keep, base,
+                          link_age=summed_age, effective_cutoff=ec)
             rep1.unlock_qubit(q1_keep)
             rep2.unlock_qubit(q2_keep)
         else:
@@ -1197,6 +1227,14 @@ def _sample_matched_uniform(mean, std, size, rng, lo=0.05, hi=1.0):
     deviation exactly ``std`` (before clipping). ``std <= 0`` broadcasts the
     clipped ``mean`` and consumes NO rng draw, so the homogeneous path keeps the
     pre-inhomogeneity RNG stream bit-for-bit.
+
+    Clipping bias: when ``mean`` sits near a bound, clipping to ``[lo, hi]``
+    piles the truncated tail onto that bound, which pulls the REALIZED mean
+    toward the interior and shrinks the REALIZED std below ``std`` (e.g. mean
+    0.9, std 0.15 spans [0.64, 1.16], so the upper tail collapses onto 1.0).
+    ``mean`` and ``std`` are therefore NOMINAL only; papers must report the
+    realized per-node rate statistics measured from the drawn values, not these
+    nominal parameters.
     """
     if std <= 0.0:
         return np.full(size, float(np.clip(mean, lo, hi)))
