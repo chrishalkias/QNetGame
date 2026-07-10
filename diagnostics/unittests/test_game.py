@@ -212,6 +212,65 @@ def test_disable_actions_trains(tmp_path):
     assert os.path.isfile(os.path.join(sd, "policy.pth"))
 
 
+def _repro_agent(seed):
+    """A fully seed-determined agent: torch net init + agent RNG + replay
+    sampler all pinned to `seed`."""
+    import numpy as np
+    import torch
+    from rl_stack import QRNAgent
+    torch.manual_seed(seed)
+    return QRNAgent(rng=np.random.default_rng(seed), seed=seed)
+
+
+def _repro_run(seed):
+    """A tiny, fully seeded train() run (env physics seeded via env_seed).
+    Returns the per-episode (reward, steps) metrics."""
+    agent = _repro_agent(seed)
+    m = agent.train(episodes=12, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=0.7, p_swap=0.7, cutoff=5, F0=0.95, channel_loss=0.0,
+                    dt_seconds=0.0, curriculum=False, topology="chain",
+                    save_path=None, save_best=False, plot=False, env_seed=seed)
+    return m["reward"], m["steps"]
+
+
+def test_same_seed_bit_reproduces_training_metrics():
+    # Two runs with the SAME master seed must produce identical per-episode
+    # reward + step sequences (env physics is now seeded via env_seed).
+    r1, s1 = _repro_run(123)
+    r2, s2 = _repro_run(123)
+    assert r1 == r2, "same-seed reward sequences must be identical"
+    assert s1 == s2, "same-seed step sequences must be identical"
+
+
+def test_different_seed_changes_training_metrics():
+    # A different master seed must change the trajectory (else nothing is
+    # actually seeded and reproducibility would be vacuous).
+    r1, _ = _repro_run(123)
+    r2, _ = _repro_run(456)
+    assert r1 != r2, "different seeds must yield different reward sequences"
+
+
+def test_run_manifest_written_with_seed_and_commit(tmp_path):
+    import argparse
+    import json
+    import os
+    from experiments.training.train import write_run_manifest
+    args = argparse.Namespace(
+        run_id="mani", seed=7, lr=5e-4, hidden=64, episodes=10,
+        n_lo=4, n_hi=12, p_gen=[0.4, 0.9], p_swap=[0.4, 0.9])
+    sd = str(tmp_path / "mani")
+    os.makedirs(sd, exist_ok=True)
+    write_run_manifest(sd, args)
+    path = os.path.join(sd, "run_config.json")
+    assert os.path.isfile(path)
+    with open(path) as f:
+        man = json.load(f)
+    assert man["args"]["seed"] == 7
+    assert "git_commit" in man and man["git_commit"]        # commit or "unknown"
+    assert "git_dirty" in man and "timestamp" in man
+    assert set(man["versions"]) == {"numpy", "torch", "torch_geometric"}
+
+
 def test_gaps_computes_percentages():
     from simulator.optimal_policy.report import gaps
     row = gaps(N=4, in_distribution=True, T_opt_swaponly=10.0, T_swap=12.0,

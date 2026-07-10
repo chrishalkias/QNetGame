@@ -8,10 +8,15 @@ from typing import List, Dict
 class ReplayBuffer:
     """Fixed-size ring buffer for (s, a, r, s', done, mask') transitions."""
 
-    def __init__(self, max_size: int = 50_000):
+    def __init__(self, max_size: int = 50_000, seed: int = None):
         self.max_size = max_size
         self.buffer = [] # List[Dict[str, Any]]
         self.pos = 0
+        # Replay sampling affects which transitions shape the learned weights,
+        # hence metrics.json. Give the buffer its OWN generator seeded from the
+        # master seed so training is bit-reproducible; seed=None keeps the prior
+        # nondeterministic behavior (module-global random).
+        self._rng = random.Random(seed) if seed is not None else random
 
     def add(self, state, actions, reward, next_state, done, next_mask):
         entry = {"s": state, 
@@ -28,7 +33,7 @@ class ReplayBuffer:
         self.pos = (self.pos + 1) % self.max_size
 
     def sample(self, batch_size: int) -> List[Dict]:
-        return random.sample(self.buffer, min(batch_size, len(self.buffer)))
+        return self._rng.sample(self.buffer, min(batch_size, len(self.buffer)))
 
     def size(self) -> int:
         return len(self.buffer)

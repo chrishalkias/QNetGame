@@ -128,7 +128,8 @@ class QRNAgent:
                  lr = 3e-4, gamma = 0.99,
                  buffer_size = 80_000, batch_size = 64,
                  tau = 0.005, epsilon = 1.0,
-                 rng: Optional[np.random.Generator] = None):
+                 rng: Optional[np.random.Generator] = None,
+                 seed: Optional[int] = None):
 
         self.rng = rng if rng is not None else np.random.default_rng()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -144,7 +145,8 @@ class QRNAgent:
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
         self.loss_fn = nn.SmoothL1Loss()
-        self.memory = ReplayBuffer(max_size=buffer_size)
+        # seed the replay sampler from the master seed (None -> nondeterministic)
+        self.memory = ReplayBuffer(max_size=buffer_size, seed=seed)
 
             #  ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄       ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ 
             # █████▀▀▀ ███▀▀▀▀▀ ███      ███▀▀▀▀▀ ███▀▀▀▀▀ ▀▀▀███▀▀▀ 
@@ -342,6 +344,7 @@ class QRNAgent:
               curriculum_frac = 0.5,
               topology = 'chain',
               prune_unwinnable = False,
+              env_seed = None,
               save_path = None,
               save_best = True,
               best_window = 200,
@@ -435,6 +438,16 @@ class QRNAgent:
         # (curriculum fully open + epsilon at floor); see _ckpt_window_start.
         ckpt_start = self._ckpt_window_start(episodes, curriculum, curriculum_frac)
 
+        # -- Env-RNG seeding (bit-reproducible physics) --
+        # env_seed is not None -> a dedicated SeedSequence deterministically spawns
+        # one child generator per episode, so ALL in-episode physics stochasticity
+        # (entangle/swap/purify coin flips, auto-entangle shuffle, inhomogeneity)
+        # is seed-determined. This does NOT touch self.rng, so the per-episode
+        # domain draws above keep their exact pre-change stream order. env_seed=None
+        # keeps the prior behavior (QRNEnv falls back to OS entropy each episode).
+        env_ss = (np.random.SeedSequence(env_seed) if env_seed is not None
+                  else None)
+
         try:
             for ep in range(episodes):
                 # -- Curriculum: linearly widen max chain size --
@@ -465,7 +478,9 @@ class QRNAgent:
                     'topology' : topology,
                     }
 
-                env = QRNEnv(**args)
+                env_rng = (np.random.default_rng(env_ss.spawn(1)[0])
+                           if env_ss is not None else None)
+                env = QRNEnv(**args, rng=env_rng)
                 obs   = env.reset()
                 score = 0.0
                 ep_loss = []
