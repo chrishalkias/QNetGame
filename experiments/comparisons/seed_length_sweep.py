@@ -21,6 +21,17 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dir", default="results/comparisons/delivery_vs_N_different_seeds")
     ap.add_argument("--n_train_max", type=int, default=12)
+    ap.add_argument("--no_swap_asap", action="store_true",
+                    help="drop the swap-ASAP line (it dwarfs the agents and "
+                         "compresses the y-axis)")
+    ap.add_argument("--logy", action="store_true",
+                    help="log-scale the y-axis to resolve the closely-spaced "
+                         "agent-length curves")
+    ap.add_argument("--logx", action="store_true",
+                    help="log-scale the x-axis (chain size N)")
+    ap.add_argument("--delta", action="store_true",
+                    help="plot %% delivery-time reduction vs purify-then-swap "
+                         "(per length, mean±std over seeds) instead of raw T")
     ap.add_argument("--fig", default="results/figures/delivery_vs_N_seed_length_sweep")
     return ap.parse_args()
 
@@ -64,11 +75,18 @@ def main():
     cmap = plt.get_cmap("viridis")
     fig, ax = plt.subplots(figsize=(6.8, 4.6), constrained_layout=True)
 
+    if a.delta and heur is None:
+        raise SystemExit("--delta needs a JSON carrying T_purify_swap")
+
     for i, lab in enumerate(labels):
         seeds = groups[lab]
         # stack T_agent across seeds, aligned by N (skip N missing in any seed)
         Ns_common = [N for N in Ns if all(N in s for s in seeds)]
         M = np.array([[s[N]["T_agent"] for N in Ns_common] for s in seeds])  # (n_seed, n_N)
+        if a.delta:
+            # per-seed % reduction vs purify-then-swap (positive => agent faster)
+            pur = np.array([heur[N]["T_purify_swap"] for N in Ns_common])
+            M = 100.0 * (pur - M) / pur
         mean, std = M.mean(0), M.std(0, ddof=1) if M.shape[0] > 1 else np.zeros(M.shape[1])
         color = cmap(i / max(len(labels) - 1, 1))
         ax.plot(Ns_common, mean, marker="o", lw=1.8, ms=4, color=color,
@@ -76,20 +94,35 @@ def main():
         if M.shape[0] > 1:
             ax.fill_between(Ns_common, mean - std, mean + std, color=color, alpha=0.18, lw=0)
 
-    if heur is not None:
+    if a.delta:
+        ax.axhline(0, color="tab:red", ls="--", lw=1.4, label="purify-then-swap")
+    elif heur is not None:
         Nh = sorted(heur)
-        ax.plot(Nh, [heur[N]["T_swap_asap"] for N in Nh], ls="--", lw=1.4,
-                color="tab:orange", label="swap-ASAP")
+        if not a.no_swap_asap:
+            ax.plot(Nh, [heur[N]["T_swap_asap"] for N in Nh], ls="--", lw=1.4,
+                    color="tab:orange", label="swap-ASAP")
         ax.plot(Nh, [heur[N]["T_purify_swap"] for N in Nh], ls="--", lw=1.4,
                 color="tab:red", label="purify-then-swap")
 
+    if a.logy:
+        ax.set_yscale("log")
+    if a.logx:
+        ax.set_xscale("log")
+        from matplotlib.ticker import ScalarFormatter, NullFormatter
+        ax.xaxis.set_major_formatter(ScalarFormatter())   # plain N labels, not 10^x
+        ax.xaxis.set_minor_formatter(NullFormatter())
     ax.axvline(a.n_train_max, color="grey", ls=":", lw=1.2)
     ax.text(a.n_train_max + 0.06, ax.get_ylim()[1], " out-of-distribution →",
             color="grey", fontsize=8, va="top")
     ax.set_xlabel("chain size $N$")
-    ax.set_ylabel("delivery time $T$ (avg steps to termination)")
-    ax.set_title("Delivery time vs chain size — training-length sweep (mean ± std over seeds)\n"
-                 r"($p_\mathrm{gen}=0.4$, $p_\mathrm{swap}=0.8$, $n_\mathrm{ch}=4$, cutoff $=20$)")
+    if a.delta:
+        ax.set_ylabel("delivery-time reduction vs purify-then-swap (%)")
+        ax.set_title("Agent vs purify-then-swap — training-length sweep (mean ± std over seeds)\n"
+                     r"($p_\mathrm{gen}=0.4$, $p_\mathrm{swap}=0.8$, $n_\mathrm{ch}=4$, cutoff $=20$)")
+    else:
+        ax.set_ylabel("delivery time $T$ (avg steps to termination)")
+        ax.set_title("Delivery time vs chain size — training-length sweep (mean ± std over seeds)\n"
+                     r"($p_\mathrm{gen}=0.4$, $p_\mathrm{swap}=0.8$, $n_\mathrm{ch}=4$, cutoff $=20$)")
     ax.set_xticks(Ns); ax.grid(alpha=0.3); ax.legend(frameon=False, fontsize=8, ncol=2)
     os.makedirs(os.path.dirname(a.fig) or ".", exist_ok=True)
     fig.savefig(f"{a.fig}.pdf", bbox_inches="tight")

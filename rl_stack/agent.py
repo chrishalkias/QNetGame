@@ -223,7 +223,7 @@ class QRNAgent:
         # ── Target Q (Double DQN with masked next actions) ──
         with torch.no_grad():
             next_q_policy = self.policy_net(next_states)
-            next_q_policy[~next_masks] = -float("inf")   # ← the critical fix
+            next_q_policy[~next_masks] = -float("inf")   # took alot time finding this bug...
             best_actions = next_q_policy.argmax(dim=1)
 
             next_q_target = self.target_net(next_states)
@@ -675,8 +675,6 @@ class QRNAgent:
         strat_fns = {
             "Agent":        None,
             "SwapASAP":     strategies.swap_asap,
-            "BeliefProp":   strategies.belief_propagation_policy,
-            "FidGatedSwap": strategies.fidelity_gated_swap,
             "PurifySwap":   strategies.purify_then_swap,
             "Random":       None,
         }

@@ -170,18 +170,6 @@ def test_build_network_std_zero_is_homogeneous():
     assert all(rep.p_swap == 0.65 for rep in net.repeaters)
 
 
-def test_fidelity_gated_swap_uses_node_state_snapshot():
-    from rl_stack.env_wrapper import QRNEnv
-    from rl_stack.strategies import fidelity_gated_swap
-    env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7, cutoff=20,
-                 max_steps=40, topology="chain",
-                 rng=np.random.default_rng(7))
-    env.reset()
-    actions = fidelity_gated_swap(env, f_threshold=0.5)
-    assert actions.shape == (env.N,)
-    assert set(np.unique(actions)).issubset({0, 1})  # NOOP or SWAP only
-
-
 def test_node_state_exposes_link_cutoff():
     net = _chain()
     net.entangle(0, 1)

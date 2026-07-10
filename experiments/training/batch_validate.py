@@ -42,7 +42,12 @@ import pandas as pd
 # ── project imports ──────────────────────────────────────────────
 from rl_stack.agent import QRNAgent, _obs_to_data
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP
-from rl_stack.strategies import swap_asap
+from rl_stack.strategies import swap_asap, purify_then_swap
+
+# baseline the agent is compared against (pilots always use swap-ASAP so the
+# adaptive cutoff/max_steps stay identical across baselines)
+BASELINES = {"swap_asap": swap_asap, "purify_swap": purify_then_swap}
+BASELINE_LABELS = {"swap_asap": "Swap-ASAP", "purify_swap": "Purify-then-swap"}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -177,12 +182,15 @@ def run_comparison(
     cfg: RunConfig,
     n_episodes: int,
     rng: np.random.Generator,
+    baseline: str = "swap_asap",
 ) -> dict[str, np.ndarray]:
-    """Run agent and swap-ASAP for *n_episodes*.
+    """Run agent and the chosen baseline for *n_episodes*.
 
     Returns dict with keys: "agent", "swap_asap" (delivery-time arrays),
-    and "agent_succ", "swap_asap_succ" (success counts).
+    and "agent_succ", "swap_asap_succ" (success counts). The "swap_asap"
+    key is generic — it holds whichever *baseline* was run.
     """
+    baseline_fn = BASELINES[baseline]
     result: dict[str, list[int]] = {"agent": [], "swap_asap": []}
     successes: dict[str, int] = {"agent_succ": 0, "swap_asap_succ": 0}
 
@@ -208,7 +216,7 @@ def run_comparison(
                     mask = env.get_action_mask()
                     actions = agent.select_actions(obs, mask, training=False)
                 else:
-                    actions = swap_asap(env)
+                    actions = baseline_fn(env)
                 obs, _, done, info = env.step(actions)
                 if done:
                     break
@@ -243,34 +251,59 @@ INSET_P_SWAP = np.round(np.arange(0.75, 1.01, 0.03), 2)
 NODE_COUNTS = [4, 10, 12, 15]
 
 
+def _cell_params(
+    n_nodes: int, p_gen: float, p_swap: float,
+    rng: np.random.Generator, fixed_cutoff: int | None,
+) -> tuple[int, int]:
+    """(max_steps, cutoff) for one sweep cell.
+
+    fixed_cutoff=None -> fully adaptive (estimate_params). Otherwise the
+    cutoff is pinned (e.g. 10**9 = infinite memory) and only the horizon is
+    estimated from a swap-ASAP pilot, sweep-3 style.
+    """
+    if fixed_cutoff is None:
+        return estimate_params(n_nodes, p_gen, p_swap, rng=rng)
+    pilot_cap = 800
+    times = _pilot_swap_asap(n_nodes, p_gen, p_swap, fixed_cutoff,
+                             max_steps=pilot_cap, n_ch=4, n_episodes=15,
+                             rng=rng)
+    succ = [t for t in times if t < pilot_cap]
+    if len(succ) >= 4:
+        return min(int(np.percentile(succ, 95) * 1.2) + 5, pilot_cap), fixed_cutoff
+    return pilot_cap, fixed_cutoff
+
+
 def sweep_pgen_pswap(
     agent: QRNAgent,
     n_episodes: int,
     rng: np.random.Generator,
     save_dir: str = ".",
+    node_counts: Sequence[int] = NODE_COUNTS,
+    baseline: str = "swap_asap",
+    fixed_cutoff: int | None = None,
 ) -> pd.DataFrame:
-    """Return a DataFrame with columns [N, p_gen, p_swap, delta_pct].
+    """Return a DataFrame with columns [N, p_gen, p_swap, delta_pct, ...].
 
     Saves incrementally after each N value so partial results survive
     job timeouts.
     """
     rows: list[dict] = []
-    total = len(NODE_COUNTS) * (
+    total = len(node_counts) * (
         len(COARSE_GRID) ** 2 + len(INSET_P_GEN) * len(INSET_P_SWAP)
     )
     done_count = 0
 
-    for n_nodes in NODE_COUNTS:
+    for n_nodes in node_counts:
         # ── coarse grid ──
         for p_gen, p_swap in itertools.product(COARSE_GRID, COARSE_GRID):
             done_count += 1
             _log_progress("sweep1", done_count, total, n_nodes, p_gen, p_swap)
 
-            max_steps, cutoff = estimate_params(
-                n_nodes, p_gen, p_swap, rng=rng,
+            max_steps, cutoff = _cell_params(
+                n_nodes, p_gen, p_swap, rng, fixed_cutoff,
             )
             cfg = RunConfig(n_nodes, p_gen, p_swap, cutoff, max_steps)
-            res = run_comparison(agent, cfg, n_episodes, rng)
+            res = run_comparison(agent, cfg, n_episodes, rng, baseline=baseline)
             both_fail = (res["agent_succ"] == 0 and res["swap_asap_succ"] == 0)
             rows.append({
                 "N": n_nodes,
@@ -279,18 +312,24 @@ def sweep_pgen_pswap(
                 "delta_pct": relative_improvement(res["agent"], res["swap_asap"]),
                 "both_fail": both_fail,
                 "region": "coarse",
+                "cutoff": cutoff,
+                "max_steps": max_steps,
+                "baseline": baseline,
             })
+            # incremental save every cell — cluster walltime kills lose nothing
+            pd.DataFrame(rows).to_csv(
+                os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False)
 
         # ── inset (fine grid around p_gen ~ 0.1, p_swap ~ 0.9) ──
         for p_gen, p_swap in itertools.product(INSET_P_GEN, INSET_P_SWAP):
             done_count += 1
             _log_progress("sweep1", done_count, total, n_nodes, p_gen, p_swap)
 
-            max_steps, cutoff = estimate_params(
-                n_nodes, p_gen, p_swap, rng=rng,
+            max_steps, cutoff = _cell_params(
+                n_nodes, p_gen, p_swap, rng, fixed_cutoff,
             )
             cfg = RunConfig(n_nodes, p_gen, p_swap, cutoff, max_steps)
-            res = run_comparison(agent, cfg, n_episodes, rng)
+            res = run_comparison(agent, cfg, n_episodes, rng, baseline=baseline)
             both_fail = (res["agent_succ"] == 0 and res["swap_asap_succ"] == 0)
             rows.append({
                 "N": n_nodes,
@@ -299,7 +338,13 @@ def sweep_pgen_pswap(
                 "delta_pct": relative_improvement(res["agent"], res["swap_asap"]),
                 "both_fail": both_fail,
                 "region": "inset",
+                "cutoff": cutoff,
+                "max_steps": max_steps,
+                "baseline": baseline,
             })
+            # incremental save every cell — cluster walltime kills lose nothing
+            pd.DataFrame(rows).to_csv(
+                os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False)
 
         # ── incremental save after each N ──
         df_partial = pd.DataFrame(rows)
@@ -573,13 +618,16 @@ def _draw_heatmap(
         )
 
 
-def plot_pgen_pswap(df: pd.DataFrame, save_dir: str) -> None:
+def plot_pgen_pswap(df: pd.DataFrame, save_dir: str,
+                    node_counts: Sequence[int] = NODE_COUNTS,
+                    baseline: str = "swap_asap") -> None:
     """Two separate figures:
-    1. FacetGrid of 4 coarse heatmaps (N = 4, 10, 12, 15).
-    2. FacetGrid of 4 zoomed-in heatmaps (low p_gen, high p_swap).
+    1. FacetGrid of coarse heatmaps, one panel per N in *node_counts*.
+    2. FacetGrid of zoomed-in heatmaps (low p_gen, high p_swap).
 
     Cells where both strategies fail to reach e2e are greyed out with 'N/A'.
     """
+    blabel = BASELINE_LABELS[baseline]
     coarse = df[df["region"] == "coarse"]
     inset_df = df[df["region"] == "inset"]
 
@@ -587,11 +635,14 @@ def plot_pgen_pswap(df: pd.DataFrame, save_dir: str) -> None:
     vmax = df["delta_pct"].quantile(0.98)
     abs_bound = max(abs(vmin), abs(vmax))
 
-    # ── Figure 1: coarse grid ──
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-    axes_flat = axes.flatten()
+    ncols = min(2, len(node_counts))
+    nrows = -(-len(node_counts) // ncols)   # ceil division
 
-    for idx, n_nodes in enumerate(NODE_COUNTS):
+    # ── Figure 1: coarse grid ──
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7 * ncols, 6 * nrows))
+    axes_flat = np.atleast_1d(axes).flatten()
+
+    for idx, n_nodes in enumerate(node_counts):
         ax = axes_flat[idx]
         sub = coarse[coarse["N"] == n_nodes]
         _draw_heatmap(ax, sub, abs_bound)
@@ -600,8 +651,8 @@ def plot_pgen_pswap(df: pd.DataFrame, save_dir: str) -> None:
         ax.set_ylabel("$p_{swap}$")
 
     fig.suptitle(
-        "Agent vs Swap-ASAP: relative delivery-time improvement (%)\n"
-        "positive (blue) = agent faster, negative (red) = swap-ASAP faster, "
+        f"Agent vs {blabel}: relative delivery-time improvement (%)\n"
+        f"positive (blue) = agent faster, negative (red) = {blabel} faster, "
         "grey = both fail",
         fontsize=13,
         y=1.01,
@@ -616,10 +667,10 @@ def plot_pgen_pswap(df: pd.DataFrame, save_dir: str) -> None:
     if inset_df.empty:
         return
 
-    fig_z, axes_z = plt.subplots(2, 2, figsize=(14, 12))
-    axes_z_flat = axes_z.flatten()
+    fig_z, axes_z = plt.subplots(nrows, ncols, figsize=(7 * ncols, 6 * nrows))
+    axes_z_flat = np.atleast_1d(axes_z).flatten()
 
-    for idx, n_nodes in enumerate(NODE_COUNTS):
+    for idx, n_nodes in enumerate(node_counts):
         ax = axes_z_flat[idx]
         inset_sub = inset_df[inset_df["N"] == n_nodes]
         if inset_sub.empty:
@@ -632,7 +683,7 @@ def plot_pgen_pswap(df: pd.DataFrame, save_dir: str) -> None:
 
     fig_z.suptitle(
         "Zoom: low $p_{gen}$, high $p_{swap}$ region\n"
-        "positive (blue) = agent faster, negative (red) = swap-ASAP faster, "
+        f"positive (blue) = agent faster, negative (red) = {blabel} faster, "
         "grey = both fail",
         fontsize=13,
         y=1.01,
@@ -785,6 +836,21 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated fixed cutoffs for the pgen_pswap_fixed_cutoff sweep",
     )
     p.add_argument(
+        "--node_counts", type=int, nargs="+", default=NODE_COUNTS,
+        help="Chain lengths for the pgen_pswap sweep (one heatmap panel each)",
+    )
+    p.add_argument(
+        "--baseline", type=str, default="swap_asap",
+        choices=sorted(BASELINES),
+        help="Heuristic the agent is compared against in the pgen_pswap sweep",
+    )
+    p.add_argument(
+        "--fixed_cutoff", type=int, default=None,
+        help="Pin the cutoff for the pgen_pswap sweep instead of adapting it "
+             "per cell (e.g. 1000000000 ~ infinite memory: no expiry, no "
+             "decoherence). Horizon is still pilot-estimated per cell.",
+    )
+    p.add_argument(
         "--resume", action="store_true",
         help="Skip work already present in the sweep CSV and append "
              "(applies to pgen_cutoff and pgen_pswap_fixed_cutoff; "
@@ -812,16 +878,24 @@ def main() -> None:
     }
 
     if args.sweep in ("both", "pgen_pswap"):
-        print("\n══ Sweep 1: p_gen × p_swap (N = 4, 10, 12, 15) ══")
-        df1 = sweep_pgen_pswap(agent, args.episodes, rng, save_dir=args.save_dir)
+        print(f"\n══ Sweep 1: p_gen × p_swap (N = {args.node_counts}, "
+              f"baseline = {args.baseline}) ══")
+        df1 = sweep_pgen_pswap(agent, args.episodes, rng, save_dir=args.save_dir,
+                               node_counts=args.node_counts,
+                               baseline=args.baseline,
+                               fixed_cutoff=args.fixed_cutoff)
         csv1 = os.path.join(args.save_dir, "sweep_pgen_pswap.csv")
         df1.to_csv(csv1, index=False)
         print(f"[data] saved {csv1}")
-        plot_pgen_pswap(df1, args.save_dir)
+        plot_pgen_pswap(df1, args.save_dir, node_counts=args.node_counts,
+                        baseline=args.baseline)
 
         results_json["sweeps"]["pgen_pswap"] = {
-            "description": "p_gen x p_swap sweep for N = 4, 10, 12, 15",
-            "node_counts": NODE_COUNTS,
+            "description": f"p_gen x p_swap sweep for N = {args.node_counts}, "
+                           f"agent vs {args.baseline}",
+            "node_counts": args.node_counts,
+            "baseline": args.baseline,
+            "fixed_cutoff": args.fixed_cutoff,
             "results": df1.to_dict(orient="records"),
         }
 

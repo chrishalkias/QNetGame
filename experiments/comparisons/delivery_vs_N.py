@@ -144,8 +144,10 @@ def run_plot(args):
 
     ntm = rows[0].get("n_train_max", args.n_train_max) if rows else args.n_train_max
     ax.axvline(args.n_train_max, color="grey", ls=":", lw=1.3)
-    ax.text(args.n_train_max + 0.08, ax.get_ylim()[1], " out-of-distribution →",
-            color="grey", fontsize=8, va="top")
+    y1, y0 = ax.get_ylim()[1], ax.get_ylim()[0]
+    drop = 0.10 * (y1 - y0)   # ~1cm lower on the 4in-tall axis
+    ax.text(args.n_train_max + 0.08, y1 - drop, " out-of-distribution →",
+            color="grey", fontsize=12, va="top")
 
     pg, ps = rows[0]["p_gen"], rows[0]["p_swap"]
     ax.set_xlabel("chain size $N$")

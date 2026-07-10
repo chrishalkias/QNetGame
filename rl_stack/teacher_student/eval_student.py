@@ -77,7 +77,7 @@ def run_plot(a):
     rows = json.load(open(a.out))
     Ns = [r["N"] for r in rows]
     style = {"student": ("tab:purple", "-"), "teacher": ("tab:blue", "-"),
-             "swap_asap": ("tab:orange", "--"), "purify_swap": ("tab:red", "--")}
+             "swap_asap": ("tab:orange", "--"), "purify_swap": ("tab:green", "--")}
     fig, ax = plt.subplots(figsize=(6.8, 4.6), constrained_layout=True)
     for name, (c, ls) in style.items():
         if f"T_{name}" not in rows[0]:
