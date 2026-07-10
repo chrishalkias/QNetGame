@@ -32,12 +32,12 @@ CC=results/comparisons/cc_vs_nopen_cc.json        # cc15k: agent only
 # nopen15k (zero-shot in CC env) + purify-then-swap reference (swap-ASAP dropped:
 # near-fully censored at large N in the CC env, so it dominated runtime).
 python -u experiments/temp/delivery_vs_N_ccdelay.py \
-    --ckpt checkpoints/omni_initial/omni_nopen_15k/policy.pth --drop_swap_asap \
+    --ckpt checkpoints/sota/policy.pth --drop_swap_asap \
     --n_lo 5 --n_hi 12 --mc_eps 2000 --out "$BASE"
 
 # cc15k (trained with CC delays)
 python -u experiments/temp/delivery_vs_N_ccdelay.py \
-    --ckpt checkpoints/omni_CC/omni_cc_15k/policy.pth --agent_only \
+    --ckpt checkpoints/legacy/pre_physics_fix_2026-07/omni_CC/omni_cc_15k/policy.pth --agent_only \
     --n_lo 5 --n_hi 12 --mc_eps 2000 --out "$CC"
 
 # overlay + delta table

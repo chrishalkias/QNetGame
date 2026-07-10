@@ -26,7 +26,7 @@ def parse_args():
     ap.add_argument("--student",
                     default="checkpoints/teacher_student/student_h16/policy.pth")
     ap.add_argument("--teacher",
-                    default="checkpoints/omni_initial/omni_nopen_15k/policy.pth")
+                    default="checkpoints/sota/policy.pth")
     ap.add_argument("--n_lo", type=int, default=4)
     ap.add_argument("--n_hi", type=int, default=15)
     ap.add_argument("--Ns", type=int, nargs="+", default=None,

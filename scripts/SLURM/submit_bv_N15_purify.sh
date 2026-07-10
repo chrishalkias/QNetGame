@@ -30,7 +30,7 @@ echo "Job $SLURM_JOB_ID started at $(date)"
 echo "Node: $(hostname)"
 
 python -u experiments/training/batch_validate.py \
-    --model checkpoints/omni_initial/omni_nopen_15k/policy.pth \
+    --model checkpoints/sota/policy.pth \
     --episodes 200 \
     --seed 42 \
     --save_dir results/batch_validate/N15_purify_infmem \

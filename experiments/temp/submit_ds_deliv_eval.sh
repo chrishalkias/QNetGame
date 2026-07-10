@@ -24,7 +24,7 @@ source "$HOME/.venvs/qnetgame/bin/activate"
 export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 
 python -u experiments/comparisons/delivery_vs_N.py \
-    --ckpt "checkpoints/different_seeds/$RID/policy.pth" --hidden 64 \
+    --ckpt "checkpoints/legacy/pre_physics_fix_2026-07/different_seeds/$RID/policy.pth" --hidden 64 \
     --agent_only \
     --p_gen 0.4 --p_swap 0.8 --n_ch 4 --cutoff 20 \
     --n_lo 10 --n_hi 15 --horizon 300 --mc_eps 2000 \

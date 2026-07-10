@@ -1,7 +1,7 @@
 """CLI: distill the SOTA teacher into a tiny 1-hop / 3-feature student.
 
   PYTHONPATH=. python rl_stack/teacher_student/train_student.py \
-      --teacher checkpoints/omni_initial/omni_nopen_15k/policy.pth \
+      --teacher checkpoints/sota/policy.pth \
       --episodes 400 --epochs 30 --out checkpoints/teacher_student/student_h16
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--teacher",
-                    default="checkpoints/omni_initial/omni_nopen_15k/policy.pth")
+                    default="checkpoints/sota/policy.pth")
     ap.add_argument("--episodes", type=int, default=400,
                     help="teacher rollout episodes for the frozen dataset")
     ap.add_argument("--epochs", type=int, default=30)

@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument("--channel_loss", type=float, default=0.0)
     parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
 
-    parser.add_argument("--path", type=str, default="checkpoints/legacy/cluster/cluster_004/")
+    parser.add_argument("--path", type=str, default="checkpoints/sota/")
     parser.add_argument("--dict", type=str, default="policy.pth")
     parser.add_argument("--no_plot_actions", dest="plot_actions", action="store_false", default=True)
     parser.add_argument("--verbose", type=int, default=0)

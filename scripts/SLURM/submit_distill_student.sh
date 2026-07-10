@@ -29,7 +29,7 @@ source "$HOME/.venvs/qnetgame/bin/activate"
 export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)  episodes=$EP epochs=$EPOCHS hidden=$HID  $(date)"
 
-TEACHER="checkpoints/omni_initial/omni_nopen_15k/policy.pth"
+TEACHER="checkpoints/sota/policy.pth"
 DATASET="results/policy-distillation/teacher_dataset_big.pkl"
 OUT="checkpoints/teacher_student/student_h${HID}_${EPOCHS}ep"
 JSON="results/policy-distillation/delivery_vs_N_student_${EPOCHS}ep.json"

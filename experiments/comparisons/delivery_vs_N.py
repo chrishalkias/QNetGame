@@ -10,7 +10,7 @@ ceiling (N_train_max) past which the agent extrapolates (zero-shot).
 Two modes (one file):
   eval (default, for the cluster) -> MC-evaluates and writes a JSON
       PYTHONPATH=. python experiments/comparisons/delivery_vs_N.py \
-          --ckpt checkpoints/omni_initial/omni_nopen_15k/policy.pth
+          --ckpt checkpoints/sota/policy.pth
   plot (--plot, local) -> reads the JSON and renders the lineplot
       PYTHONPATH=. python experiments/comparisons/delivery_vs_N.py --plot
 """
@@ -26,7 +26,7 @@ def parse_args():
     ap.add_argument("--metric", choices=["T", "delta"], default="T",
                     help="T = delivery-time lines; delta = %% reduction of agent "
                          "vs swap-ASAP (headline generalization plot, #2)")
-    ap.add_argument("--ckpt", default="checkpoints/omni_initial/omni_nopen_15k/policy.pth")
+    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
     ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--p_gen", type=float, default=0.4)
     ap.add_argument("--p_swap", type=float, default=0.8)

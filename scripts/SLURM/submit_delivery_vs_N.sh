@@ -17,7 +17,7 @@
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p slurm_logs results/comparisons
-RUN="${1:-omni_nopen_15k}"
+RUN="${1:-sota}"
 
 eval "$(/usr/bin/modulecmd bash purge)" 2>/dev/null || true
 eval "$(/usr/bin/modulecmd bash load ALICE/default)"

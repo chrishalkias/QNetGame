@@ -18,7 +18,7 @@
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p slurm_logs results/comparisons
-RUN="${1:-omni_nopen_15k}"
+RUN="${1:-sota}"
 
 eval "$(/usr/bin/modulecmd bash purge)" 2>/dev/null || true
 eval "$(/usr/bin/modulecmd bash load ALICE/default)"
@@ -28,7 +28,7 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)  run=$RUN  $(date)"
 
 python -u experiments/comparisons/delivery_vs_std.py \
-    --ckpt "checkpoints/omni_initial/$RUN/policy.pth" \
+    --ckpt "checkpoints/$RUN/policy.pth" \
     --N 10 --p_gen 0.5 --p_swap 0.75 --n_ch 4 --cutoff 20 \
     --sigmas 0.0 0.05 0.1 0.15 0.2 0.25 \
     --horizon 1500 --mc_eps 2000 \

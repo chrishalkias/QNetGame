@@ -23,7 +23,7 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 # (agent + purify-then-swap) vs N, 15k SOTA agent, idealized (no-CC) physics.
 # Regenerates results/figures/delivery_vs_N_15k.pdf with the F twin axis.
 python -u experiments/comparisons/delivery_vs_N.py \
-    --ckpt checkpoints/omni_initial/omni_nopen_15k/policy.pth \
+    --ckpt checkpoints/sota/policy.pth \
     --hidden 64 \
     --p_gen 0.4 --p_swap 0.8 --n_ch 4 --cutoff 20 \
     --n_lo 10 --n_hi 15 --n_train_max 12 \
