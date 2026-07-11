@@ -139,12 +139,16 @@ def run_plot(args):
         ax.text(args.n_train_max + 0.08, ax.get_ylim()[1], " out-of-distribution →",
                 color="grey", fontsize=8, va="top")
         pg, ps = rows[0]["p_gen"], rows[0]["p_swap"]
+        cut = rows[0].get("cutoff", args.cutoff)
+        hor = rows[0].get("horizon", args.horizon)
         metric_name = "entanglement" if gated else "connection"
         ax.set_xlabel("chain size $N$")
         ax.set_ylabel(f"{metric_name}-time reduction vs swap-ASAP (%)")
         ax.set_title(rf"Agent generalization "
                      rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
-                     rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}${inh})")
+                     rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$, "
+                     rf"$\tau=\mathrm{{cutoff}}={cut}$, $H={hor}${inh})",
+                     fontsize=9)
         ax.set_xticks(Ns); ax.grid(alpha=0.3)
         os.makedirs(os.path.dirname(args.fig) or ".", exist_ok=True)
         fig.savefig(f"{args.fig}_delta.pdf", bbox_inches="tight")
@@ -169,13 +173,17 @@ def run_plot(args):
             color="grey", fontsize=12, va="top")
 
     pg, ps = rows[0]["p_gen"], rows[0]["p_swap"]
+    cut = rows[0].get("cutoff", args.cutoff)
+    hor = rows[0].get("horizon", args.horizon)
     ylab = ("time to end-to-end entanglement $T_\\mathrm{ent}$ (steps)"
             if gated else "delivery time $T$ (avg steps to termination)")
     ax.set_xlabel("chain size $N$")
     ax.set_ylabel(ylab)
     ax.set_title(rf"Time to end-to-end entanglement vs chain size{gate_tag} "
                  rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
-                 rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}${inh})")
+                 rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$, "
+                 rf"$\tau=\mathrm{{cutoff}}={cut}$, $H={hor}${inh})",
+                 fontsize=9)
     ax.set_xticks(Ns)
     ax.grid(alpha=0.3)
 
