@@ -169,7 +169,7 @@ class QRNEnv:
             [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
             [2] in_endnode        — 1.0 if source OR dest (endpoints are symmetric)
             [3] frac_available    — available (unlocked occupied) / n_ch
-            [4] can_swap          — 1.0 if ≥2 available qubits to different partners
+            [4] can_swap          — 1.0 if a viable swap pair exists: ≥2 available qubits to different partners whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
             [5] can_purify        — 1.0 if ≥2 available qubits to same partner
             [6] p_gen             — per-repeater link-generation prob. (inhomogeneity)
             [7] p_swap            — per-repeater BSM success prob. (inhomogeneity)
