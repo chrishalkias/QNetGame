@@ -15,9 +15,7 @@ Covers:
                              and more.
 
 Run with:
-    python -m pytest test_simulator.py -v
-  or
-    python -m unittest test_simulator -v
+    PYTHONPATH=. .venv/bin/python -m pytest diagnostics/unittests/test_simulator.py -v
 """
 
 import math
@@ -1628,7 +1626,8 @@ class TestCutoffFidelityFloor:
     """Idealized physics: no occupied link may ever carry age >= its cutoff,
     and every delivered end-to-end fidelity sits above the universal floor
     (1 + 3e^-1)/4 ~ 0.5259. This is the leak regression test for the
-    2026-07-12 fix (49% of swap-asap deliveries used to violate it)."""
+    2026-07-12 fix (49% of swap-asap deliveries used to violate it at N=10,
+    cutoff=30; this test uses N=5, cutoff=15)."""
 
     FLOOR = (1 + 3 * np.exp(-1)) / 4
 
