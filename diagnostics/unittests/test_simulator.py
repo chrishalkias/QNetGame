@@ -1555,22 +1555,73 @@ class TestPurifyEq4AgeSemantics:
             np.exp(-expected_age / 20), rel=1e-6)
 
     def test_purified_below_floor_is_discarded(self):
-        # if ceil(-ec*ln(p_new)) + accrued >= ec the kept pair is destroyed
+        # if ceil(-ec*ln(p_new)) + accrued >= ec the kept pair is destroyed.
+        # F1=F2=0.5 is the BBPSSW fixed point (F_new=0.5 too), so
+        # p_new = fidelity_to_werner(0.5) = 1/3 and
+        # ceil(-4*ln(1/3)) = 5 >= cutoff=4 unconditionally: this always
+        # exercises the discard branch (network.py:515-519), not just when
+        # the seeded purify draw happens to succeed.
         net = build_network(topology='chain', n_repeaters=2, n_ch=2,
                             p_gen=1.0, p_swap=1.0, cutoff=4,
                             F0=1.0, channel_loss=0.0, dt_seconds=0.0,
                             rng=np.random.default_rng(3))
         assert net.entangle(0, 1)["success"]
         assert net.entangle(0, 1)["success"]
-        rep0 = net.repeaters[0]
-        for rep in net.repeaters:
+        rep0, rep1 = net.repeaters
+        p_half = fidelity_to_werner(0.5)
+        for rep in (rep0, rep1):
             occ = rep.occupied_indices()
-            rep.age[occ] = 3
-            rep.werner_param[occ] = np.exp(-3 / 4)
+            rep.werner_param[occ] = p_half
+            rep.initial_werner[occ] = p_half
+            rep.age[occ] = 0
+
+        # Force the BBPSSW coin to succeed deterministically (rng.random()==0)
+        # so the discard branch is reached regardless of seed.
+        class _ZeroRNG:
+            def random(self):
+                return 0.0
+        net.rng = _ZeroRNG()
+
         res = net.purify(0, 1)
-        if res["success"]:
-            net.age_links()
-            assert rep0.num_occupied() == 0   # both pairs gone: sac + doomed keep
+        assert res["success"]
+        net.age_links()
+        # both the sacrifice pair AND the doomed kept pair are gone: no ghost
+        # link past the fidelity floor the cutoff exists to guarantee
+        assert rep0.num_occupied() == 0
+        assert rep1.num_occupied() == 0
+        for rep in (rep0, rep1):
+            for q in range(rep.n_ch):
+                assert rep.status[q] == QUBIT_FREE
+                assert not rep.locked[q]
+
+    def test_purify_at_depolarizing_floor_p_new_zero_discards_no_crash(self):
+        # BBPSSW at the fixed point F1=F2=1/4 (p=0, the depolarizing floor)
+        # gives p_new=0 exactly. -ln(0) is undefined/inf, so _resolve_purify
+        # must take the m_equiv=ec discard branch (network.py:507-511)
+        # instead of crashing on ceil(-ec*log(0)).
+        net = build_network(topology='chain', n_repeaters=2, n_ch=2,
+                            p_gen=1.0, p_swap=1.0, cutoff=4,
+                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
+                            rng=np.random.default_rng(3))
+        assert net.entangle(0, 1)["success"]
+        assert net.entangle(0, 1)["success"]
+        rep0, rep1 = net.repeaters
+        for rep in (rep0, rep1):
+            occ = rep.occupied_indices()
+            rep.werner_param[occ] = 0.0
+            rep.initial_werner[occ] = 0.0
+            rep.age[occ] = 0
+
+        class _ZeroRNG:
+            def random(self):
+                return 0.0
+        net.rng = _ZeroRNG()
+
+        res = net.purify(0, 1)
+        assert res["success"]
+        net.age_links()   # must not raise on log(0)
+        assert rep0.num_occupied() == 0
+        assert rep1.num_occupied() == 0
 
 
 if __name__ == "__main__":
