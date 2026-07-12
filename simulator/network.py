@@ -302,6 +302,7 @@ class RepeaterNetwork:
             "q1_sac": q1_sac, "q2_sac": q2_sac,
             "q1_keep": q1_keep, "q2_keep": q2_keep,
             "p_new": p_new,
+            "age_keep": int(rep1.age[q1_keep]),
             "gen_keep1": int(rep1.generation_id[q1_keep]),
             "gen_keep2": int(rep2.generation_id[q2_keep]),
             "gen_sac1": int(rep1.generation_id[q1_sac]),
@@ -491,21 +492,35 @@ class RepeaterNetwork:
                 return
 
             ec = min(rep1.cutoff, rep2.cutoff)
-            # Sum-ages history. ev["p_new"] is the BBPSSW output of the
-            # decision-time fidelities and IS the intended resolution value:
-            # set_link must not re-apply decay on top (double-counting). BBPSSW
-            # is nonlinear so we cannot factor a clean p0 product as with swap;
-            # instead back-solve the baseline that reproduces p_new after the
-            # summed-age decay: base = p_new*exp(+age/tau) (may exceed 1 as a
-            # bookkeeping constant), so werner = base*exp(-age/tau) = p_new now
-            # and future decay continues from p_new. Age = age_A + age_B.
-            summed_age = int(rep1.age[q1_keep]) + int(rep2.age[q2_keep])
             safe_ec = max(int(ec), 1)
-            base = float(ev["p_new"]) * np.exp(summed_age / safe_ec)
-            rep1.set_link(q1_keep, r2, q2_keep, base,
-                          link_age=summed_age, effective_cutoff=ec)
-            rep2.set_link(q2_keep, r1, q1_keep, base,
-                          link_age=summed_age, effective_cutoff=ec)
+            # Eq.(4) age semantics (arXiv 2401.13168): represent the purified
+            # fidelity as an equivalent age on a fresh p0=1 baseline,
+            # m' = ceil(-tau*ln(p_new)), plus ticks accrued since the decision
+            # (CC delay + same-tick aging). Age is then an exact fidelity
+            # proxy for every link and purification extends remaining
+            # lifetime. Replaces the old sum-of-endpoint-ages bookkeeping
+            # (doubled expiry clock) and its baseline>1 back-solve.
+            p_new = float(ev["p_new"])
+            accrued = max(int(rep1.age[q1_keep]) - int(ev["age_keep"]), 0)
+            if p_new >= 1.0:
+                m_equiv = 0
+            elif p_new <= 0.0:
+                # already at/below the depolarizing floor (F=1/4, p=0):
+                # -ln(0) is undefined/inf, so force the discard branch below
+                # rather than let ceil() overflow on int conversion.
+                m_equiv = int(ec)
+            else:
+                m_equiv = int(np.ceil(-safe_ec * np.log(p_new)))
+            new_age = m_equiv + accrued
+            if new_age >= ec:
+                # purified state already below the cutoff fidelity floor:
+                # discard rather than create a link expiry can never police
+                self._break_link(r1, q1_keep)
+                return
+            rep1.set_link(q1_keep, r2, q2_keep, 1.0,
+                          link_age=new_age, effective_cutoff=ec)
+            rep2.set_link(q2_keep, r1, q1_keep, 1.0,
+                          link_age=new_age, effective_cutoff=ec)
             rep1.unlock_qubit(q1_keep)
             rep2.unlock_qubit(q2_keep)
         else:

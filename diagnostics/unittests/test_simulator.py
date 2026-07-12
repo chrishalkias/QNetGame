@@ -23,6 +23,7 @@ Run with:
 import math
 import unittest
 import numpy as np
+import pytest
 
 # ── imports ──────────────────────────────────────────────────────────────────
 from simulator.repeater import (
@@ -291,15 +292,20 @@ class TestEntanglementSwapping(unittest.TestCase):
 
 
 class TestPurifyResolutionDecoherence(unittest.TestCase):
-    """HIGH-1 (purify): the resolved kept-pair value must equal the BBPSSW
-    output of the decision-time fidelities (ev['p_new']) with NO extra decay
-    factor, and the resolved age must be age_A + age_B."""
+    """Task 3 (arXiv 2401.13168 Eq. (4)): the resolved kept-pair value must
+    equal the BBPSSW output of the decision-time fidelities (ev['p_new'])
+    represented as an age on a FRESH (p0=1) baseline: m' = ceil(-tau*ln(p_new))
+    plus ticks accrued since the decision. This replaces the old sum-of-
+    endpoint-ages bookkeeping (age_A + age_B, which doubled the expiry clock)
+    and its back-solved baseline (which could exceed 1)."""
 
     def test_purify_resolution_single_counts_decoherence(self):
         # Two parallel links between R0 and R1, both p0=1 aged to 5, tau=20.
         # Decision fidelities come from w=e^(-5/20); p_new = BBPSSW output in
-        # Werner. Resolved werner must equal p_new exactly (no *e^(-age/tau)).
-        # Old code wrote p_new*e^(-5/20). Resolved age must be 5+5 = 10.
+        # Werner. Resolving directly (no intervening age_links call) means
+        # zero ticks accrue since the decision, so the resolved age is just
+        # m' = ceil(-tau*ln(p_new)) and the resolved werner is exp(-m'/tau)
+        # on a fresh p0=1 baseline (NOT p_new itself, and NOT age_A+age_B=10).
         tau = 20
         net = build_chain(2, n_ch=4, spacing=50.0,
                           p_gen=1.0, p_swap=1.0, cutoff=tau,
@@ -321,19 +327,23 @@ class TestPurifyResolutionDecoherence(unittest.TestCase):
         ev = net.pending_events[0]
         self.assertTrue(ev["success"])
         p_new = float(ev["p_new"])
-        # Resolve directly (no age tick) so kept-pair ages stay 5 + 5.
+        # Resolve directly (no age tick) so zero ticks accrue past the
+        # decision-time age recorded in ev["age_keep"].
         net._resolve_purify(ev)
         rep0 = net.repeaters[0]
         occ = rep0.occupied_indices()
         self.assertEqual(len(occ), 1, "R0 should hold exactly the kept pair.")
         q = int(occ[0])
-        self.assertAlmostEqual(float(rep0.werner_param[q]), p_new, places=5)
-        self.assertEqual(int(rep0.age[q]), 10)
-        # invariant (c): 3 more ticks -> p_new * e^(-3/tau).
+        m_equiv = int(math.ceil(-tau * math.log(p_new)))
+        self.assertEqual(int(rep0.age[q]), m_equiv)
+        self.assertAlmostEqual(float(rep0.initial_werner[q]), 1.0, places=9)
+        self.assertAlmostEqual(float(rep0.werner_param[q]),
+                               math.exp(-m_equiv / tau), places=5)
+        # invariant (c): 3 more ticks -> exp(-(m_equiv+3)/tau).
         for _ in range(3):
             rep0.age_occupied()
         self.assertAlmostEqual(float(rep0.werner_param[q]),
-                               p_new * math.exp(-3 / tau), places=5)
+                               math.exp(-(m_equiv + 3) / tau), places=5)
 
 
 class TestClassicalDelay(unittest.TestCase):
@@ -1507,6 +1517,60 @@ class TestBornDeadResolutionGuard(unittest.TestCase):
         self.assertEqual(rep2.status[q2], QUBIT_FREE)
         self.assertFalse(rep0.locked[q0])
         self.assertFalse(rep2.locked[q2])
+
+
+class TestPurifyEq4AgeSemantics:
+    """arXiv 2401.13168 Eq. (4): the purified link's age is back-solved from
+    its fidelity on a fresh (p0=1) baseline, m' = ceil(-tau*ln(p_new)), plus
+    ticks accrued since the decision. Age stays an exact fidelity proxy;
+    purification extends remaining lifetime (the old sum-ages bookkeeping
+    doubled the expiry clock and used baselines > 1)."""
+
+    def test_purified_link_age_and_baseline(self):
+        net = build_network(topology='chain', n_repeaters=2, n_ch=2,
+                            p_gen=1.0, p_swap=1.0, cutoff=20,
+                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
+                            rng=np.random.default_rng(3))
+        assert net.entangle(0, 1)["success"]
+        assert net.entangle(0, 1)["success"]
+        rep0, rep1 = net.repeaters
+        # age both pairs 5 ticks so fidelities are non-trivial
+        for rep in (rep0, rep1):
+            occ = rep.occupied_indices()
+            rep.age[occ] = 5
+            rep.werner_param[occ] = rep.initial_werner[occ] * np.exp(-5 / 20)
+        # force a SUCCESSFUL purify deterministically: seed chosen s.t. the
+        # rng.random() draw <= success prob; if flaky, monkeypatch net.rng
+        res = net.purify(0, 1)
+        assert res["success"], "pick a seed that makes the BBPSSW draw succeed"
+        p_new = fidelity_to_werner(res["new_fidelity"])
+        net.age_links()   # dt=0: resolves this call; kept pair ages 1 first
+        occ = rep0.occupied_indices()
+        assert len(occ) == 1              # sacrifice destroyed, keep survives
+        q = int(occ[0])
+        expected_age = int(np.ceil(-20 * np.log(p_new))) + 1   # accrued = 1
+        assert int(rep0.age[q]) == expected_age
+        assert float(rep0.initial_werner[q]) == pytest.approx(1.0)
+        assert float(rep0.werner_param[q]) == pytest.approx(
+            np.exp(-expected_age / 20), rel=1e-6)
+
+    def test_purified_below_floor_is_discarded(self):
+        # if ceil(-ec*ln(p_new)) + accrued >= ec the kept pair is destroyed
+        net = build_network(topology='chain', n_repeaters=2, n_ch=2,
+                            p_gen=1.0, p_swap=1.0, cutoff=4,
+                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
+                            rng=np.random.default_rng(3))
+        assert net.entangle(0, 1)["success"]
+        assert net.entangle(0, 1)["success"]
+        rep0 = net.repeaters[0]
+        for rep in net.repeaters:
+            occ = rep.occupied_indices()
+            rep.age[occ] = 3
+            rep.werner_param[occ] = np.exp(-3 / 4)
+        res = net.purify(0, 1)
+        if res["success"]:
+            net.age_links()
+            assert rep0.num_occupied() == 0   # both pairs gone: sac + doomed keep
 
 
 if __name__ == "__main__":
