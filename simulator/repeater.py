@@ -256,33 +256,48 @@ class Repeater:
 #                        ██                                          
 #                        ▀▀     
                                      
-    def select_swap_pair(self, network_positions:np.array, rng: Optional[np.random.Generator] = None) -> (Tuple[int, int] | None):
-        """Internal selection of the swap pair"""
-        occupiedQubits = self.available_indices()
-        numQubitsReadyToSwap = len(occupiedQubits)
+    def select_swap_pair(self, network_positions: np.array,
+                         network_cutoffs: np.ndarray,
+                         rng: Optional[np.random.Generator] = None
+                         ) -> (Tuple[int, int] | None):
+        """Internal selection of the swap pair, among VIABLE pairs only.
 
-        if numQubitsReadyToSwap < 2:
+        Viability (arXiv 2401.13168 protocol step 2, adapted to same-tick
+        resolution): the fused link inherits age_a + age_b, and both parents
+        age once more before a dt=0 event resolves, so it survives its cutoff
+        iff age_a + age_b + 2 < ec with ec = min(remote endpoints' cutoffs).
+        With CC delays the in-flight accrual is larger; network._resolve_swap
+        holds the authoritative born-dead guard for that case.
+        """
+        occupiedQubits = self.available_indices()
+        if len(occupiedQubits) < 2:
             return None
-        
-        if self.swap_policy == SwapPolicy.RANDOM:
-            _rng = rng if rng is not None else np.random.default_rng()
-            chosen = _rng.choice(occupiedQubits, size=2, replace=False)
-            return int(chosen[0]), int(chosen[1])
-        
-        idx_i, idx_j = np.triu_indices(numQubitsReadyToSwap, k=1)
+
+        idx_i, idx_j = np.triu_indices(len(occupiedQubits), k=1)
         qa_all, qb_all = occupiedQubits[idx_i], occupiedQubits[idx_j]
 
+        ra = self.partner_repeater[qa_all]
+        rb = self.partner_repeater[qb_all]
+        ec = np.minimum(network_cutoffs[ra], network_cutoffs[rb])
+        viable = (self.age[qa_all] + self.age[qb_all] + 2) < ec
+        if not bool(viable.any()):
+            return None
+        qa_v, qb_v = qa_all[viable], qb_all[viable]
+
+        if self.swap_policy == SwapPolicy.RANDOM:
+            _rng = rng if rng is not None else np.random.default_rng()
+            k = int(_rng.integers(len(qa_v)))
+            return int(qa_v[k]), int(qb_v[k])
+
         if self.swap_policy == SwapPolicy.FARTHEST:
-            #calculate the distance to each remote qubit
-            distanceAC = network_positions[self.partner_repeater[qa_all]]
-            distanceCB = network_positions[self.partner_repeater[qb_all]]
+            distanceAC = network_positions[self.partner_repeater[qa_v]]
+            distanceCB = network_positions[self.partner_repeater[qb_v]]
             dists = np.linalg.norm(distanceAC - distanceCB, axis=1)
-            # return the largest distance idx
             best = int(np.argmax(dists))
         else:
-            products = self.werner_param[qa_all] * self.werner_param[qb_all]
+            products = self.werner_param[qa_v] * self.werner_param[qb_v]
             best = int(np.argmax(products))
-        return int(qa_all[best]), int(qb_all[best])
+        return int(qa_v[best]), int(qb_v[best])
 
 
 # ▄▄▄      ▄▄▄                 

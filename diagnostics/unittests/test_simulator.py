@@ -32,7 +32,7 @@ from simulator.repeater import (
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
 from simulator.network import (
-    RepeaterNetwork, build_chain, build_grid, build_GEANT,
+    RepeaterNetwork, build_chain, build_grid, build_GEANT, build_network,
 )
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY
 
@@ -1406,6 +1406,72 @@ class TestRepeaterInternals(unittest.TestCase):
         result = rep.qubits_to(1)
         self.assertNotIn(0, result)
         self.assertIn(1, result)
+
+
+class TestSwapDecisionGate(unittest.TestCase):
+    """Paper (arXiv 2401.13168) step 2: swapping is attempted only if the
+    fused link would still be inside its cutoff at resolution
+    (age_a + age_b + 2 < ec for dt=0 same-tick resolution)."""
+
+    def _chain3(self, cutoff=10):
+        net = build_network(topology='chain', n_repeaters=3, n_ch=2,
+                            p_gen=1.0, p_swap=1.0, cutoff=cutoff,
+                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
+                            rng=np.random.default_rng(0))
+        assert net.entangle(0, 1)["success"]
+        assert net.entangle(1, 2)["success"]
+        return net
+
+    def test_overage_pair_is_refused(self):
+        net = self._chain3(cutoff=10)
+        rep1 = net.repeaters[1]
+        # age both links so summed age + 2 >= cutoff: 4 + 4 + 2 = 10 >= 10
+        for q in range(2):
+            for rep in net.repeaters:
+                if rep.status[q] == QUBIT_OCCUPIED:
+                    rep.age[q] = 4
+        res = net.swap(1)
+        self.assertFalse(res["success"])
+        self.assertEqual(res["reason"], "no_valid_pair")
+        # nothing was consumed or locked
+        self.assertEqual(rep1.num_occupied(), 2)
+        self.assertEqual(net.repeaters[0].num_locked(), 0)
+        self.assertEqual(net.repeaters[2].num_locked(), 0)
+
+    def test_viable_pair_still_swaps(self):
+        net = self._chain3(cutoff=10)
+        # 3 + 3 + 2 = 8 < 10: viable
+        for q in range(2):
+            for rep in net.repeaters:
+                if rep.status[q] == QUBIT_OCCUPIED:
+                    rep.age[q] = 3
+        res = net.swap(1)
+        self.assertTrue(res["success"])
+
+    def test_selection_skips_doomed_picks_viable(self):
+        # node 1 has TWO pairs: one doomed (old links), one viable (fresh);
+        # FARTHEST would tie, so the viability filter must decide
+        net = build_network(topology='chain', n_repeaters=3, n_ch=4,
+                            p_gen=1.0, p_swap=1.0, cutoff=10,
+                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
+                            rng=np.random.default_rng(0))
+        assert net.entangle(0, 1)["success"]
+        assert net.entangle(1, 2)["success"]
+        # age the first pair to doom any pairing that uses either old qubit
+        rep0, rep1, rep2 = net.repeaters
+        old_q1 = rep1.qubits_to(0)[0]
+        old_q0 = int(rep1.partner_qubit[old_q1])
+        rep0.age[old_q0] = 9
+        rep1.age[old_q1] = 9
+        # fresh second pair on both sides
+        assert net.entangle(0, 1)["success"]
+        assert net.entangle(1, 2)["success"]
+        res = net.swap(1)
+        self.assertTrue(res["success"])
+        # the doomed pair must be untouched: the aged link at node 0 still
+        # exists with its age intact (the swap consumed the fresh pair)
+        self.assertEqual(int(rep0.age[old_q0]), 9)
+        self.assertEqual(rep0.status[old_q0], QUBIT_OCCUPIED)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

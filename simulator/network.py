@@ -40,7 +40,8 @@ class RepeaterNetwork:
         "c_fiber",          # Speed of ligt in fibre
         "pending_events",   # List of pending events (for CC)
         "_positions",        # Array of repeater positions in space
-        "_dist_matrix"       # Matrix of distances between repeaters
+        "_dist_matrix",      # Matrix of distances between repeaters
+        "_cutoffs"           # Array of per-repeater cutoffs for swap viability gate
     )
 
 
@@ -78,6 +79,9 @@ class RepeaterNetwork:
 
         # ---Cached geometry
         self._positions = np.stack([r.position for r in self.repeaters], axis=0)
+        # Per-repeater cutoff vector for the swap viability gate (rid-indexed).
+        self._cutoffs = np.array([r.cutoff for r in self.repeaters],
+                                 dtype=np.int64)
         #position differences
         diff = self._positions[:, None, :] - self._positions[None, :, :]
         self._dist_matrix = np.linalg.norm(diff, axis=-1)
@@ -182,8 +186,8 @@ class RepeaterNetwork:
 
         if not rep.can_swap():
             result["reason"] = "insufficient_qubits"; return result
-        
-        pair = rep.select_swap_pair(self._positions, rng=self.rng)
+
+        pair = rep.select_swap_pair(self._positions, self._cutoffs, rng=self.rng)
 
         if pair is None:
             result["reason"] = "no_valid_pair"; return result
