@@ -205,6 +205,24 @@ def make_calibrated_cells(args, lo=0.30, hi=0.70, n_cells=2, n_episodes=20):
         for cut in (cutoff_lo, cutoff_mid, cutoff_hi)
         for pg, ps in ((p_gen_lo, p_swap_lo), (p_gen_mid, p_swap_mid))
     ]
+    # Dedupe (hardest-first order preserved; identity = full parameter tuple).
+    # Degenerate ranges (lo==hi on p_gen/p_swap/cutoff/n) otherwise leave
+    # literal duplicate candidates, which can silently return the SAME cell
+    # twice below and defeat "probe at two distinct difficulty points".
+    seen = set()
+    deduped = []
+    for c in candidates:
+        key = (c["n_repeaters"], c["n_ch"], c["p_gen"], c["p_swap"],
+               c["cutoff"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(c)
+    candidates = deduped
+    if len(candidates) < n_cells:
+        print(f"[eval-ckpt] WARNING: only {len(candidates)} distinct "
+              f"candidate cell(s) from the run's ranges (requested "
+              f"{n_cells}); ranges are too narrow to probe distinct "
+              f"difficulty points")
     pilot_seed = args.seed * 7919 + 13
     scored = [(c, _pilot_delivery_rate(c, args, n_episodes=n_episodes,
                                        seed=pilot_seed))

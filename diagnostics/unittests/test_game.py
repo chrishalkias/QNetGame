@@ -443,3 +443,31 @@ class TestCalibratedProbeCells:
                            n_lo=4, n_hi=6, cutoff_lo=10, cutoff_hi=20)
         assert (make_calibrated_cells(args, n_episodes=5)
                 == make_calibrated_cells(args, n_episodes=5))
+
+    def test_dedup_degenerate_ranges_no_duplicate_cell(self, capsys):
+        # Fully degenerate ranges (p_gen/p_swap single-valued, n_lo==n_hi,
+        # cutoff scalar) collapse every candidate to ONE distinct parameter
+        # tuple. Must not silently repeat it to pad out to n_cells=2.
+        from experiments.training.train import make_calibrated_cells
+        args = _probe_args(p_gen=[1.0], p_swap=[1.0], n_lo=4, n_hi=4,
+                           cutoff=50, cutoff_lo=None, cutoff_hi=None)
+        cells = make_calibrated_cells(args, n_episodes=5)
+        assert len(cells) == 1
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.out
+        assert "1 distinct candidate" in captured.out
+
+    def test_calibration_fallback_when_all_candidates_easy(self, capsys):
+        # Every candidate is trivially easy (p_gen=p_swap=1.0, generous
+        # cutoff, ample max_steps) -> pilot rate ~1.0 for all, none land in
+        # the [0.30, 0.70] band -> closest-rate fallback must fire.
+        from experiments.training.train import make_calibrated_cells
+        args = _probe_args(p_gen=[1.0], p_swap=[1.0], n_lo=3, n_hi=6,
+                           cutoff_lo=50, cutoff_hi=100, max_steps=60)
+        cells = make_calibrated_cells(args, n_episodes=5)
+        assert len(cells) == 2
+        captured = capsys.readouterr()
+        assert "falling back to closest rates" in captured.out
+
+        cells_again = make_calibrated_cells(args, n_episodes=5)
+        assert cells == cells_again
