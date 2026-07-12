@@ -1473,5 +1473,41 @@ class TestSwapDecisionGate(unittest.TestCase):
         self.assertEqual(int(rep0.age[old_q0]), 9)
         self.assertEqual(rep0.status[old_q0], QUBIT_OCCUPIED)
 
+class TestBornDeadResolutionGuard(unittest.TestCase):
+    """Task 2: swaps that resolve with inherited summed age >= cutoff are
+    discarded (born-dead). This closes the hole for dt>0 where qubits age
+    in flight during CC delay and can miss the decision-time gate."""
+
+    def test_inflight_overage_swap_is_discarded(self):
+        # dt>0 chain: spacing 50km, dt=2.5e-4 -> 1 tick per hop delay.
+        net = build_network(topology='chain', n_repeaters=3, n_ch=2,
+                            p_gen=1.0, p_swap=1.0, cutoff=8,
+                            F0=1.0, channel_loss=0.0, dt_seconds=2.5e-4,
+                            rng=np.random.default_rng(0))
+        assert net.entangle(0, 1)["success"]
+        assert net.entangle(1, 2)["success"]
+        # decision-time gate sees age 2+2+2=6 < 8 -> swap allowed; with the
+        # 1-tick CC delay each parent ages twice before resolution:
+        # summed age at resolution = 3+3+... engineer it to land >= 8
+        for rep in net.repeaters:
+            occ = rep.occupied_indices()
+            rep.age[occ] = 2
+        res = net.swap(1)
+        self.assertTrue(res["success"])  # BSM succeeded, event queued
+        # push ages so the resolved link would be born over-age
+        rep0, rep2 = net.repeaters[0], net.repeaters[2]
+        q0 = int(np.flatnonzero(rep0.locked)[0])
+        q2 = int(np.flatnonzero(rep2.locked)[0])
+        rep0.age[q0] = 4
+        rep2.age[q2] = 4
+        net.age_links()                 # ages to 5+5, timer decrements
+        net.age_links()                 # ages to 6+6=12 >= 8 at resolution, resolves
+        # no ghost link: both slots freed, no occupied qubit points anywhere
+        self.assertEqual(rep0.status[q0], QUBIT_FREE)
+        self.assertEqual(rep2.status[q2], QUBIT_FREE)
+        self.assertFalse(rep0.locked[q0])
+        self.assertFalse(rep2.locked[q2])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -417,6 +417,17 @@ class RepeaterNetwork:
             return
 
         ec = min(rep_a.cutoff, rep_b.cutoff)
+        summed_age = int(rep_a.age[qa_r]) + int(rep_b.age[qb_r])
+        # [Guard] Born-dead link: the fused state's inherited age already
+        # reached the cutoff (in-flight CC accrual, or any path the decision
+        # gate could not see). Creating it would leak a link past the fidelity
+        # floor the cutoff exists to guarantee (expiry phase 3 only sweeps the
+        # pre-resolution list, so it would survive to this step's delivery
+        # check). Discard instead: free both remote endpoints, no link.
+        if summed_age >= ec:
+            rep_a.free_qubit(qa_r)
+            rep_b.free_qubit(qb_r)
+            return
         # Sum-ages history. The resolved value must be exactly the product of
         # the two remote links' already-decohered Werner values at resolution
         # (w_A*w_B); set_link must not re-apply decay on top (that would
@@ -427,7 +438,6 @@ class RepeaterNetwork:
         # Exact for the homogeneous per-link cutoffs used everywhere today; an
         # approximation only if the two links carried different cutoffs.
         base = float(rep_a.initial_werner[qa_r]) * float(rep_b.initial_werner[qb_r])
-        summed_age = int(rep_a.age[qa_r]) + int(rep_b.age[qb_r])
         rep_a.set_link(qa_r, rb, qb_r, base,
                        link_age=summed_age, effective_cutoff=ec)
         rep_b.set_link(qb_r, ra, qa_r, base,
