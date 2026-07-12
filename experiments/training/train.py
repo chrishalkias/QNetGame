@@ -155,23 +155,73 @@ def build_eval_probe(args, hard_cells, probe_seed=12345, n_episodes=40):
     return probe
 
 
-def make_hard_cells(args):
-    """A small fixed grid at the HARD end of the run's own training ranges
-    (largest N, lowest rates, tightest cutoff/memory) so the probe stresses the
-    regime where checkpoint quality actually differs."""
-    p_gen_lo = min(args.p_gen)
-    p_swap_lo = min(args.p_swap)
-    n_hi = args.n_hi
+def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
+    """Fraction of purify-then-swap pilot episodes that deliver end-to-end
+    within max_steps. Post cutoff-fix, every delivery is entangled by
+    construction, so plain delivery rate is the right calibration signal."""
+    from rl_stack.env_wrapper import QRNEnv
+    from rl_stack import strategies
+    wins = 0
+    for k in range(n_episodes):
+        env = QRNEnv(
+            n_repeaters=cell["n_repeaters"], n_ch=cell["n_ch"], spacing=50,
+            p_gen=cell["p_gen"], p_swap=cell["p_swap"],
+            p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std,
+            cutoff=cell["cutoff"], F0=args.F0,
+            channel_loss=args.channel_loss, dt_seconds=args.dt_seconds,
+            max_steps=args.max_steps, topology=args.topology,
+            rng=np.random.default_rng(seed + k))
+        env.reset()
+        for _ in range(args.max_steps):
+            _, _, done, info = env.step(strategies.purify_then_swap(env))
+            if done:
+                wins += int(bool(info["terminated"]))
+                break
+    return wins / n_episodes
+
+
+def make_calibrated_cells(args, lo=0.30, hi=0.70, n_cells=2, n_episodes=20):
+    """Probe cells calibrated to an informative regime (~lo-hi delivery rate
+    under the purify-then-swap pilot). Replaces the hard-corner cells that
+    pinned at the censoring ceiling and made best-checkpoint selection noise
+    (tracked defect: omni_v2_15k_s2 policy.pth). Candidates span the run's
+    own ranges hardest-first; first n_cells in band win; otherwise fall back
+    to the closest rates with a printed warning. Deterministic given
+    args.seed."""
+    p_gen_lo, p_gen_hi = min(args.p_gen), max(args.p_gen)
+    p_swap_lo, p_swap_hi = min(args.p_swap), max(args.p_swap)
+    p_gen_mid = (p_gen_lo + p_gen_hi) / 2
+    p_swap_mid = (p_swap_lo + p_swap_hi) / 2
+    cutoff_lo = args.cutoff_lo if args.cutoff_lo is not None else args.cutoff
+    cutoff_hi = args.cutoff_hi if args.cutoff_hi is not None else args.cutoff
+    cutoff_mid = (cutoff_lo + cutoff_hi) // 2
     n_mid = (args.n_lo + args.n_hi) // 2
     n_ch_lo = min(args.n_ch)
-    cutoff_lo = args.cutoff_lo if args.cutoff_lo is not None else args.cutoff
-    cells = [
-        {"n_repeaters": n_hi, "n_ch": n_ch_lo,
-         "p_gen": p_gen_lo, "p_swap": p_swap_lo, "cutoff": cutoff_lo},
-        {"n_repeaters": max(n_mid, args.n_lo), "n_ch": n_ch_lo,
-         "p_gen": p_gen_lo, "p_swap": p_swap_lo, "cutoff": cutoff_lo},
+
+    candidates = [
+        {"n_repeaters": n, "n_ch": n_ch_lo, "p_gen": pg, "p_swap": ps,
+         "cutoff": cut}
+        for n in (args.n_hi, n_mid)
+        for cut in (cutoff_lo, cutoff_mid, cutoff_hi)
+        for pg, ps in ((p_gen_lo, p_swap_lo), (p_gen_mid, p_swap_mid))
     ]
-    return cells
+    pilot_seed = args.seed * 7919 + 13
+    scored = [(c, _pilot_delivery_rate(c, args, n_episodes=n_episodes,
+                                       seed=pilot_seed))
+              for c in candidates]
+    in_band = [(c, r) for c, r in scored if lo <= r <= hi]
+    if len(in_band) >= n_cells:
+        chosen = in_band[:n_cells]
+    else:
+        target = (lo + hi) / 2
+        by_dist = sorted(scored, key=lambda cr: abs(cr[1] - target))
+        chosen = (in_band + [cr for cr in by_dist if cr not in in_band])[:n_cells]
+        print(f"[eval-ckpt] WARNING: only {len(in_band)} candidate cells in "
+              f"[{lo},{hi}]; falling back to closest rates "
+              f"{[round(r, 2) for _, r in chosen]}")
+    print("[eval-ckpt] calibrated probe cells (N, cutoff, pilot rate): "
+          f"{[(c['n_repeaters'], c['cutoff'], round(r, 2)) for c, r in chosen]}")
+    return [c for c, _ in chosen]
 
 if __name__ == "__main__":
     args = parse_args()
@@ -209,10 +259,11 @@ if __name__ == "__main__":
     eval_fn = None
     eval_every = 0
     if args.episodes >= 5000 and not args.no_eval_ckpt:
-        eval_fn = build_eval_probe(args, make_hard_cells(args))
+        cells = make_calibrated_cells(args)
+        eval_fn = build_eval_probe(args, cells)
         eval_every = max(250, args.episodes // 20)
         print(f"[eval-ckpt] delivery-time probe every {eval_every} eps "
-              f"({len(make_hard_cells(args))} cells x 40 eps); early-stop off")
+              f"({len(cells)} cells x 40 eps); early-stop off")
 
     metrics = agent.train(
         episodes=args.episodes,

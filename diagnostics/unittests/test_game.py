@@ -401,3 +401,45 @@ def test_compare_to_optimal_degrades_without_pickle(tmp_path):
     assert row["T_opt_swaponly"] is None
     assert math.isnan(row["gap_full_pct"])
     assert math.isfinite(row["agent_vs_swap_pct"])
+
+
+def _probe_args(**kw):
+    import argparse
+    base = dict(p_gen=[1.0], p_swap=[1.0], n_lo=3, n_hi=4, n_ch=[2],
+                cutoff=50, cutoff_lo=None, cutoff_hi=None,
+                p_gen_std=0.0, p_swap_std=0.0, F0=1.0, channel_loss=0.0,
+                dt_seconds=0.0, max_steps=40, topology="chain", seed=0)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+class TestCalibratedProbeCells:
+    def test_pilot_rate_easy_cell_near_one(self):
+        from experiments.training.train import _pilot_delivery_rate
+        cell = {"n_repeaters": 3, "n_ch": 2, "p_gen": 1.0, "p_swap": 1.0,
+                "cutoff": 50}
+        assert _pilot_delivery_rate(cell, _probe_args(), n_episodes=10) > 0.9
+
+    def test_pilot_rate_impossible_cell_zero(self):
+        from experiments.training.train import _pilot_delivery_rate
+        cell = {"n_repeaters": 8, "n_ch": 2, "p_gen": 0.3, "p_swap": 0.3,
+                "cutoff": 3}
+        assert _pilot_delivery_rate(cell, _probe_args(max_steps=30),
+                                    n_episodes=6) == 0.0
+
+    def test_calibration_returns_two_complete_cells(self):
+        from experiments.training.train import make_calibrated_cells
+        args = _probe_args(p_gen=[0.4, 0.9], p_swap=[0.4, 0.9],
+                           n_lo=4, n_hi=6, cutoff_lo=10, cutoff_hi=20)
+        cells = make_calibrated_cells(args, n_episodes=5)
+        assert len(cells) == 2
+        for c in cells:
+            assert set(c) == {"n_repeaters", "n_ch", "p_gen", "p_swap",
+                              "cutoff"}
+
+    def test_calibration_deterministic_under_seed(self):
+        from experiments.training.train import make_calibrated_cells
+        args = _probe_args(p_gen=[0.4, 0.9], p_swap=[0.4, 0.9],
+                           n_lo=4, n_hi=6, cutoff_lo=10, cutoff_hi=20)
+        assert (make_calibrated_cells(args, n_episodes=5)
+                == make_calibrated_cells(args, n_episodes=5))
