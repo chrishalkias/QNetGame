@@ -1624,5 +1624,37 @@ class TestPurifyEq4AgeSemantics:
         assert rep1.num_occupied() == 0
 
 
+class TestCutoffFidelityFloor:
+    """Idealized physics: no occupied link may ever carry age >= its cutoff,
+    and every delivered end-to-end fidelity sits above the universal floor
+    (1 + 3e^-1)/4 ~ 0.5259. This is the leak regression test for the
+    2026-07-12 fix (49% of swap-asap deliveries used to violate it)."""
+
+    FLOOR = (1 + 3 * np.exp(-1)) / 4
+
+    def test_no_overage_links_and_floor_holds(self):
+        from rl_stack.env_wrapper import QRNEnv
+        from rl_stack import strategies
+        delivered = 0
+        for seed in range(8):
+            env = QRNEnv(n_repeaters=5, n_ch=2, p_gen=1.0, p_swap=0.8,
+                         cutoff=15, F0=1.0, channel_loss=0.0, dt_seconds=0.0,
+                         max_steps=200, rng=np.random.default_rng(seed))
+            env.reset()
+            for _ in range(200):
+                _, _, done, info = env.step(strategies.swap_asap(env))
+                for rep in env.net.repeaters:
+                    occ = rep.occupied_indices()
+                    if occ.size:
+                        assert (rep.age[occ] < rep.link_cutoff[occ]).all(), \
+                            f"over-age link survived a step (seed {seed})"
+                if done:
+                    if info["terminated"]:
+                        delivered += 1
+                        assert info["fidelity"] > self.FLOOR - 1e-6
+                    break
+        assert delivered >= 3   # the scenario must actually exercise delivery
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -228,9 +228,24 @@ class QRNEnv:
         return np.bincount(partners[partners != NO_PARTNER])
 
     def _can_swap_from(self, ns) -> bool:
-        """True if ns has ≥2 available qubits linked to *distinct* partners."""
-        counts = self._partner_counts(ns)
-        return counts is not None and int(np.count_nonzero(counts)) >= 2
+        """True if ns has a VIABLE swap pair: >=2 available qubits to distinct
+        partners whose fused link survives same-tick resolution
+        (age_i + age_j + 2 < min(link_cutoff_i, link_cutoff_j)). Mirrors the
+        engine's decision gate; exact for homogeneous cutoffs (the only
+        regime in use), and the engine stays authoritative regardless."""
+        avail = np.flatnonzero(ns.occupied & (~ns.locked))
+        if avail.size < 2:
+            return False
+        partners = ns.partner_node[avail]
+        real = partners != NO_PARTNER
+        avail, partners = avail[real], partners[real]
+        if avail.size < 2:
+            return False
+        i, j = np.triu_indices(avail.size, k=1)
+        ages = ns.age[avail].astype(np.int64)
+        cuts = ns.link_cutoff[avail].astype(np.int64)
+        viable = (ages[i] + ages[j] + 2) < np.minimum(cuts[i], cuts[j])
+        return bool(np.any((partners[i] != partners[j]) & viable))
 
     def _can_purify_from(self, ns) -> bool:
         """True if ns has ≥2 available qubits linked to the *same* partner."""
