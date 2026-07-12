@@ -1,15 +1,17 @@
-"""Lazy swap-asap winnability oracle.
+"""Lazy purify-then-swap winnability oracle.
 
-A cell `(p_gen, p_swap, cutoff, N, n_ch)` is *winnable* if swap-asap delivers
-end-to-end at least `min_deliveries` times over `n_pilots` rollouts at a
+A cell `(p_gen, p_swap, cutoff, N, n_ch)` is *winnable* if purify-then-swap
+delivers end-to-end at least `min_deliveries` times over `n_pilots` rollouts at a
 generous `probe_steps` horizon, **under the same (idealized) physics as
 training** — otherwise "unwinnable" would conflate physics with a regime the
 agent never trains in. Results are cached per coarse bin so each region of the
 parameter space is probed only once; pruning the training distribution then
 costs essentially nothing after warmup.
 
-swap-asap is the oracle (not purify-then-swap, which can livelock at n_ch=4):
-if swap-asap can deliver, the agent should be able to too.
+purify-then-swap is the oracle (user decision 2026-07-12): under the repaired
+cutoff physics purification extends link lifetimes, so it dominates swap-asap as
+a feasibility oracle; its n_ch=4 livelock risk is bounded by `probe_steps` and a
+livelocked pilot just marks the cell unwinnable (conservative).
 """
 from __future__ import annotations
 import numpy as np
@@ -53,7 +55,7 @@ class WinnabilityCache:
                 rng=np.random.default_rng(self.rng.integers(2**32)))
             env.reset()
             for _ in range(self.probe_steps):
-                _, _, done, info = env.step(strategies.swap_asap(env))
+                _, _, done, info = env.step(strategies.purify_then_swap(env))
                 if info.get("terminated"):   # delivered (a win, not a timeout)
                     deliveries += 1
                     break
