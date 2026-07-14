@@ -31,7 +31,7 @@ from simulator.repeater import (
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
 from simulator.network import (
-    RepeaterNetwork, build_chain, build_grid, build_GEANT, build_network,
+    RepeaterNetwork, build_chain, build_network,
 )
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY
 
@@ -791,10 +791,6 @@ class TestCrossModuleWiring(unittest.TestCase):
         net = build_chain(3)
         self.assertIsInstance(net, RepeaterNetwork)
 
-    def test_build_grid_returns_repeater_network(self):
-        net = build_grid(2, 3)
-        self.assertIsInstance(net, RepeaterNetwork)
-
     def test_chain_adjacency_is_tridiagonal(self):
         n = 5
         net = _perfect_chain(n)
@@ -803,13 +799,6 @@ class TestCrossModuleWiring(unittest.TestCase):
         # Non-adjacent pairs must be 0.
         self.assertEqual(net.adj[0, 2], 0.0)
         self.assertEqual(net.adj[0, 3], 0.0)
-
-    def test_grid_adjacency_correct(self):
-        net = build_grid(2, 3, spacing=50.0)
-        # Node 0 → 1 and 0 → 3 must be adjacent in a 2×3 grid.
-        self.assertGreater(net.adj[0, 1], 0.0)
-        self.assertGreater(net.adj[0, 3], 0.0)
-        self.assertEqual(net.adj[0, 2], 0.0)   # not directly adjacent
 
 
                                                            
@@ -1334,42 +1323,6 @@ class TestEnvWrapper(unittest.TestCase):
         self.assertEqual(mask.shape, (5, 3))
         # NOOP (column 0) must always be available for every node.
         self.assertTrue(np.all(mask[:, NOOP]))
-
-
-class TestGeantTopology(unittest.TestCase):
-
-    def test_geant_node_count(self):
-        net = build_GEANT()
-        self.assertEqual(net.N, 24)
-
-    def test_geant_adjacency_symmetric(self):
-        net = build_GEANT()
-        np.testing.assert_array_equal(net.adj, net.adj.T,
-                                      err_msg="GEANT adjacency must be symmetric.")
-
-    def test_geant_edge_count(self):
-        net = build_GEANT()
-        # 37 undirected edges → 74 nonzero entries in the full matrix.
-        n_edges = int(np.count_nonzero(net.adj)) // 2
-        self.assertEqual(n_edges, 37)
-
-    def test_geant_distances_positive(self):
-        net = build_GEANT()
-        nonzero = net.adj[net.adj > 0]
-        self.assertTrue(np.all(nonzero > 0),
-                        "All GEANT link weights must be positive km distances.")
-
-    def test_geant_entangle_adjacent_nodes(self):
-        net = build_GEANT(p_gen=1.0, p_swap=1.0, channel_loss=0.0)
-        # AT(0) and CH(2) are adjacent in GEANT.
-        res = net.entangle(0, 2)
-        self.assertTrue(res["success"])
-
-    def test_geant_entangle_non_adjacent_fails(self):
-        net = build_GEANT(p_gen=1.0)
-        # AT(0) and GR(8) are not directly linked.
-        res = net.entangle(0, 8)
-        self.assertFalse(res["success"])
 
 
 class TestRepeaterInternals(unittest.TestCase):

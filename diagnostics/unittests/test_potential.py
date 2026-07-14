@@ -89,19 +89,6 @@ def test_path_progress_guards():
     assert path_progress(z, z, float("inf"), [(0, 1)]) == 0.0
 
 
-def test_env_grid_gives_nonzero_shaping():
-    """The bug being fixed: grids previously got shaping=0. After reset
-    auto-entangles, the stored potential must be > 0 on a grid."""
-    import numpy as np
-    from rl_stack.env_wrapper import QRNEnv
-    env = QRNEnv(n_repeaters=3, n_ch=2, p_gen=1.0, p_swap=0.9, cutoff=20,
-                 F0=1.0, channel_loss=0.0, dt_seconds=0.0, max_steps=60,
-                 topology="grid", rng=np.random.default_rng(0))
-    env.reset()
-    assert env._progress() > 0.0
-    assert 0.0 <= env._phi <= 1.0
-
-
 def test_env_chain_progress_matches_potential():
     """On a chain the new potential must equal a direct path_progress call."""
     import numpy as np

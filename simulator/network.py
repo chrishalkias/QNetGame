@@ -5,7 +5,7 @@ Handles the inter-node logic.
 """
 
 from __future__ import annotations
-from math import radians, cos, sin, sqrt, atan2 # for Geant
+from math import sqrt
 from typing import Optional, Tuple, Dict, Any, List
 import numpy as np
 
@@ -15,6 +15,115 @@ from .repeater import (
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
 from .snapshots import NodeState, Topology, _freeze
+
+
+# ▄▄▄▄▄▄▄▄▄                ▄▄                     ▄▄              ▄▄    ▄▄                   
+# ▀▀▀███▀▀▀                ██                     ██          ▀▀  ██    ██                   
+#    ███ ▄███▄ ████▄ ▄███▄ ██ ▄███▄ ▄████ ██ ██   ████▄ ██ ██ ██  ██ ▄████ ▄█▀█▄ ████▄ ▄█▀▀▀ 
+#    ███ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██▄██   ██ ██ ██ ██ ██  ██ ██ ██ ██▄█▀ ██ ▀▀ ▀███▄ 
+#    ███ ▀███▀ ████▀ ▀███▀ ██ ▀███▀ ▀████  ▀██▀   ████▀ ▀██▀█ ██▄ ██ ▀████ ▀█▄▄▄ ██    ▄▄▄█▀ 
+#              ██                      ██   ██                                               
+#              ▀▀                    ▀▀▀  ▀▀▀                                                
+
+def build_chain(n_repeaters, 
+                n_ch=4, 
+                spacing=50.0,
+                swap_policy=SwapPolicy.FARTHEST,
+                p_gen=0.8, 
+                p_swap=0.5, 
+                cutoff=20, 
+                **kw
+                )-> RepeaterNetwork:
+    """Creates a chain topology network"""
+    reps = [
+            Repeater(rid=i, 
+                     n_ch=n_ch, 
+                     swap_policy=swap_policy,
+                     position=np.array([i * spacing, 0.0]),
+                     p_gen=p_gen, 
+                     p_swap=p_swap, 
+                     cutoff=cutoff
+                     )
+            for i in range(n_repeaters)
+            ]
+    adj = np.zeros((n_repeaters, n_repeaters), dtype=np.float64)
+
+    for i in range(n_repeaters - 1):
+        adj[i, i+1] = adj[i+1, i] = 1.0
+
+    return RepeaterNetwork(reps, adj, **kw)
+
+
+# ▄▄▄      ▄▄▄                 ▄▄
+# ████▄  ▄████ ▀▀             ██  ▄█▀█▄
+# ███▀████▀███ ██ ▄█▀▀▀ ▄████ ██▄█▀  ▄████  ▀▀█▄ ▄█▀█▄ ████▄
+# ███  ▀▀  ███ ██ ▀███▄ ██    ██ ▀█▄ ██     ▄█▀██ ██▄█▀ ██ ▀▀
+# ███      ███ ██▄ ▄▄▄█▀ ▀████ ██  ██ ▀████ ▀█▄██ ▀█▄▄▄ ██
+
+def _sample_matched_uniform(mean, std, size, rng, lo=0.05, hi=1.0):
+    """Per-repeater rates drawn from a uniform with variance ``std**2``, centred
+    on ``mean`` and clipped to ``[lo, hi]``.
+
+    A uniform on ``[mean - sqrt(3)*std, mean + sqrt(3)*std]`` has standard
+    deviation exactly ``std`` (before clipping). ``std <= 0`` broadcasts the
+    clipped ``mean`` and consumes NO rng draw, so the homogeneous path keeps the
+    pre-inhomogeneity RNG stream bit-for-bit.
+
+    Clipping bias: when ``mean`` sits near a bound, clipping to ``[lo, hi]``
+    piles the truncated tail onto that bound, which pulls the REALIZED mean
+    toward the interior and shrinks the REALIZED std below ``std`` (e.g. mean
+    0.9, std 0.15 spans [0.64, 1.16], so the upper tail collapses onto 1.0).
+    ``mean`` and ``std`` are therefore NOMINAL only; papers must report the
+    realized per-node rate statistics measured from the drawn values, not these
+    nominal parameters.
+    """
+    if std <= 0.0:
+        return np.full(size, float(np.clip(mean, lo, hi)))
+    hw = sqrt(3.0) * std
+    return np.clip(rng.uniform(mean - hw, mean + hw, size=size), lo, hi)
+
+
+def build_network(
+    topology: str = "chain",
+    *,
+    n_repeaters: int = 5,
+    n_ch: int = 4,
+    spacing: float = 50.0,
+    p_gen: float = 0.8,
+    p_swap: float = 0.5,
+    p_gen_std: float = 0.0,
+    p_swap_std: float = 0.0,
+    cutoff: int = 20,
+    F0: float = 0.95,
+    channel_loss: float = 0.02,
+    dt_seconds: float = 1e-4,
+    rng=None,
+) -> RepeaterNetwork:
+    """Build a RepeaterNetwork for the given topology.
+
+    Inhomogeneity: `p_gen`/`p_swap` are the per-network MEANS; `p_gen_std`/
+    `p_swap_std` spread per-repeater values via `_sample_matched_uniform`
+    (std=0 -> homogeneous, no rng draw).
+    """
+    rng = rng if rng is not None else np.random.default_rng()
+    # ponytail: chain is the only topology this project models; the `topology`
+    # arg is kept as a validated constant so the ~40 call sites that pass
+    # topology="chain" (and the --topology CLI flag) don't all need editing.
+    if topology != "chain":
+        raise ValueError(f"Unknown topology {topology!r}")
+    net = build_chain(
+        n_repeaters, n_ch=n_ch, spacing=spacing,
+        p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
+        F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
+        distance_dep_gen=True, rng=rng)
+
+    if p_gen_std > 0.0 or p_swap_std > 0.0:
+        pg = _sample_matched_uniform(p_gen, p_gen_std, net.N, rng)
+        ps = _sample_matched_uniform(p_swap, p_swap_std, net.N, rng)
+        for i, rep in enumerate(net.repeaters):
+            rep.p_gen, rep.p_swap = float(pg[i]), float(ps[i])
+    return net
+
 
                                                                                            
 """                                                           
@@ -409,7 +518,7 @@ class RepeaterNetwork:
         # [Guard] Both remote endpoints have collapsed onto the SAME node
         # (ra == rb): a deferred swap cannot form an inter-node link between two
         # qubits on one repeater. Immediate swap() refuses this via the
-        # same_partner guard; the deferred path must too (else set_link raises
+        # same_partner guard the deferred path must too (else set_link raises
         # "Attempting to generate inter-node entanglement"). Drop the void swap
         # and free both locked survivors, mirroring the expiry cleanup above.
         if int(ra) == int(rb):
@@ -979,344 +1088,4 @@ class RepeaterNetwork:
             fig.savefig(filepath, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         return fig
-
-# ▄▄▄▄▄▄▄▄▄                ▄▄                     ▄▄              ▄▄    ▄▄                   
-# ▀▀▀███▀▀▀                ██                     ██          ▀▀  ██    ██                   
-#    ███ ▄███▄ ████▄ ▄███▄ ██ ▄███▄ ▄████ ██ ██   ████▄ ██ ██ ██  ██ ▄████ ▄█▀█▄ ████▄ ▄█▀▀▀ 
-#    ███ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██ ██▄██   ██ ██ ██ ██ ██  ██ ██ ██ ██▄█▀ ██ ▀▀ ▀███▄ 
-#    ███ ▀███▀ ████▀ ▀███▀ ██ ▀███▀ ▀████  ▀██▀   ████▀ ▀██▀█ ██▄ ██ ▀████ ▀█▄▄▄ ██    ▄▄▄█▀ 
-#              ██                      ██   ██                                               
-#              ▀▀                    ▀▀▀  ▀▀▀                                                
-
-def build_chain(n_repeaters, 
-                n_ch=4, 
-                spacing=50.0,
-                swap_policy=SwapPolicy.FARTHEST,
-                p_gen=0.8, 
-                p_swap=0.5, 
-                cutoff=20, 
-                **kw
-                )-> RepeaterNetwork:
-    """Creates a chain topology network"""
-    reps = [
-            Repeater(rid=i, 
-                     n_ch=n_ch, 
-                     swap_policy=swap_policy,
-                     position=np.array([i * spacing, 0.0]),
-                     p_gen=p_gen, 
-                     p_swap=p_swap, 
-                     cutoff=cutoff
-                     )
-            for i in range(n_repeaters)
-            ]
-    adj = np.zeros((n_repeaters, n_repeaters), dtype=np.float64)
-
-    for i in range(n_repeaters - 1):
-        adj[i, i+1] = adj[i+1, i] = 1.0
-
-    return RepeaterNetwork(reps, adj, **kw)
-
-
-def build_grid(rows, 
-               cols, 
-               n_ch=4, 
-               spacing=50.0,
-               swap_policy=SwapPolicy.FARTHEST,
-               p_gen=0.8, 
-               p_swap=0.5, 
-               cutoff=20, 
-               **kw
-               )-> RepeaterNetwork:
-    """Creates a grid topology network"""
-    N = rows * cols
-    reps = [
-            Repeater(rid=idx, 
-                     n_ch=n_ch, 
-                     swap_policy=swap_policy,
-                     position=np.array([c * spacing, r * spacing]),
-                     p_gen=p_gen, 
-                     p_swap=p_swap, 
-                     cutoff=cutoff
-                     ) for idx in range(N) for r, c in [divmod(idx, cols)]
-            ]
-    adj = np.zeros((N, N), dtype=np.float64)
-    for idx in range(N):
-        r, c = divmod(idx, cols)
-        if c+1 < cols: 
-            adj[idx, idx+1] = adj[idx+1, idx] = 1.0
-        if r+1 < rows: 
-            adj[idx, idx+cols] = adj[idx+cols, idx] = 1.0
-    return RepeaterNetwork(reps, adj, **kw)
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle distance in km between two lat/lon points."""
-    R = 6371.0
-    dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
-    a = sin(dlat / 2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)**2
-    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
-
-
-# ---------------------------------------------------------------------------------------------------------------
-#  GEANT Pan-European Research Network  (24 nodes, 37 links)
-# ---------------------------------------------------------------------------------------------------------------
-#
-#                                                         NO---------                    ---------FI
-#                                                          \         ----------SE--------
-#                                                          \                --
-#                                                           \            ---
-#                                                            \        ---
-#                                                             \    ---
-#                                                             \  --
-#                                                              DK
-#                                                             /
-#                                                           //
-#                                                          /
-#         IE-                                             /
-#            ------                   ---NL              /                         ----PL
-#                  ------      -------   / ---          /                 -----------
-#                        --UK--         /     --      //          --------  ----
-#                           --         -BE----- ---  /   ---------     -----
-#                             --      -   --   -----DE--------------CZ-
-#                               -- ---  -----LU--   |                ----
-#                                 FR----            |                   ---
-#                                /  -- ---------    |          -----------ATSK-
-#                              //     ---       ----CH---------         --    ---HU-
-#                             /          ---         \                --     ---    ----
-#                            /              --        \\             SI    --           ----
-#                           /                 ---       \           /  --HR                 ----
-#                          /                     ---     \         /                            ----
-#                        //                         --    \       /                                 --RO
-#                       /                             ---  \      /                                  /
-#                      /                                 ---\\   /                                   /
-#                     /                                     --\ /                                   /
-#                    /                                        -IT-                                 /
-#                  //                                             ----                             /
-#                 /                                                   -----                       /
-#             ---ES                                                        ----                   /
-#     --------                                                                 -----             /
-# PT--                                                                              -----       /
-#                                                                                        ----   /
-#                                                                                            --GR
-
-def build_GEANT(
-    n_ch: int = 4,
-    swap_policy=SwapPolicy.FARTHEST,
-    p_gen: float = 0.8,
-    p_swap: float = 0.5,
-    cutoff: int = 20,
-    **kw,
-    ) -> RepeaterNetwork:
-    """
-    GÉANT pan-European research network topology.
-
-    24 nodes, 37 links.  Node positions are derived from the capital-city
-    lat/lon of each member country and projected onto a flat 2-D plane via
-    an equirectangular projection centred on the mean latitude (~50 °N).
-    Units are kilometres, so distances in the adjacency matrix are km.
-
-    Node index → country code mapping
-    -----------------------------------
-     0 AT   1 BE   2 CH   3 CZ   4 DE   5 DK   6 ES   7 FR
-     8 GR   9 HR  10 HU  11 IE  12 IT  13 LU  14 NL  15 NO
-    16 PL  17 PT  18 RO  19 SE  20 SI  21 SK  22 UK  23 FI
-    """
-
-    # ==== node definitions: (country_code, latitude °N, longitude °E) =======
-    NODE_DATA = [
-        ("AT", 48.21,  16.37),   #  0  Vienna,     Austria
-        ("BE", 50.85,   4.35),   #  1  Brussels,   Belgium
-        ("CH", 47.38,   8.54),   #  2  Zurich,     Switzerland
-        ("CZ", 50.08,  14.44),   #  3  Prague,     Czech Republic
-        ("DE", 50.11,   8.68),   #  4  Frankfurt,  Germany
-        ("DK", 55.68,  12.57),   #  5  Copenhagen, Denmark
-        ("ES", 40.42,  -3.70),   #  6  Madrid,     Spain
-        ("FR", 48.86,   2.35),   #  7  Paris,      France
-        ("GR", 37.97,  23.73),   #  8  Athens,     Greece
-        ("HR", 45.81,  15.98),   #  9  Zagreb,     Croatia
-        ("HU", 47.50,  19.04),   # 10  Budapest,   Hungary
-        ("IE", 53.33,  -6.25),   # 11  Dublin,     Ireland
-        ("IT", 41.90,  12.50),   # 12  Rome,       Italy
-        ("LU", 49.61,   6.13),   # 13  Luxembourg, Luxembourg
-        ("NL", 52.37,   4.90),   # 14  Amsterdam,  Netherlands
-        ("NO", 59.91,  10.75),   # 15  Oslo,       Norway
-        ("PL", 52.23,  21.01),   # 16  Warsaw,     Poland
-        ("PT", 38.72,  -9.14),   # 17  Lisbon,     Portugal
-        ("RO", 44.43,  26.10),   # 18  Bucharest,  Romania
-        ("SE", 59.33,  18.07),   # 19  Stockholm,  Sweden
-        ("SI", 46.05,  14.51),   # 20  Ljubljana,  Slovenia
-        ("SK", 48.14,  17.11),   # 21  Bratislava, Slovakia
-        ("UK", 51.51,  -0.13),   # 22  London,     United Kingdom
-        ("FI", 60.17,  24.93),   # 23  Helsinki,   Finland
-    ]
-
-    N = len(NODE_DATA)
-    lats = np.array([nd[1] for nd in NODE_DATA])
-    lons = np.array([nd[2] for nd in NODE_DATA])
-
-    # equirectangular projection → km  (centred on mean latitude)
-    lat_ref   = np.radians(lats.mean())
-    KM_PER_DEG = 111.32
-    positions = np.stack(
-        [lons * np.cos(lat_ref) * KM_PER_DEG,
-         lats * KM_PER_DEG],
-        axis=1,
-    )
-
-    reps = [
-        Repeater(
-            rid=i,
-            n_ch=n_ch,
-            swap_policy=swap_policy,
-            position=positions[i],
-            p_gen=p_gen,
-            p_swap=p_swap,
-            cutoff=cutoff,
-        )
-        for i in range(N)
-    ]
-
-    # === GÉANT2 link list ===================================
-    EDGES = [
-        # AT (0)
-        (0,  2),   # AT–CH
-        (0,  3),   # AT–CZ
-        (0, 10),   # AT–HU
-        (0, 20),   # AT–SI
-        (0, 21),   # AT–SK
-        # BE (1)
-        (1,  4),   # BE–DE
-        (1,  7),   # BE–FR
-        (1, 13),   # BE–LU
-        (1, 14),   # BE–NL
-        # CH (2)
-        (2,  4),   # CH–DE
-        (2,  7),   # CH–FR
-        (2, 12),   # CH–IT
-        # CZ (3)
-        (3,  4),   # CZ–DE
-        (3, 16),   # CZ–PL
-        (3, 21),   # CZ–SK
-        # DE (4)
-        (4,  5),   # DE–DK
-        (4, 13),   # DE–LU
-        (4, 14),   # DE–NL
-        (4, 16),   # DE–PL
-        # DK (5)
-        (5, 15),   # DK–NO
-        (5, 19),   # DK–SE
-        # ES (6)
-        (6,  7),   # ES–FR
-        (6, 17),   # ES–PT
-        # FR (7)
-        (7, 12),   # FR–IT
-        (7, 13),   # FR–LU
-        (7, 22),   # FR–UK
-        # GR (8)
-        (8, 12),   # GR–IT
-        (8, 18),   # GR–RO
-        # HR (9)
-        (9, 10),   # HR–HU
-        (9, 20),   # HR–SI
-        # HU (10)
-        (10, 18),  # HU–RO
-        (10, 21),  # HU–SK
-        # IE (11)
-        (11, 22),  # IE–UK
-        # IT (12)
-        (12, 20),  # IT–SI
-        # NL (14)
-        (14, 22),  # NL–UK
-        # NO (15)
-        (15, 19),  # NO–SE
-        # SE (19)
-        (19, 23),  # SE–FI
-    ]
-
-    # adjacency matrix weighted by Haversine distance (km)
-    adj = np.zeros((N, N), dtype=np.float64)
-    for i, j in EDGES:
-        d = _haversine_km(lats[i], lons[i], lats[j], lons[j])
-        adj[i, j] = adj[j, i] = d
-
-    return RepeaterNetwork(reps, adj, **kw)
-
-
-# ▄▄▄      ▄▄▄                 ▄▄
-# ████▄  ▄████ ▀▀             ██  ▄█▀█▄
-# ███▀████▀███ ██ ▄█▀▀▀ ▄████ ██▄█▀  ▄████  ▀▀█▄ ▄█▀█▄ ████▄
-# ███  ▀▀  ███ ██ ▀███▄ ██    ██ ▀█▄ ██     ▄█▀██ ██▄█▀ ██ ▀▀
-# ███      ███ ██▄ ▄▄▄█▀ ▀████ ██  ██ ▀████ ▀█▄██ ▀█▄▄▄ ██
-
-def _sample_matched_uniform(mean, std, size, rng, lo=0.05, hi=1.0):
-    """Per-repeater rates drawn from a uniform with variance ``std**2``, centred
-    on ``mean`` and clipped to ``[lo, hi]``.
-
-    A uniform on ``[mean - sqrt(3)*std, mean + sqrt(3)*std]`` has standard
-    deviation exactly ``std`` (before clipping). ``std <= 0`` broadcasts the
-    clipped ``mean`` and consumes NO rng draw, so the homogeneous path keeps the
-    pre-inhomogeneity RNG stream bit-for-bit.
-
-    Clipping bias: when ``mean`` sits near a bound, clipping to ``[lo, hi]``
-    piles the truncated tail onto that bound, which pulls the REALIZED mean
-    toward the interior and shrinks the REALIZED std below ``std`` (e.g. mean
-    0.9, std 0.15 spans [0.64, 1.16], so the upper tail collapses onto 1.0).
-    ``mean`` and ``std`` are therefore NOMINAL only; papers must report the
-    realized per-node rate statistics measured from the drawn values, not these
-    nominal parameters.
-    """
-    if std <= 0.0:
-        return np.full(size, float(np.clip(mean, lo, hi)))
-    hw = sqrt(3.0) * std
-    return np.clip(rng.uniform(mean - hw, mean + hw, size=size), lo, hi)
-
-
-def build_network(
-    topology: str = "chain",
-    *,
-    n_repeaters: int = 5,
-    n_ch: int = 4,
-    spacing: float = 50.0,
-    p_gen: float = 0.8,
-    p_swap: float = 0.5,
-    p_gen_std: float = 0.0,
-    p_swap_std: float = 0.0,
-    cutoff: int = 20,
-    F0: float = 0.95,
-    channel_loss: float = 0.02,
-    dt_seconds: float = 1e-4,
-    rng=None,
-) -> RepeaterNetwork:
-    """Build a RepeaterNetwork for the given topology.
-
-    Inhomogeneity: `p_gen`/`p_swap` are the per-network MEANS; `p_gen_std`/
-    `p_swap_std` spread per-repeater values via `_sample_matched_uniform`
-    (std=0 -> homogeneous, no rng draw).
-    """
-    rng = rng if rng is not None else np.random.default_rng()
-    if topology == "chain":
-        net = build_chain(
-            n_repeaters, n_ch=n_ch, spacing=spacing,
-            p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
-            F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
-            distance_dep_gen=True, rng=rng)
-    elif topology == "grid":
-        net = build_grid(
-            rows=n_repeaters, cols=n_repeaters, n_ch=n_ch, spacing=spacing,
-            swap_policy=SwapPolicy.FARTHEST, p_gen=p_gen, p_swap=p_swap,
-            cutoff=cutoff, rng=rng)
-    elif topology == "geant":
-        net = build_GEANT(
-            n_ch=n_ch, swap_policy=SwapPolicy.FARTHEST,
-            p_gen=p_gen, p_swap=p_swap, cutoff=cutoff, rng=rng)
-    else:
-        raise ValueError(f"Unknown topology {topology!r}")
-
-    if p_gen_std > 0.0 or p_swap_std > 0.0:
-        pg = _sample_matched_uniform(p_gen, p_gen_std, net.N, rng)
-        ps = _sample_matched_uniform(p_swap, p_swap_std, net.N, rng)
-        for i, rep in enumerate(net.repeaters):
-            rep.p_gen, rep.p_swap = float(pg[i]), float(ps[i])
-    return net
-
 

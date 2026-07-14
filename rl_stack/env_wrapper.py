@@ -58,6 +58,24 @@ class QRNEnv:
     Source and destination nodes are always forced to NOOP.
     """
 
+    __slots__ = (
+        "rng",        # RNG: per-episode physics + action sampling
+        "max_steps",  # truncation horizon (steps before time-limit)
+        "gamma",      # PBRS discount (threaded to equal the DQN gamma)
+        "topology",   # topology tag (always 'chain')
+        "net",        # RepeaterNetwork physics engine
+        "_topo",      # frozen Topology snapshot (adjacency + positions)
+        "N",          # number of repeaters
+        "source",     # source node id (0)
+        "dest",       # destination node id (N-1)
+        "steps",      # steps elapsed in the current episode
+        "done",       # episode terminated or truncated
+        "_phi",       # last PBRS potential Φ(s)
+        "_d_src",     # BFS hop distances from source
+        "_d_dst",     # BFS hop distances from dest
+        "_d_total",   # source→dest hop distance (path length)
+    )
+
     STEP_COST       = -0.01
     SUCCESS_REWARD  =  1.0
     # ponytail: 0 = no penalty for failed ops. The mask already blocks invalid
@@ -85,7 +103,7 @@ class QRNEnv:
                  topology = 'chain',
                  gamma = 0.99):
 
-        if topology not in ['chain', 'grid', 'geant']:
+        if topology != 'chain':
             raise ValueError(f'Topology {topology} not supported')
 
         self.rng = rng if rng is not None else np.random.default_rng()
