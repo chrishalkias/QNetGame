@@ -48,6 +48,14 @@ def parse_args():
     ap.add_argument("--agent_only", action="store_true",
                     help="evaluate only the agent policy (skip the ckpt-independent "
                          "heuristics); used for the seed-sweep curves")
+    ap.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
+                    choices=["agent", "swap_asap", "purify_swap"],
+                    help="policies to evaluate; swap-ASAP dropped from the "
+                         "default roster (paper decision 2026-07-13). A single "
+                         "policy lets SLURM array tasks split N x policies")
+    ap.add_argument("--logy", action="store_true", help="log-scale y axis")
+    ap.add_argument("--legend_loc", default="upper left",
+                    help="matplotlib legend location for the T-metric plot")
     ap.add_argument("--fidelity", action="store_true",
                     help="retained for back-compat: mean end-to-end fidelity is "
                          "now always recorded (free from the gated pass) and "
@@ -64,11 +72,16 @@ def run_eval(args):
     from experiments.comparisons._common import eval_gated
     from rl_stack import strategies
 
-    agent_fn = ob.make_agent_fn(args.ckpt, hidden=args.hidden)
-    policies = {"agent": agent_fn}
-    if not args.agent_only:   # heuristics are ckpt-independent -> skip in seed sweeps
+    wanted = ["agent"] if args.agent_only else args.policies
+    policies = {}
+    if "agent" in wanted:
+        policies["agent"] = ob.make_agent_fn(args.ckpt, hidden=args.hidden)
+    if "swap_asap" in wanted:
         policies["swap_asap"] = lambda env, obs: strategies.swap_asap(env)
+    if "purify_swap" in wanted:
         policies["purify_swap"] = lambda env, obs: strategies.purify_then_swap(env)
+    from experiments.comparisons import _common as C
+    C.write_meta(args)
     Ns = list(range(args.n_lo, args.n_hi + 1))
     print(f"N={Ns} p_gen={args.p_gen} p_swap={args.p_swap} n_ch={args.n_ch} "
           f"cutoff={args.cutoff} H={args.horizon} mc_eps={args.mc_eps} "
@@ -157,6 +170,9 @@ def run_plot(args):
     series = [("agent", "Agent", "tab:blue", "o"),
               ("swap_asap", "Swap-ASAP", "tab:orange", "s"),
               ("purify_swap", "Purify-then-swap", "tab:green", "^")]
+    # tolerate JSONs evaluated with a reduced policy roster (no swap-ASAP)
+    series = [s for s in series
+              if f"T_{s[0]}" in rows[0] or f"T_ent_{s[0]}" in rows[0]]
 
     plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
     fig, ax = plt.subplots(figsize=(6.0, 4.0), constrained_layout=True)
@@ -167,14 +183,18 @@ def run_plot(args):
         ax.fill_between(Ns, T - se, T + se, color=color, alpha=0.18, lw=0)
 
     ax.axvline(args.n_train_max, color="grey", ls=":", lw=1.3)
-    y1, y0 = ax.get_ylim()[1], ax.get_ylim()[0]
-    drop = 0.10 * (y1 - y0)   # ~1cm lower on the 4in-tall axis
-    ax.text(args.n_train_max + 0.08, y1 - drop, " out-of-distribution →",
-            color="grey", fontsize=12, va="top")
+    # label hugs the bottom of the dividing line (x in data coords, y in axes
+    # fraction) so it cannot collide with curves on either linear or log axes
+    import matplotlib.transforms as mtransforms
+    trans = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
+    ax.text(args.n_train_max + 0.12, 0.04, "out-of-distribution →",
+            color="grey", fontsize=9, va="bottom", transform=trans)
 
     pg, ps = rows[0]["p_gen"], rows[0]["p_swap"]
     cut = rows[0].get("cutoff", args.cutoff)
     hor = rows[0].get("horizon", args.horizon)
+    # a cutoff far beyond any horizon is operationally infinite (perfect memory)
+    cut_lab = r"\infty" if cut >= 10**6 else str(cut)
     ylab = ("time to end-to-end entanglement $T_\\mathrm{ent}$ (steps)"
             if gated else "delivery time $T$ (avg steps to termination)")
     ax.set_xlabel("chain size $N$")
@@ -182,9 +202,11 @@ def run_plot(args):
     ax.set_title(rf"Time to end-to-end entanglement vs chain size{gate_tag} "
                  rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
                  rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$, "
-                 rf"$\tau=\mathrm{{cutoff}}={cut}$, $H={hor}${inh})",
+                 rf"$\tau=\mathrm{{cutoff}}={cut_lab}$, $H={hor}${inh})",
                  fontsize=9)
     ax.set_xticks(Ns)
+    if args.logy:
+        ax.set_yscale("log")
     ax.grid(alpha=0.3)
 
     # twin axis: mean end-to-end fidelity F over CONNECTED episodes (dashed),
@@ -203,14 +225,15 @@ def run_plot(args):
                      label=rf"{lab} $\overline{{F}}$")
             ax2.fill_between(Ns, F - seF, F + seF, color=color, alpha=0.12, lw=0)
         ax2.axhline(0.5, color="firebrick", lw=1.0, ls=":")
-        ax2.text(Ns[0], 0.5, " separable $F=1/2$", color="firebrick",
-                 fontsize=7, va="bottom", ha="left")
+        ax2.text(Ns[-1], 0.5, "separable $F=1/2$ ", color="firebrick",
+                 fontsize=7, va="bottom", ha="right")
         ax2.set_ylabel(r"mean end-to-end fidelity $\overline{F}$ (connected eps)")
         h1, l1 = ax.get_legend_handles_labels()
         h2, l2 = ax2.get_legend_handles_labels()
-        ax.legend(h1 + h2, l1 + l2, frameon=False, fontsize=8, loc="upper left")
+        ax.legend(h1 + h2, l1 + l2, frameon=False, fontsize=8,
+                  loc=args.legend_loc)
     else:
-        ax.legend(frameon=False)
+        ax.legend(frameon=False, loc=args.legend_loc)
 
     # entangled-delivery rate for the agent, annotated per N (reliability that
     # the winning connection is actually entangled), when the gated data exists.

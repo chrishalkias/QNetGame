@@ -138,15 +138,9 @@ class QRNEnv:
 #                     ▀▀▀
 
     def _pick_targets(self):
-        if self.N <= 2 or self.topology == 'chain':
-            self.source, self.dest = 0, self.N - 1
-        else:
-            while True:
-                s, d = sorted(self.rng.choice(self.N, size=2, replace=False))
-                # Ensure source and dest are not directly adjacent
-                if not self._topo.adjacency[s, d]:
-                    self.source, self.dest = int(s), int(d)
-                    break
+        # Chain endpoints are the two ends; also cache BFS hop distances that
+        # the PBRS potential (_progress) reads every step.
+        self.source, self.dest = 0, self.N - 1
         adj = self._topo.adjacency
         self._d_src = potential.bfs_hops(adj, self.source)
         self._d_dst = potential.bfs_hops(adj, self.dest)
@@ -234,17 +228,6 @@ class QRNEnv:
 #       ▀▀
 
 
-    @staticmethod
-    def _partner_counts(ns):
-        """Per-partner qubit counts over available (occupied, unlocked) qubits.
-        Returns None if fewer than 2 qubits are available. `bincount` over node
-        ids beats `np.unique` (no sort) for these tiny arrays."""
-        avail = ns.occupied & (~ns.locked)
-        if int(avail.sum()) < 2:
-            return None
-        partners = ns.partner_node[avail]
-        return np.bincount(partners[partners != NO_PARTNER])
-
     def _can_swap_from(self, ns) -> bool:
         """True if ns has a VIABLE swap pair: >=2 available qubits to distinct
         partners whose fused link survives same-tick resolution
@@ -266,9 +249,14 @@ class QRNEnv:
         return bool(np.any((partners[i] != partners[j]) & viable))
 
     def _can_purify_from(self, ns) -> bool:
-        """True if ns has ≥2 available qubits linked to the *same* partner."""
-        counts = self._partner_counts(ns)
-        return counts is not None and bool(np.any(counts >= 2))
+        """True if ns has ≥2 available qubits linked to the *same* partner.
+        `bincount` over partner ids beats `np.unique` (no sort) for tiny arrays."""
+        avail = ns.occupied & (~ns.locked)
+        if int(avail.sum()) < 2:
+            return False
+        partners = ns.partner_node[avail]
+        counts = np.bincount(partners[partners != NO_PARTNER])
+        return bool(np.any(counts >= 2))
 
 
 # ▄▄▄      ▄▄▄

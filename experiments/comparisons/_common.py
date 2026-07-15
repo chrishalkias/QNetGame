@@ -150,6 +150,28 @@ def action_fractions(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=
     return (counts / max(counts.sum(), 1)).tolist()   # [f_noop, f_swap, f_purify]
 
 
+def write_meta(args, extra=None):
+    """Paper-provenance sidecar `<out>.meta.json`: the resolved CLI args plus
+    git commit, date, host, and library versions. Written once at eval start so
+    every figure JSON records exactly how it was produced."""
+    import subprocess, sys, time, platform
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                                text=True, timeout=10).stdout.strip() or "unknown"
+    except Exception:   # cluster copy is not a git repo
+        commit = "unknown"
+    meta = dict(vars(args))
+    meta.update(git_commit=commit, date=time.strftime("%Y-%m-%d %H:%M:%S %z"),
+                host=platform.node(), python=sys.version.split()[0],
+                numpy=np.__version__, evaluator="_common.eval_gated(seed=42, paired)")
+    if extra:
+        meta.update(extra)
+    path = os.path.splitext(args.out)[0] + ".meta.json"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    json.dump(meta, open(path, "w"), indent=2, default=str)
+    print(f"meta -> {path}")
+
+
 def save_json(rows, path):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     json.dump(rows, open(path, "w"), indent=2)

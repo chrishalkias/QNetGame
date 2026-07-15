@@ -1,4 +1,4 @@
-"""Permutation feature importance over greedy rollouts.
+"""Permutation feature importance over greedy rollouts, multi-seed, multi-panel.
 
 For each observation feature, permute its values across all interior-node decisions
 collected from greedy rollouts, re-feed the (otherwise unchanged) states, and
@@ -9,7 +9,12 @@ Note: can_swap / can_purify are permuted as observation features while the actio
 mask is held at its true value, so this isolates reliance on the feature beyond the
 mask that already gates those actions.
 
-  compute: PYTHONPATH=. python diagnostics/policy_probes/feature_importance.py --ckpt <path>
+One panel per --ranges entry (chain-size range "lo-hi"), one independent
+collection per --seeds entry; bars show the mean over seeds, error bars the
+standard deviation. Everything lands in ONE json + ONE pdf, re-renderable:
+
+  compute: PYTHONPATH=. python diagnostics/policy_probes/feature_importance.py \
+               --ckpt <path> --ranges 4-12 12-20 --seeds 0 1 2 3
   plot:    PYTHONPATH=. python diagnostics/policy_probes/feature_importance.py --plot
 """
 from __future__ import annotations
@@ -30,8 +35,15 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true", help="render from existing json")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=200)
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--episodes", type=int, default=200, help="per seed")
+    ap.add_argument("--seeds", type=int, nargs="+", default=[0],
+                    help="one independent collection per seed; bars = mean, "
+                         "error bars = std across seeds")
+    ap.add_argument("--ranges", nargs="+", default=["4-12"],
+                    help="chain-size ranges 'lo-hi', one panel each "
+                         "(training range is 4-12)")
+    ap.add_argument("--notes", nargs="+", default=None,
+                    help="panel titles, one per range (default: '$N=lo$--$hi$')")
     ap.add_argument("--save_dir", default=None)
     ap.add_argument("--color", default="#4C72B0",
                     help="bar color (CC-delay agent uses purple by convention)")
@@ -39,16 +51,17 @@ def parse_args():
                     help="CC delay per step (2.5e-4 = 1 step/hop at spacing=50)")
     ap.add_argument("--max_steps", type=int, default=200,
                     help="episode cap for rollout collection (bump under CC delays)")
-    ap.add_argument("--bold", default=None,
-                    help="feature name whose y-label to render bold, e.g. urgency")
+    ap.add_argument("--xmax", type=float, default=None,
+                    help="fixed x-axis limit (default: auto from the data)")
     return ap.parse_args()
 
 
-def compute(a, out):
-    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed,
-                  dt_seconds=a.dt_seconds, max_steps=a.max_steps)
+def _flip_fractions(ckpt, episodes, seed, sizes, dt_seconds, max_steps):
+    """One collection -> {feature: flip fraction}."""
+    d = C.collect(ckpt, episodes=episodes, seed=seed, sizes=sizes,
+                  dt_seconds=dt_seconds, max_steps=max_steps)
     model, states, idx, base = d["model"], d["states"], d["idx"], d["A"]
-    rng = np.random.default_rng(a.seed)
+    rng = np.random.default_rng(seed)
     flip = {}
     for j, name in enumerate(C.FEATURE_NAMES):
         orig = d["X"][:, j].copy()
@@ -61,42 +74,74 @@ def compute(a, out):
         for k, (si, node) in enumerate(idx):
             states[si]["x"][node, j] = orig[k]
         print(f"  {name:<11} {flip[name]:.3f}", flush=True)
-    json.dump(flip, open(os.path.join(out, "feature_importance.json"), "w"), indent=2)
     return flip
 
 
-def render(flip, out, color="#4C72B0", bold=None):
+def compute(a, out_json):
+    panels = []
+    for ri, rng_str in enumerate(a.ranges):
+        lo, hi = (int(v) for v in rng_str.split("-"))
+        note = (a.notes[ri] if a.notes else rf"$N={lo}$--${hi}$")
+        per_seed = {name: [] for name in C.FEATURE_NAMES}
+        for seed in a.seeds:
+            print(f"[range {lo}-{hi}, seed {seed}]", flush=True)
+            flip = _flip_fractions(a.ckpt, a.episodes, seed, range(lo, hi + 1),
+                                   a.dt_seconds, a.max_steps)
+            for name, v in flip.items():
+                per_seed[name].append(v)
+        panels.append(dict(n_lo=lo, n_hi=hi, note=note, flip=per_seed))
+    data = dict(ckpt=a.ckpt, episodes=a.episodes, seeds=a.seeds, panels=panels)
+    json.dump(data, open(out_json, "w"), indent=1)
+    print(f"saved -> {out_json}")
+    return data
+
+
+def render(data, stem, color="#4C72B0", xmax_fixed=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
+    panels = data["panels"]
+    # one feature order for every panel (sorted by panel-0 mean) so rows align
+    names = sorted(C.FEATURE_NAMES,
+                   key=lambda n: float(np.mean(panels[0]["flip"][n])))
 
     def draw(usetex):
         plt.rcParams.update({
             "text.usetex": usetex, "font.family": "serif",
             "mathtext.fontset": "cm", "font.size": 12,
-            "axes.labelsize": 13, "axes.titlesize": 14, "figure.dpi": 150,
+            "axes.labelsize": 13, "axes.titlesize": 13, "figure.dpi": 150,
         })
-        names = sorted(flip, key=flip.get)
-        vals = [flip[n] for n in names]
-        # under usetex, \textbf bolds; else set_fontweight below (mathtext path)
-        ylab = lambda n: (r"\textbf{%s}" % LABELS[n]
-                          if (bold == n and usetex) else LABELS[n])
-        fig, ax = plt.subplots(figsize=(6.4, 4.2), constrained_layout=True)
-        bars = ax.barh([ylab(n) for n in names], vals, color=color)
-        if bold and not usetex:
-            for lb in ax.get_yticklabels():
-                if lb.get_text() == LABELS.get(bold):
-                    lb.set_fontweight("bold")
-        for b, v in zip(bars, vals):
-            ax.text(v + 0.002, b.get_y() + b.get_height() / 2,
-                    f"{v:.3f}", va="center", ha="left", fontsize=9)
-        ax.set_xlabel("Fraction of decisions altered under feature permutation")
-        ax.set_title("Permutation feature importance")
-        ax.set_xlim(0, max(vals) * 1.18)
-        ax.grid(alpha=0.3, axis="x")
+        P = len(panels)
+        fig, axes = plt.subplots(1, P, figsize=(5.6 * P, 4.4),
+                                 constrained_layout=True, sharex=True)
+        axes = np.atleast_1d(axes)
+        # one global limit: per-panel set_xlim under sharex would let the last
+        # panel clip the others' longest bar
+        xmax = xmax_fixed or max(float(np.mean(p["flip"][n]) + np.std(p["flip"][n]))
+                                 for p in panels for n in names) * 1.22
+        for i, (ax, panel) in enumerate(zip(axes, panels)):
+            means = np.array([np.mean(panel["flip"][n]) for n in names])
+            stds = np.array([np.std(panel["flip"][n]) for n in names])
+            ax.barh(range(len(names)), means, xerr=stds, color=color,
+                    capsize=2.5, error_kw={"lw": 1.0})
+            ax.set_yticks(range(len(names)))
+            ax.set_yticklabels([LABELS[n] for n in names] if i == 0
+                               else [""] * len(names))
+            for y, (m, s) in enumerate(zip(means, stds)):
+                ax.text(m + s + 0.003, y, f"{m:.3f}", va="center", ha="left",
+                        fontsize=9)
+            ax.set_title(panel["note"])
+            lab = f"({'ABCDEFGH'[i]})"
+            ax.text(-0.05, 1.07, rf"\textbf{{{lab}}}" if usetex else lab,
+                    transform=ax.transAxes, va="top", ha="left",
+                    fontsize=13, fontweight="bold")
+            ax.set_xlim(0, xmax)
+            ax.grid(alpha=0.3, axis="x")
+        fig.supxlabel("Fraction of decisions altered under feature permutation",
+                      fontsize=12)
         return fig
 
-    stem = os.path.join(out, "feature_importance")
     try:
         fig = draw(True)
         fig.savefig(f"{stem}.pdf", bbox_inches="tight")
@@ -112,11 +157,9 @@ def main():
     a = parse_args()
     out = a.save_dir or os.path.join(os.path.dirname(a.ckpt), "diagnostics")
     os.makedirs(out, exist_ok=True)
-    if a.plot:
-        flip = json.load(open(os.path.join(out, "feature_importance.json")))
-    else:
-        flip = compute(a, out)
-    render(flip, out, a.color, a.bold)
+    out_json = os.path.join(out, "feature_importance.json")
+    data = json.load(open(out_json)) if a.plot else compute(a, out_json)
+    render(data, os.path.join(out, "feature_importance"), a.color, a.xmax)
 
 
 if __name__ == "__main__":

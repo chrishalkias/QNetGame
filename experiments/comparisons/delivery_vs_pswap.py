@@ -22,6 +22,12 @@ def parse_args():
                          "into an existing --out json, keeping the agent column as-is")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
     ap.add_argument("--hidden", type=int, default=64)
+    ap.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
+                    choices=["agent", "swap_asap", "purify_swap"],
+                    help="policies to evaluate; swap-ASAP dropped from the "
+                         "default roster (paper decision 2026-07-13). A single "
+                         "policy lets SLURM array tasks split cells x policies")
+    ap.add_argument("--logy", action="store_true", help="log-scale y axis")
     ap.add_argument("--N", type=int, default=10)
     ap.add_argument("--p_gens", type=float, nargs="+", default=[0.4, 0.5, 0.6, 0.7, 0.8])
     ap.add_argument("--p_swaps", type=float, nargs="+",
@@ -36,19 +42,28 @@ def parse_args():
 
 
 def run_eval(a):
-    pols = C.build_policies(a.ckpt, hidden=a.hidden)
+    pols = {k: v for k, v in C.build_policies(a.ckpt, hidden=a.hidden).items()
+            if k in a.policies}
+    C.write_meta(a)
     print(f"N={a.N} p_gens={a.p_gens} p_swaps={a.p_swaps} n_ch={a.n_ch} "
-          f"cutoff={a.cutoff} H={a.horizon} mc_eps={a.mc_eps}")
+          f"cutoff={a.cutoff} H={a.horizon} mc_eps={a.mc_eps} pols={list(pols)}")
     rows = []
     for pg in a.p_gens:
         for ps in a.p_swaps:
-            row = dict(p_gen=pg, p_swap=ps, N=a.N, n_ch=a.n_ch, cutoff=a.cutoff)
-            for name in ("agent", "swap_asap", "purify_swap"):
-                T, se = C.eval_T(pols[name], a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
-                row[f"T_{name}"], row[f"se_{name}"] = T, se
+            row = dict(p_gen=pg, p_swap=ps, N=a.N, n_ch=a.n_ch, cutoff=a.cutoff,
+                       horizon=a.horizon, mc_eps=a.mc_eps)
+            for name, fn in pols.items():
+                # Paired gated pass: T = primary T_ent; T_conn kept alongside so
+                # the post-fix invariant (ent_rate == conn_rate) stays checkable.
+                s = C.eval_gated(fn, a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
+                row[f"T_{name}"], row[f"se_{name}"] = s["T_ent"], s["se_ent"]
+                row[f"T_conn_{name}"] = s["T_conn"]
+                row[f"ent_rate_{name}"] = s["ent_rate"]
+                row[f"conn_rate_{name}"] = s["conn_rate"]
+                row[f"F_{name}"] = s["mean_F_conn"]
+                print(f"  p_gen={pg:.1f} p_swap={ps:.1f} {name:<12} "
+                      f"T={s['T_ent']:9.2f}  ent_rate={s['ent_rate']:.3f}", flush=True)
             rows.append(row)
-            print(f"  p_gen={pg:.1f} p_swap={ps:.1f}  agent={row['T_agent']:7.2f} "
-                  f"purifyswap={row['T_purify_swap']:7.2f}", flush=True)
             C.save_json(rows, a.out)
     print(f"saved -> {a.out}")
 
@@ -96,6 +111,8 @@ def run_plot(a):
             ax.fill_between(xs, T - se, T + se, color=cols[i], alpha=0.12, lw=0)
     ax.set_xlabel(r"$p_\mathrm{swap}$")
     ax.set_ylabel("delivery time $T$ (avg steps to termination)")
+    if a.logy:
+        ax.set_yscale("log")
     ax.grid(alpha=0.3)
     # two legends: p_gen colour + policy line-style
     pg_handles = [Line2D([], [], color=cols[i], lw=2, label=rf"${pg}$")

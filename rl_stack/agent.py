@@ -78,7 +78,7 @@ def _sample_cutoff(rng, cutoff):
 def _draw_winnable_cell(rng, wc, *, p_gen, p_swap, cutoff,
                         n_pool, n_ch_pool, max_tries=50):
     """Draw a cell (p_gen, p_swap, cutoff, N, n_ch). If `wc` is given, resample
-    until the cell is winnable (swap-asap can deliver), capped at `max_tries`;
+    until the cell is winnable (purify-then-swap can deliver), capped at `max_tries`;
     if the cap is hit, the last draw is returned anyway."""
     for _ in range(max_tries):
         pg = QRNAgent._sample_rate(rng, p_gen)
