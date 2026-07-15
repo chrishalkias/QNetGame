@@ -122,7 +122,9 @@ def _primary_T(row, key):
     otherwise the legacy connection T (old JSONs), flagged so labels can say so."""
     if f"T_ent_{key}" in row:
         return row[f"T_ent_{key}"], row.get(f"se_ent_{key}", 0.0), True
-    return row[f"T_{key}"], row.get(f"se_{key}", 0.0), False
+    if f"T_{key}" in row:
+        return row[f"T_{key}"], row.get(f"se_{key}", 0.0), False
+    return float("nan"), 0.0, True   # policy absent at this N (ragged tail) -> plot gap
 
 
 def run_plot(args):
@@ -238,9 +240,9 @@ def run_plot(args):
     # entangled-delivery rate for the agent, annotated per N (reliability that
     # the winning connection is actually entangled), when the gated data exists.
     if "ent_rate_agent" in rows[0]:
-        er = [r["ent_rate_agent"] for r in rows]
         txt = "agent entangled-delivery rate: " + ", ".join(
-            f"N{n}:{e:.2f}" for n, e in zip(Ns, er))
+            f"N{r['N']}:{r['ent_rate_agent']:.2f}"
+            for r in rows if "ent_rate_agent" in r)   # skip ragged-tail rows
         fig.text(0.5, -0.02, txt, ha="center", va="top", fontsize=6.5,
                  color="tab:blue")
 
