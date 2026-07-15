@@ -221,64 +221,102 @@ def build_kernel(N, n_ch, p_gen, p_swap, cutoff):
                 trans=trans_cache, D0=D0, state_env=state_env)
 
 
-def _horizon_value(action_for, ker, H):
-    """Finite-horizon backward induction. action_for(k) -> chosen action index,
-    or None to minimise over all actions (optimal)."""
-    keys, delivered, trans, acts = ker["keys"], ker["delivered"], ker["trans"], ker["acts"]
-    U = {k: 0.0 for k in keys}
+def _sparse_kernel(ker):
+    """Precompute numpy structures for vectorized value iteration: a state index,
+    a delivered mask, and per-action edge lists (row = from-state, col = to-state,
+    prob). Cached on the kernel dict. Every (non-delivered state, action) pair is
+    enumerated during build, so `has_act` marks the valid rows per action.
+
+    Value iteration was pure-Python triple loops (~176 s per solve at H=3000,
+    5955 states); as bincount-based sparse matvecs it drops to a few seconds."""
+    keys = ker["keys"]
+    idx = {k: i for i, k in enumerate(keys)}
+    S, A = len(keys), len(ker["acts"])
+    deliv = np.zeros(S, dtype=bool)
+    for k, d in ker["delivered"].items():
+        deliv[idx[k]] = d
+    rows = [[] for _ in range(A)]
+    cols = [[] for _ in range(A)]
+    prob = [[] for _ in range(A)]
+    has_act = np.zeros((S, A), dtype=bool)
+    for (k, ai), d in ker["trans"].items():
+        i = idx[k]
+        has_act[i, ai] = True
+        for k2, (p2, _d2) in d.items():
+            rows[ai].append(i)
+            cols[ai].append(idx[k2])
+            prob[ai].append(p2)
+    per_ai = [(np.asarray(rows[ai], dtype=np.intp),
+               np.asarray(cols[ai], dtype=np.intp),
+               np.asarray(prob[ai], dtype=np.float64)) for ai in range(A)]
+    return dict(idx=idx, S=S, A=A, deliv=deliv, per_ai=per_ai, has_act=has_act)
+
+
+def _get_sparse(ker):
+    sp = ker.get("_sparse")
+    if sp is None:
+        sp = ker["_sparse"] = _sparse_kernel(ker)
+    return sp
+
+
+def _backup(sp, U):
+    """One Bellman backup for every action at once:
+    Q[a, i] = 1 + sum_j P_a[i, j] * Um[j], with Um = U zeroed on delivered
+    next-states; invalid (state, action) pairs are +inf. Returns Q of shape (A, S)."""
+    S = sp["S"]
+    Um = np.where(sp["deliv"], 0.0, U)
+    Q = np.full((sp["A"], S), np.inf)
+    for ai, (r, c, p) in enumerate(sp["per_ai"]):
+        if r.size == 0:
+            continue
+        contrib = np.bincount(r, weights=p * Um[c], minlength=S)
+        Q[ai] = np.where(sp["has_act"][:, ai], 1.0 + contrib, np.inf)
+    return Q
+
+
+def _value_iterate(sp, H, action_of=None):
+    """Finite-horizon value iteration. action_of=None -> optimal (min over
+    actions); an integer per-state action array -> that fixed policy's value.
+    Delivered states are absorbing with value 0."""
+    S, deliv = sp["S"], sp["deliv"]
+    U = np.zeros(S)
+    rows = np.arange(S)
     for _ in range(H):
-        Un = {}
-        for k in keys:
-            if delivered[k]:
-                Un[k] = 0.0
-                continue
-            if action_for is None:
-                best = math.inf
-                for ai in range(len(acts)):
-                    r = trans.get((k, ai))
-                    if not r:
-                        continue
-                    e = 1.0 + sum(p2 * (0.0 if d2 else U[k2]) for k2, (p2, d2) in r.items())
-                    best = min(best, e)
-                Un[k] = best
-            else:
-                ai = action_for(k)
-                r = trans.get((k, ai))
-                Un[k] = 1.0 + sum(p2 * (0.0 if d2 else U[k2]) for k2, (p2, d2) in r.items()) if r else U[k]
+        Q = _backup(sp, U)
+        if action_of is None:
+            Un = Q.min(axis=0)
+        else:
+            Un = Q[action_of, rows]
+            noedge = ~np.isfinite(Un)     # fixed policy, no edges -> keep U
+            Un[noedge] = U[noedge]
+        Un[deliv] = 0.0
         U = Un
-    return sum(p * (0.0 if d else U[k]) for k, (p, d) in ker["D0"].items())
+    return U
+
+
+def _horizon_value(action_for, ker, H):
+    """Finite-horizon backward induction (vectorized). action_for(k) -> action
+    index for a fixed policy, or None for the optimum. Returns the expected
+    censored delivery time from the initial distribution D0."""
+    sp = _get_sparse(ker)
+    action_of = None
+    if action_for is not None:
+        action_of = np.empty(sp["S"], dtype=np.intp)
+        for k, i in sp["idx"].items():
+            action_of[i] = action_for(k)
+    U = _value_iterate(sp, H, action_of)
+    return float(sum(p * (0.0 if d else U[sp["idx"][k]])
+                     for k, (p, d) in ker["D0"].items()))
 
 
 def _greedy_policy(ker, H):
-    """Optimal greedy action per state (for MC validation in the real env)."""
-    keys, delivered, trans, acts = ker["keys"], ker["delivered"], ker["trans"], ker["acts"]
-    U = {k: 0.0 for k in keys}
-    for _ in range(H):
-        Un = {}
-        for k in keys:
-            if delivered[k]:
-                Un[k] = 0.0
-                continue
-            best = math.inf
-            for ai in range(len(acts)):
-                r = trans.get((k, ai))
-                if r:
-                    best = min(best, 1.0 + sum(p2 * (0.0 if d2 else U[k2]) for k2, (p2, d2) in r.items()))
-            Un[k] = best
-        U = Un
-    pol = {}
-    for k in keys:
-        if delivered[k]:
-            continue
-        best, ba = math.inf, 0
-        for ai in range(len(acts)):
-            r = trans.get((k, ai))
-            if r:
-                e = 1.0 + sum(p2 * (0.0 if d2 else U[k2]) for k2, (p2, d2) in r.items())
-                if e < best:
-                    best, ba = e, ai
-        pol[k] = ba
-    return pol
+    """Optimal greedy action per state (for MC validation in the real env).
+    One argmin backup after value iteration; ties break to the lowest action
+    index, matching the previous scalar implementation."""
+    sp = _get_sparse(ker)
+    U = _value_iterate(sp, H, None)
+    best = np.argmin(_backup(sp, U), axis=0)
+    return {k: int(best[i]) for k, i in sp["idx"].items() if not sp["deliv"][i]}
 
 
 def _act_index(acts, a):
@@ -434,6 +472,10 @@ def parse_args(argv=None):
     p.add_argument("--horizon", type=int, default=30, help="DP / rollout horizon H")
     p.add_argument("--points", type=str, default=None,
                    help="override (p_gen:p_swap) scan, e.g. '0.5:0.7,0.9:0.9'")
+    p.add_argument("--grid", type=str, default=None,
+                   help="generate an n x n (p_gen, p_swap) grid, 'lo:hi:n' "
+                        "(e.g. '0.1:0.9:9' = the 9x9 heatmap grid); "
+                        "takes precedence over --points")
     p.add_argument("--mc_eps", type=int, default=20000,
                    help="Monte-Carlo episodes for the agent column")
     p.add_argument("--mc_eps_opt", type=int, default=4000,
@@ -445,6 +487,10 @@ def parse_args(argv=None):
     p.add_argument("--policy_dir", type=str, default="results/optimal/optimal_policies")
     p.add_argument("--save_policy", action="store_true",
                    help="dump the exact optimal policy per (N, p_gen, p_swap)")
+    p.add_argument("--chunk", type=int, default=0,
+                   help="this process's index for SLURM-array round-robin over "
+                        "the (N, p_gen, p_swap) points")
+    p.add_argument("--nchunks", type=int, default=1, help="total processes")
     return p.parse_args(argv)
 
 
@@ -452,9 +498,15 @@ def main(argv=None):
     args = parse_args(argv)
     N_CH, CUTOFF, H = args.n_ch, args.cutoff, args.horizon
     N_LIST = [int(x) for x in args.n_list.split(",") if x.strip()]
-    POINTS = (_parse_points(args.points) if args.points else
-              [(0.3, 0.3), (0.5, 0.5), (0.5, 0.7), (0.7, 0.5),
-               (0.3, 0.7), (0.7, 0.3), (0.9, 0.9)])
+    if args.grid:
+        lo, hi, n = args.grid.split(":")
+        vals = [round(float(v), 2) for v in np.linspace(float(lo), float(hi), int(n))]
+        POINTS = [(pg, ps) for pg in vals for ps in vals]
+    elif args.points:
+        POINTS = _parse_points(args.points)
+    else:
+        POINTS = [(0.3, 0.3), (0.5, 0.5), (0.5, 0.7), (0.7, 0.5),
+                  (0.3, 0.7), (0.7, 0.3), (0.9, 0.9)]
     MC_EPS = args.mc_eps
 
     try:
@@ -473,17 +525,26 @@ def main(argv=None):
            f"{'opt<swap%':>9} {'agent_gap%':>10} {'a_vs_swap%':>10}")
     print(hdr)
     print("-" * len(hdr))
-    for N in N_LIST:
-        for pg, ps in POINTS:
+    # flatten (N, p_gen, p_swap) and take this process's round-robin slice so a
+    # SLURM array can parallelise the grid (matches eval_heatmap_gap chunking).
+    combos = [(N, pg, ps) for N in N_LIST for (pg, ps) in POINTS]
+    combos = [c for i, c in enumerate(combos) if i % args.nchunks == args.chunk]
+    for (N, pg, ps) in combos:
             t0 = time.time()
             ker = build_kernel(N, N_CH, pg, ps, CUTOFF)
             nstates = len(ker["keys"])
             T_opt = _horizon_value(None, ker, H)
             T_swap = _horizon_value(swapasap_action_for(ker), ker, H)
-            # validate exact optimal against MC rollout of the greedy policy
+            # validate exact optimal against MC rollout of the greedy policy;
+            # return_stats also yields the optimum's delivery rate, which the
+            # heatmap uses to mask cells where even the optimum can't deliver
+            # within H (there a T_opt~=T_agent~=H tie is a censoring artifact).
             pol = _greedy_policy(ker, H)
-            T_opt_mc, _ = mc_eval(optimal_policy_fn(pol, ker["acts"]),
-                                  N, N_CH, pg, ps, CUTOFF, H, args.mc_eps_opt)
+            opt_stats = mc_eval(optimal_policy_fn(pol, ker["acts"]),
+                                N, N_CH, pg, ps, CUTOFF, H, args.mc_eps_opt,
+                                return_stats=True)
+            T_opt_mc = opt_stats["T"]
+            opt_deliver_rate = opt_stats["delivery_rate"]
             policy_path = None
             if args.save_policy:
                 policy_path = save_policy(args.policy_dir, N, N_CH, CUTOFF, H,
@@ -498,14 +559,17 @@ def main(argv=None):
             gap = 100 * (T_agent - T_opt) / T_opt if have_agent else float("nan")
             avs = 100 * (T_swap - T_agent) / T_swap if have_agent else float("nan")
             rows.append(dict(N=N, p_gen=pg, p_swap=ps, states=nstates,
+                             cutoff=CUTOFF, horizon=H,
                              T_opt=T_opt, T_opt_mc=T_opt_mc, T_swap=T_swap,
+                             opt_deliver_rate=opt_deliver_rate,
                              T_agent=T_agent, T_agent_se=se, opt_vs_swap=ovs,
                              agent_gap_pct=gap, agent_vs_swap=avs,
                              policy_path=policy_path, secs=time.time() - t0))
             print(f"{N:>2} {pg:>5} {ps:>6} {nstates:>6} "
                   f"{T_opt:>6.3f} {T_swap:>6.3f} {T_agent:>6.3f}±{se:.2f} "
                   f"{ovs:>9.1f} {gap:>10.1f} {avs:>10.1f}   "
-                  f"[opt_mc={T_opt_mc:.3f} {time.time()-t0:.0f}s]", flush=True)
+                  f"[opt_mc={T_opt_mc:.3f} dr={opt_deliver_rate:.2f} "
+                  f"{time.time()-t0:.0f}s]", flush=True)
             # Incremental save: a walltime kill mid-sweep then preserves every
             # completed point (N=5 builds can take hours each). Policy pickles
             # are already written per-point above.
@@ -514,6 +578,9 @@ def main(argv=None):
                 json.dump(rows, f, indent=2)
 
     print(f"\nsaved -> {args.out_json}")
+    if not rows:
+        print("(no points in this chunk)")
+        return
     if args.save_policy:
         print(f"policies -> {args.policy_dir}/ ({len(rows)} files)")
     maxdiff = max(abs(r["T_opt"] - r["T_opt_mc"]) for r in rows)

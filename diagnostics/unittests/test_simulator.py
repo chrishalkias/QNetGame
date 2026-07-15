@@ -58,6 +58,35 @@ def _entangle_force(net, r1, r2):
     return res
 
 
+_REP_MUT_ARRAYS = ("status", "partner_repeater", "partner_qubit", "werner_param",
+                   "initial_werner", "age", "link_cutoff", "locked",
+                   "generation_id", "position")
+
+
+def test_repeater_deepcopy_isolation():
+    """Repeater.__deepcopy__ (the exact-DP fast clone) must reproduce every
+    mutable array and give the clone independent storage: mutating the clone must
+    not touch the original. Guards the optimization behind build_kernel."""
+    import copy
+    net = _perfect_chain(4, n_ch=2, cutoff=20)
+    _entangle_force(net, 1, 2)          # populate arrays with real link state
+    rep = net.repeaters[1]
+    clone = copy.deepcopy(rep)
+    # faithful copy
+    for name in _REP_MUT_ARRAYS:
+        np.testing.assert_array_equal(getattr(clone, name), getattr(rep, name))
+    assert clone.rid == rep.rid and clone.p_swap == rep.p_swap
+    # independent storage: every mutable array is a distinct object
+    for name in _REP_MUT_ARRAYS:
+        assert getattr(clone, name) is not getattr(rep, name), name
+    # mutating the clone leaves the original untouched
+    before = rep.age.copy()
+    clone.age += 7
+    clone.status[:] = 0
+    np.testing.assert_array_equal(rep.age, before)
+    assert rep.status.any()             # original link still occupied
+
+
                                             
 # ▄▄▄▄▄▄▄   ▄▄                                
 # ███▀▀███▄ ██                ▀▀              

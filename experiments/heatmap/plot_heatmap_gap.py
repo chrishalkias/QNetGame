@@ -35,8 +35,12 @@ def main():
     ap.add_argument("--title_b", default="With purification")
     ap.add_argument("--suptitle",
                     default=r"Trained agent vs swap-only optimum  ($N={N}$, "
-                            r"$n_\mathrm{ch}=2$, cutoff $=5$)")
+                            r"$n_\mathrm{ch}=2$, cutoff $={cutoff}$)")
     ap.add_argument("--cbar_label", default="Gap to optimal delivery time (%)")
+    ap.add_argument("--min_deliver_rate", type=float, default=0.9,
+                    help="gray-mask cells where the optimum delivers below this "
+                         "within H (undeliverable regime; a T_opt~=T_agent~=H tie "
+                         "there is a censoring artifact, not agreement)")
     ap.add_argument("--annotate", action="store_true")
     args = ap.parse_args()
 
@@ -45,12 +49,23 @@ def main():
     pss = sorted({round(r["p_swap"], 2) for r in rows})
     G_swo = to_grid(rows, "gap_swaponly_pct", pgs, pss)
     G_pur = to_grid(rows, "gap_purify_pct", pgs, pss)
+    # mask cells the optimum can't reliably deliver (censoring regime): set gap
+    # to NaN so they render as the colormap's "bad" gray, never as gap~0.
+    if any("opt_deliver_rate" in r for r in rows):
+        DR = to_grid(rows, "opt_deliver_rate", pgs, pss)
+        bad = ~(DR >= args.min_deliver_rate)   # True also where DR is NaN
+        G_swo = np.where(bad, np.nan, G_swo)
+        G_pur = np.where(bad, np.nan, G_pur)
+        n_masked = int(np.sum(bad))
+    else:
+        n_masked = 0
 
     vmax = float(args.vmax)
     norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
     cmap = plt.get_cmap("RdBu_r").copy()
     cmap.set_over(cmap(1.0))   # cells above +vmax saturate to deep red
     cmap.set_under(cmap(0.0))
+    cmap.set_bad("0.85")       # masked (undeliverable) cells render gray
     n_clip = int(np.nansum(G_swo > vmax) + np.nansum(G_pur > vmax)
                  + np.nansum(G_swo < -vmax) + np.nansum(G_pur < -vmax))
 
@@ -70,8 +85,8 @@ def main():
             axes,
             [(args.title_a, G_swo, "A"),
              (args.title_b, G_pur, "B")]):
-        im = ax.imshow(M, origin="lower", aspect="auto", cmap=cmap,
-                       norm=norm, extent=extent)
+        im = ax.imshow(np.ma.masked_invalid(M), origin="lower", aspect="auto",
+                       cmap=cmap, norm=norm, extent=extent)
         ax.set_title(title)
         ax.set_xlabel(r"$p_\mathrm{swap}$")
         ax.set_xticks(pss)
@@ -96,7 +111,14 @@ def main():
     axes[0].set_ylabel(r"$p_\mathrm{gen}$")
     cbar = fig.colorbar(im, ax=axes, shrink=0.85, pad=0.02, extend="both")
     cbar.set_label(args.cbar_label)
-    fig.suptitle(args.suptitle.replace("{N}", str(args.N)), fontsize=10)
+    cutoff = rows[0].get("cutoff", "?")
+    fig.suptitle(args.suptitle.replace("{N}", str(args.N))
+                 .replace("{cutoff}", str(cutoff)), fontsize=10)
+    if n_masked:
+        fig.text(0.5, -0.01,
+                 f"gray = optimum delivers < {args.min_deliver_rate:g} within "
+                 f"$H$ ({n_masked} cells, undeliverable regime)",
+                 ha="center", va="top", fontsize=7, color="0.35")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     fig.savefig(f"{args.out}.pdf", dpi=300, bbox_inches="tight")
