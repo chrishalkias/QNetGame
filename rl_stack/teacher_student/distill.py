@@ -32,7 +32,7 @@ def _teacher_q(teacher, x, edge_index, device):
 
 def collect_teacher_dataset(teacher, *, episodes=400, seed=0, device="cpu",
                             sizes=range(4, 13), n_chs=(2, 3, 4),
-                            p_lo=0.4, p_hi=0.9, cut_lo=10, cut_hi=40,
+                            p_lo=0.4, p_hi=0.9, cut_lo=10, cut_hi=50,
                             max_steps=200, dt_seconds=0.0):
     """Greedy teacher rollouts over the omni training distribution (mirrors
     diagnostics/policy_probes/_collect.py). Returns a list of per-step records

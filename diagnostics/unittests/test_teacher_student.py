@@ -17,24 +17,27 @@ def _chain_edge_index(n):
 
 
 def test_student_forward_shape_and_size_agnostic():
-    net = StudentQNetwork(node_dim=3, hidden=16)
+    d = len(STUDENT_FEAT_IDX)
+    net = StudentQNetwork(node_dim=d, hidden=16)
     for n in (4, 9):                       # same weights, different chain length
-        x = torch.randn(n, 3)
+        x = torch.randn(n, d)
         out = net(Data(x=x, edge_index=_chain_edge_index(n), num_nodes=n))
         assert out.shape == (n, 3)
 
 
-def test_student_feat_idx_is_fidelity_avail_canswap():
-    # documents the exact 3 features (env_wrapper obs indices)
-    assert STUDENT_FEAT_IDX == [1, 3, 4]
+def test_student_feat_idx_is_top5_local():
+    # documents the exact 5 local features (env_wrapper obs indices):
+    # occ / avail / can_swap / can_purify / urgency (fidelity + p_gen/p_swap withheld)
+    assert STUDENT_FEAT_IDX == [0, 3, 4, 5, 8]
 
 
 def test_load_student_round_trip():
-    net = StudentQNetwork(node_dim=3, hidden=16)
+    d = len(STUDENT_FEAT_IDX)
+    net = StudentQNetwork(node_dim=d, hidden=16)
     f = os.path.join(tempfile.mkdtemp(), "s.pth")
     torch.save(net.state_dict(), f)
     loaded = load_student(f)
-    assert loaded.conv1.lin_l.weight.shape == (16, 3)
+    assert loaded.conv1.lin_l.weight.shape == (16, d)
     assert not loaded.training
 
 
@@ -56,7 +59,7 @@ def test_student_policy_fn_respects_mask():
     env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
                  topology="chain", rng=np.random.default_rng(0))
     obs = env.reset()
-    fn = student_policy_fn(StudentQNetwork(node_dim=3, hidden=16))
+    fn = student_policy_fn(StudentQNetwork(node_dim=len(STUDENT_FEAT_IDX), hidden=16))
     a = fn(env, obs)
     mask = env.get_action_mask()
     assert a.shape == (env.N,)
