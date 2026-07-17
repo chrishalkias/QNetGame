@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
 #SBATCH --partition=cpu-zen4
-#SBATCH --array=0-27
+#SBATCH --array=0-55
 
 # q-heuristic cluster evaluation: does a single scalar q (both-legal purify
 # probability inside the purify_then_swap skeleton) recover the trained agent's
@@ -19,7 +19,9 @@
 # requeued task skips (N, policy) entries already in its JSON.
 #
 # Roster per N: purify_then_swap + hybrids q in {0.15, 0.215, 0.3, 0.369, 0.5}
-# + agents s1, s3 = 8 policies x 7 N = 56 work items over 28 tasks.
+# + agents s1, s3 = 8 policies x 7 N = 56 work items, ONE per array task
+# (censored agent cells at H=20000 x 500 eps are the walltime risk; keep them
+# isolated so a requeue resumes exactly one item).
 #
 # Merge + plot locally after download:
 #   PYTHONPATH=. python experiments/q_heuristic/eval_q_heuristic.py --plot \
@@ -36,7 +38,7 @@ eval "$(/usr/bin/modulecmd bash load Python/3.11.3-GCCcore-12.3.0)"
 source "$HOME/.venvs/qnetgame/bin/activate"
 export PYTHONPATH="$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 
-NCHUNKS=28
+NCHUNKS=56
 i=$SLURM_ARRAY_TASK_ID
 echo "Node: $(hostname)  chunk $i / $NCHUNKS"
 
