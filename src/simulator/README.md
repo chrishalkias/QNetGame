@@ -15,10 +15,16 @@ selects per-node actions, and the simulator advances one time step.
 | File | Scope | Role |
 |---|---|---|
 | `repeater.py` | Intra-node | Single repeater: qubit bookkeeping, link state, swap-pair selection, two query layers |
-| `network.py` | Inter-node | Network of repeaters: entanglement generation, swap, purification, ageing, event queue, topology builders, rendering |
+| `network.py` | Inter-node | Network of repeaters: entanglement generation, swap, purification, ageing, event queue, `build_chain`/`build_network`, rendering |
 | `snapshots.py` | Read boundary | Frozen, fidelity-domain `NodeState` / `Topology` dataclasses the RL side reads |
-| `optimal_policy/` | DP baseline | Consumers of the pickled swap-only optimal policy + comparison / report helpers |
 | `__init__.py` | Re-exports | Public API surface |
+
+> The exact-DP swap-only optimal-policy benchmark (formerly `simulator/optimal_policy/`) was
+> retired 2026-07-18; recoverable from git history if needed.
+>
+> **Chain-only**: `build_grid`/`build_GEANT` and the `'grid'`/`'geant'` topology strings were
+> removed in the chain-only refactor. `build_network(topology=...)` now accepts only
+> `'chain'` and raises `ValueError` otherwise.
 
 > There is **no** `backends/` package, the historical `PhysicsBackend` / NetSquid
 > abstraction was removed. `RepeaterNetwork` is the engine, and consumers read it
@@ -58,17 +64,20 @@ F = (3p + 1) / 4
 **`bbpssw_success_prob(f1, f2)`**
 
 Returns the probability that a BBPSSW purification round succeeds, given two input fidelities.
-The formula implemented (`repeater.py:19-23`) is:
+The canonical formula implemented (Bennett et al., PRL 76, 722 (1996)) is:
 
 ```
-P_succ = (4/3) f1 f2 - (1/3)(f1 + f2) + 1/3
+P_succ = (8 f1 f2 - 2(f1 + f2) + 5) / 9
 ```
 
-This corresponds to the bilateral CNOT purification protocol (Bennett, Brassard, Popescu,
-Schumacher, Smolin, Wootters 1996) applied to two Werner states, and equals `(3 p1 p2 + 1)/4`
-in Werner parameters. It yields `0.25` at `F=0.25` (fully mixed) and `1` at `F=1` (perfect).
-Both input fidelities enter symmetrically. Note that the arguments are *fidelities*, not
-Werner parameters.
+which equals `(p1 p2 + 1)/2` in Werner parameters and is exactly 1/9 of the denominator of
+`bbpssw_new_fidelity` below (both derive from the same BBPSSW density matrix, so the two are
+self-consistent). Anchors: `5/9` at `F1=F2=0.5`, `1` at `F1=F2=1`. Both input fidelities enter
+symmetrically; arguments and return value are *fidelities*, not Werner parameters.
+
+> Fixed 2026-07-10: the previously implemented `(4/3)f1f2 - (1/3)(f1+f2) + 1/3` under-counted
+> success probability by 24-50% across the working range. Any results/checkpoints predating
+> that fix used the wrong rate.
 
 **`bbpssw_new_fidelity(f1, f2)`**
 
@@ -109,6 +118,11 @@ an entanglement swap. Three policies are defined:
 
 Represents a single quantum repeater node with `n_ch` qubit slots (communication channels).
 Uses `__slots__` for memory efficiency.
+
+`Repeater.__deepcopy__` overrides the generic recursive `copy.deepcopy` with 10 flat
+`ndarray.copy()` calls (config fields are immutable and shared by reference). It was added for
+the exact-DP optimal-policy kernel (§1); that consumer was retired 2026-07-18, so this is
+currently unused but harmless if a future consumer needs cheap `Repeater` clones again.
 
 #### 2.4.1 Attributes
 
@@ -223,27 +237,34 @@ Returns the indices of qubits whose age has reached or exceeded their `link_cuto
 are candidates for expiry but are not freed here; the network layer decides when to break them.
 
 
-#### 2.4.5 `select_swap_pair(network_positions, rng=None) -> Tuple[int, int] | None`
+#### 2.4.5 `select_swap_pair(network_positions, network_cutoffs, rng=None) -> Tuple[int, int] | None`
 
-Selects which two available qubits on this repeater should be used for a swap. The selection
-depends on `self.swap_policy`:
+Selects which two available qubits on this repeater should be used for a swap, among the
+**viable** pairs only.
 
-**FARTHEST**: Enumerates all C(k,2) pairs of available qubits (where k is the number of
-available qubits). For each pair `(qa, qb)`, looks up the spatial positions of their respective
-remote partners using `network_positions[partner_repeater[qa]]` and
-`network_positions[partner_repeater[qb]]`, then computes the Euclidean distance between those
-two remote positions. Selects the pair that maximises this distance. The rationale is that
-swapping qubits whose partners are far apart extends the entangled link across the greatest
-spatial span.
+**Viability gate (2026-07-12 cutoff-invariant fix)**: for candidate pair `(qa, qb)` with remote
+endpoints `ra, rb`, the fused link would inherit `age_a + age_b`, and both parents age once
+more before a same-tick event resolves, so the pair is only offered if
+`age_a + age_b + 2 < min(network_cutoffs[ra], network_cutoffs[rb])`. This closes a leak where
+over-age pairs were swapped and then resolved past their cutoff anyway (pre-fix repro on
+swap-asap, N=10: 49% of deliveries were over-age links). Returns `None` if fewer than 2 qubits
+are available, or if none of the C(k,2) candidate pairs are viable.
 
-**STRONGEST**: Enumerates all C(k,2) pairs and selects the one maximising the product
-`werner_param[qa] * werner_param[qb]`. Since the post-swap Werner parameter equals this
-product (see Section 3.4), this policy maximises the fidelity of the resulting swapped link.
+Among the viable pairs, the choice depends on `self.swap_policy`:
 
-**RANDOM**: Selects two available qubits uniformly at random using the provided `rng`
-generator.
+**FARTHEST**: looks up the spatial positions of each pair's remote partners via
+`network_positions[partner_repeater[...]]` and selects the pair maximising the Euclidean
+distance between those two remote positions — swapping qubits whose partners are far apart
+extends the entangled link across the greatest spatial span.
 
-Returns `None` if fewer than 2 qubits are available.
+**STRONGEST**: selects the pair maximising the product `werner_param[qa] * werner_param[qb]`.
+Since the post-swap Werner parameter equals this product (see §3.3), this policy maximises the
+fidelity of the resulting swapped link.
+
+**RANDOM**: selects uniformly at random among the viable pairs using the provided `rng`.
+
+With CC delays the in-flight accrual can exceed what this pre-swap gate sees; `network.py`'s
+`_resolve_swap` holds an additional born-dead guard at resolution time (§3.6).
 
 
 #### 2.4.6 `reset()`
@@ -267,9 +288,8 @@ of operations subject to classical communication delays.
 - `repeaters` (list[Repeater]): The list of repeater nodes. Indexed by `rid`.
 - `N` (int): Number of repeaters (`len(repeaters)`).
 - `adj` (ndarray, shape `(N, N)`, float64): Adjacency matrix. Nonzero entry `adj[i,j]`
-  indicates that repeaters `i` and `j` are physically connected by a fibre link. For chain
-  and grid topologies the entries are 1.0; for the GEANT topology they store the Haversine
-  distance in km between the two nodes.
+  indicates that repeaters `i` and `j` are physically connected by a fibre link; `build_chain`
+  sets these to 1.0 (chain-only, §3.9).
 - `channel_loss` (float): Attenuation coefficient for distance-dependent link generation
   probability and fidelity. Units: per km (specifically, used in the exponent as
   `exp(-channel_loss * d / 2)` for generation probability and `exp(-channel_loss * d)` for
@@ -287,6 +307,8 @@ of operations subject to classical communication delays.
 - `_positions` (ndarray, shape `(N, 2)`): Cached array of repeater positions.
 - `_dist_matrix` (ndarray, shape `(N, N)`): Cached pairwise Euclidean distance matrix,
   computed at construction from `_positions`.
+- `_cutoffs` (ndarray, shape `(N,)`, int64): Per-repeater cutoff, rid-indexed. Fed to
+  `Repeater.select_swap_pair` as the swap viability gate (§2.4.5).
 
 
 #### 3.1.2 Helper methods
@@ -354,9 +376,11 @@ the two remote partners of the selected qubit pair.
 
 **Procedure:**
 1. Check that the repeater has at least 2 available qubits (`can_swap()`).
-2. Select a pair `(qa, qb)` using the repeater's `select_swap_pair` method.
-3. Guard against same-partner swap: if both qubits point to the same remote repeater,
-   swapping would create a self-link. Reject.
+2. Select a pair `(qa, qb)` via `select_swap_pair` (§2.4.5) — already filtered to viable
+   pairs only (`no_valid_pair` if `can_swap()` passed but no pair survives the viability gate).
+3. Guards, rejected before sampling: `orphan_qubit` if either qubit's `partner_repeater` is
+   `NO_PARTNER` (would silently index `repeaters[-1]` at resolution); `same_partner` if both
+   qubits point at the same remote repeater (would create a self-link).
 4. Sample BSM success: draw `u ~ Uniform(0,1)`, succeed if `u <= rep.p_swap`.
 5. On failure: break both links immediately (no CC delay needed, since the repeater knows
    locally that the BSM failed).
@@ -367,7 +391,9 @@ the two remote partners of the selected qubit pair.
    - Lock the two remote qubits (one on each remote partner). Clear their back-pointers to
      the now-freed local qubits to prevent stale references.
    - Compute the CC delay: `max(distance(r, ra), distance(r, rb))` converted to steps.
-   - Enqueue a `"swap"` event with `timer = delay`.
+   - Enqueue a `"swap"` event with `timer = delay` and the two remote qubits'
+     `generation_id`s (`gen_a`, `gen_b`), used by `_resolve_swap` to detect reallocation
+     during the delay (§3.6).
 
 **Post-swap Werner parameter derivation:**
 
@@ -398,8 +424,10 @@ sacrifice pair provides the most information gain for the keep pair.
 4. Sample the outcome immediately.
 5. Lock all 4 qubits (2 on each side).
 6. Compute CC delay from `distance(r1, r2)`.
-7. Enqueue a `"purify"` event carrying the outcome, involved qubit indices, and (if
-   successful) the new Werner parameter.
+7. Enqueue a `"purify"` event carrying the outcome, involved qubit indices, the new Werner
+   parameter (if successful), the keep qubit's age at decision time (`age_keep`, used to
+   compute ticks accrued during the delay), and all four qubits' `generation_id`s (liveness
+   checks at resolution, §3.6).
 
 **Both success and failure are deferred** because neither side knows the outcome until the
 classical measurement results are exchanged.
@@ -439,29 +467,60 @@ Resolves a deferred swap event. The local qubits at the swapping repeater were a
 at BSM time. This method rewrites the two remote qubits to point to each other, establishing
 the new end-to-end link.
 
-**Guard:** Either remote qubit may have been freed by expiry during the CC delay. If at least
-one side is no longer occupied, the survivor (if any) is also freed and no link is
-established.
+**Guard 1 — liveness:** a remote qubit is only "alive" if it is still `QUBIT_OCCUPIED` **and**
+its current `generation_id` matches the value recorded on the event (`gen_a`/`gen_b`). Occupancy
+alone is not enough: a locked qubit can be freed by expiry and then *reallocated* to an
+unrelated link during the CC delay, and the generation check is what stops the resolution from
+corrupting that new occupant (a same-index-different-link "ghost link" bug). If either side is
+dead, the live survivor (if any) is freed and no link is established.
 
-On success: calls `set_link` on both remote qubits with `link_age=0` (the age counter
-restarts for the new virtual link), the pre-computed `p_new`, and effective cutoff
-`min(cutoff_a, cutoff_b)`. Then unlocks both qubits.
+**Guard 2 — collapsed endpoints:** if both remote endpoints turned out to be the same repeater
+(`ra == rb`, e.g. a chain of re-swaps collapsed onto one node during the delay), forming the
+link would create a self-loop; both survivors are freed instead.
+
+**Guard 3 — born-dead:** the fused link would inherit `age = age_a + age_b` (see below). If
+`age_a + age_b >= min(cutoff_a, cutoff_b)`, the link is already past its cutoff at the moment
+it would be created — the pre-swap viability gate (§2.4.5) cannot always see this (CC-delay
+accrual happens after the gate ran), and the plain expiry sweep in `age_links()` only scans
+qubits that existed *before* this resolution, so it would never police a link born expired.
+Both remote endpoints are freed instead of creating the link.
+
+**On success (sum-ages resolution):** the resolved Werner value must equal the product of the
+two remote links' *already-decohered* values at resolution time, `w_a * w_b`, not a fresh
+`p_new` planted at `age=0` (that would double-count the pre-swap decoherence, and is what the
+project's docs from before the 2026-07-10/07-12 physics fixes describe). This is reproduced by
+storing the **baseline product** `p0_a * p0_b` (`initial_werner` of each side) as the new
+`initial_werner`, with `age = age_a + age_b` and `effective_cutoff = min(cutoff_a, cutoff_b)`:
+since `p0_a*p0_b*exp(-(age_a+age_b)/tau) = (p0_a*e^{-age_a/tau})(p0_b*e^{-age_b/tau}) = w_a*w_b`
+for a shared `tau`, this is exact for homogeneous per-link cutoffs (the only regime in use) and
+an approximation only if the two links carried different cutoffs. Both qubits are then unlocked.
 
 #### `_resolve_purify(ev)`
 
-Resolves a deferred purification event.
+Resolves a deferred purification event. All liveness checks use the generation-ID guard
+described above, not bare occupancy.
 
 **On success:**
-1. Break the sacrifice pair via `_break_link`.
-2. Guard: check that both "keep" qubits are still occupied (they may have expired during
-   delay). If not, clean up and return.
-3. Re-register the kept link with the upgraded Werner parameter `p_new` and `link_age=0`.
-   Unlock both keep qubits.
+1. Break the sacrifice pair, guarded by each side's generation-ID (`gen_sac1`/`gen_sac2`)
+   against `q1_sac`/`q2_sac`). If a side is no longer live, free the live survivor and (if our
+   lock is still the current one) release it — a lock whose generation no longer matches was
+   re-taken by a newer in-flight op and must be left alone, or that op's qubit gets orphaned.
+2. Guard: check that both "keep" qubits are still live (generation-ID + occupancy). If not,
+   break the live survivor(s) and return.
+3. **Eq.(4) age semantics** (arXiv 2401.13168): rather than reset the kept link's age to 0 (the
+   pre-2026-07-12 behaviour, which double-counted decoherence via sum-of-endpoint-ages
+   bookkeeping), the purified fidelity `p_new` is represented as an equivalent age on a fresh
+   `p0=1` baseline: `m_equiv = ceil(-cutoff * ln(p_new))`, plus ticks accrued since the decision
+   (`accrued = current_age - age_keep`, covering CC delay + same-tick aging). If the resulting
+   `new_age = m_equiv + accrued` has already reached the cutoff, the purified state is below
+   the fidelity floor the cutoff exists to guarantee — discard (`_break_link`) rather than
+   create a link expiry can never police, same rationale as swap's born-dead guard. Otherwise
+   `set_link(..., p=1.0, link_age=new_age, effective_cutoff=cutoff)` and unlock both qubits.
 
 **On failure:**
-Break all involved links. Each break is guarded by checking occupancy first, since qubits
-may have already been freed by expiry or by the sacrifice-pair break propagating through
-`_break_link`.
+Break all four qubits, each guarded by its own generation-ID against the event's recorded
+value (a qubit may have already been freed by expiry, reallocated, or freed as a side effect
+of another qubit's `_break_link` on the same physical pair).
 
 
 ### 3.7 `_break_link(r, qidx)`
@@ -493,35 +552,26 @@ Per-repeater mask: True if the repeater has at least 2 available (occupied, unlo
 
 ### 3.9 Topology builders
 
-Three factory functions create `RepeaterNetwork` instances with standard topologies. All
-accept `**kw` which is forwarded to the `RepeaterNetwork` constructor (allowing
-`channel_loss`, `F0`, `distance_dep_gen`, `rng`, `dt_seconds` to be set).
+> **Chain-only.** `build_grid`/`build_GEANT` and Haversine positioning were removed in the
+> chain-only refactor (`5544d26`); chain is the only topology this project models.
 
-#### `build_chain(n_repeaters, n_ch, spacing, swap_policy, p_gen, p_swap, cutoff, **kw)`
+**`build_chain(n_repeaters, n_ch, spacing, swap_policy, p_gen, p_swap, cutoff, **kw)`**
 
 Creates a linear chain of `n_repeaters` nodes spaced `spacing` km apart along the x-axis.
-Adjacency connects each node to its immediate neighbours: `adj[i, i+1] = 1.0`.
+Adjacency connects each node to its immediate neighbours: `adj[i, i+1] = 1.0`. `**kw` forwards
+to the `RepeaterNetwork` constructor (`channel_loss`, `F0`, `distance_dep_gen`, `rng`,
+`dt_seconds`).
 
-#### `build_grid(rows, cols, n_ch, spacing, swap_policy, p_gen, p_swap, cutoff, **kw)`
+**`build_network(topology="chain", *, n_repeaters, n_ch, spacing, p_gen, p_swap, p_gen_std,
+p_swap_std, cutoff, F0, channel_loss, dt_seconds, rng)`**
 
-Creates a `rows x cols` rectangular grid. Node `idx` is placed at position
-`(col * spacing, row * spacing)` where `row, col = divmod(idx, cols)`. Adjacency connects
-horizontal and vertical neighbours.
-
-#### `build_GEANT(n_ch, swap_policy, p_gen, p_swap, cutoff, **kw)`
-
-Creates the GEANT pan-European research network topology with 24 nodes and 37 links.
-Node positions are derived from capital-city coordinates (latitude, longitude) projected onto
-a 2D plane via equirectangular projection centered on the mean latitude (~50 deg N). Positions
-are in km.
-
-The adjacency matrix entries store **Haversine great-circle distances** (in km) between
-connected nodes, computed by `_haversine_km`. This means `adj[i,j]` serves double duty:
-nonzero indicates connectivity, and the value itself is the fibre distance.
-
-**`_haversine_km(lat1, lon1, lat2, lon2) -> float`**
-
-Standard Haversine formula for great-circle distance on a sphere of radius 6371 km.
+The public entry point (used by `rl_stack/env_wrapper.py`): builds via `build_chain`, then, if
+`p_gen_std > 0` or `p_swap_std > 0`, overwrites each repeater's `p_gen`/`p_swap` with per-node
+values drawn by `_sample_matched_uniform(mean, std, N, rng)` — a uniform on
+`[mean - sqrt(3)*std, mean + sqrt(3)*std]` clipped to `[0.05, 1]`, so its *pre-clip* standard
+deviation is exactly `std`. `std <= 0` broadcasts the (clipped) mean and consumes **no** RNG
+draw, keeping the homogeneous RNG stream bit-identical to a run with inhomogeneity code paths
+compiled out. Raises `ValueError` for any `topology` other than `"chain"`.
 
 ### 3.10 Rendering
 
@@ -556,7 +606,7 @@ by a separate action mask, not by edges in the graph.
 | 1 | `mean_fidelity` | avg F of available (unlocked) qubits, 0 if none |
 | 2 | `in_endnode` | 1.0 if source **or** dest (endpoints are symmetric) |
 | 3 | `frac_available` | available (unlocked occupied) / `n_ch` |
-| 4 | `can_swap` | 1.0 if ≥2 available qubits to different partners (forced 0 at endpoints) |
+| 4 | `can_swap` | 1.0 if a *viable* swap pair exists: ≥2 available qubits to different partners whose fused link would survive same-tick resolution (`age_i + age_j + 2 < min cutoff`, mirrors §2.4.5); forced 0 at endpoints |
 | 5 | `can_purify` | 1.0 if ≥2 available qubits to the same partner (forced 0 at endpoints) |
 | 6 | `p_gen` | per-repeater link-generation prob. (inhomogeneity signal) |
 | 7 | `p_swap` | per-repeater BSM success prob. (inhomogeneity signal) |

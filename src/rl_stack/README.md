@@ -19,9 +19,9 @@ topologies and is evaluated zero-shot on larger or differently parameterised net
 | `model.py` | Neural network | 3-layer GraphSAGE Q-network producing per-node action values |
 | `buffer.py` | Experience storage | Fixed-size ring buffer for (s, a, r, s', done, mask') transitions |
 | `agent.py` | Training and evaluation | Double-DQN agent: action selection, loss computation, training loop, validation |
-| `strategies.py` | Baselines | Heuristic policies (SwapASAP, PurifyThenSwap, FidelityGatedSwap, Random, BeliefPropagation) for benchmarking |
+| `strategies.py` | Baselines | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking |
 | `potential.py` | Reward shaping | PBRS potential (`bfs_hops`, `path_progress`), pure, no torch |
-| `winnability.py` | Training helper | Swap-asap winnability oracle used to prune unsolvable episode cells |
+| `winnability.py` | Training helper | Purify-then-swap winnability oracle (2026-07-12; was swap-asap) used to prune unsolvable episode cells |
 | `__init__.py` | Re-exports | Public API surface with guarded torch imports |
 
 
@@ -56,14 +56,11 @@ QRNEnv(n_repeaters, n_ch, spacing, p_gen, p_swap, p_gen_std, p_swap_std,
        cutoff, F0, channel_loss, dt_seconds, max_steps, rng, topology, gamma)
 ```
 
-The constructor builds the underlying network via `build_network(topology, ...)`, which
-dispatches to one of three topology builders:
-
-| Topology | Builder | Notes |
-|---|---|---|
-| `'chain'` | `build_chain(...)` | Linear chain of `n_repeaters` nodes, distance-dependent generation enabled |
-| `'grid'` | `build_grid(rows, cols, ...)` | Square grid of `n_repeaters x n_repeaters` nodes |
-| `'geant'` | `build_GEANT(...)` | GEANT pan-European topology (24 nodes, 37 links) |
+The constructor builds the underlying network via `build_network(topology, ...)`.
+**Chain-only**: `topology` must be `'chain'` (a linear chain of `n_repeaters` nodes, source=0 /
+dest=N-1); any other value raises `ValueError`. Grid and GÉANT topology support (`build_grid`,
+`build_GEANT`, random non-adjacent source/destination selection) was removed in the chain-only
+refactor — see `src/simulator/README.md` §3.9.
 
 All physics parameters (`p_gen`, `p_swap`, `cutoff`, `F0`, `channel_loss`, `dt_seconds`)
 are forwarded to the topology builder. **Inhomogeneity** is controlled by `p_gen_std` /
@@ -91,14 +88,9 @@ pair for the current episode.
 
 ### 2.2 Target selection: `_pick_targets()`
 
-For chain topologies or networks with two or fewer nodes, the source and destination are
-fixed to the first and last node (indices 0 and N-1).
-
-For grid and GEANT topologies, source and destination are chosen uniformly at random (without
-replacement) from all N nodes, subject to the constraint that they must **not** be directly
-adjacent in the network graph. This ensures that the agent must perform at least one swap to
-connect them. The constraint is checked via the adjacency matrix: `not self.net.adj[s, d]`.
-Selection repeats until a valid pair is found.
+Chain-only: source and destination are always fixed to the first and last node (indices `0`
+and `N-1`). Also caches the BFS hop distances (`_d_src`, `_d_dst`, `_d_total`) the PBRS
+potential reads every step (§5.5).
 
 
 ### 2.3 Observation: `get_observation()`
@@ -116,7 +108,7 @@ The nine per-node features (all in `[0, 1]`) are:
 | 1 | `mean_fidelity` | Mean of `werner_to_fidelity(p)` over available (unlocked) qubits; 0 if none |
 | 2 | `in_endnode` | 1.0 if this node is the episode source **or** destination (endpoints are symmetric) |
 | 3 | `frac_available` | `num_available / n_ch` (available = occupied and not locked) |
-| 4 | `can_swap` | 1.0 if node has >=2 available qubits linked to distinct partners |
+| 4 | `can_swap` | 1.0 if a *viable* swap pair exists: >=2 available qubits linked to distinct partners whose fused link survives same-tick resolution (`age_i + age_j + 2 < min cutoff`) |
 | 5 | `can_purify` | 1.0 if node has >=2 available qubits linked to the same partner |
 | 6 | `p_gen` | per-repeater generation probability (inhomogeneity signal) |
 | 7 | `p_swap` | per-repeater BSM success probability (inhomogeneity signal) |
@@ -138,8 +130,11 @@ and PURIFY when `_can_purify_from(ns)` is true. Source and destination nodes hav
 enabled. Both helpers operate on a node's immutable `NodeState` snapshot.
 
 **`_can_swap_from(ns)`**: Returns true when the node has at least 2 available (occupied and
-unlocked) qubits whose `partner_node` values point to at least 2 distinct neighbours. This
-ensures a BSM can bridge two different link segments.
+unlocked) qubits whose `partner_node` values point to at least 2 distinct neighbours, **and**
+at least one such pair is viable: `age_i + age_j + 2 < min(link_cutoff_i, link_cutoff_j)`
+(2026-07-12 fix, mirrors the engine's swap decision gate in `Repeater.select_swap_pair`,
+`simulator/README.md` §2.4.5). This ensures a BSM can bridge two different link segments
+*and* that the fused link wouldn't be born past its cutoff.
 
 **`_can_purify_from(ns)`**: Returns true when the node has at least 2 available qubits linked
 to the same partner. This ensures two copies of a link to the same neighbour exist for
@@ -292,9 +287,9 @@ The agent maintains two copies of the Q-network: `policy_net` (trained) and `tar
 #### Constructor
 
 ```
-QRNAgent(node_dim=9, hidden=64, lr=3e-4, gamma=0.99,
+QRNAgent(node_dim=NODE_DIM, hidden=64, lr=3e-4, gamma=0.99,
          buffer_size=80_000, batch_size=64, tau=0.005,
-         epsilon=1.0, rng=None)
+         epsilon=1.0, rng=None, seed=None)
 ```
 
 | Parameter | Role |
@@ -308,6 +303,7 @@ QRNAgent(node_dim=9, hidden=64, lr=3e-4, gamma=0.99,
 | `tau` | Polyak averaging coefficient for target network |
 | `epsilon` | Initial exploration rate for epsilon-greedy |
 | `rng` | Seeded numpy Generator for reproducible exploration |
+| `seed` | If given, also seeds the replay buffer's sampler (`ReplayBuffer(seed=...)`) so a run is bit-reproducible end to end |
 
 The loss function is `SmoothL1Loss` (Huber loss), and gradient norms are clipped to 10.0.
 
@@ -376,8 +372,8 @@ full range.
 
 **Domain randomisation**: per episode, `p_gen` / `p_swap` / `cutoff` / `n_ch` are drawn from
 the ranges/pools passed to `train`, and per-repeater `p_gen_std` / `p_swap_std` scatter node
-rates. With `--prune_unwinnable`, a `WinnabilityCache` resamples the cell until swap-asap can
-deliver it, so no episode is spent on an unsolvable config.
+rates. With `--prune_unwinnable`, a `WinnabilityCache` resamples the cell until purify-then-swap
+can deliver it, so no episode is spent on an unsolvable config.
 
 **Epsilon schedule**: Cosine annealing from `eps_init=1.0` to `eps_fin=0.05` over the first
 90% of training, then held constant at `eps_fin`:
@@ -415,10 +411,11 @@ The strategies compared are:
 |---|---|---|
 | Agent | `select_actions(training=False)` | Greedy Q-value policy |
 | SwapASAP | `strategies.swap_asap` | Swap at every node that can, every step |
-| BeliefProp | `strategies.belief_propagation_policy` | Training-free swap scheduler: exact tree reachability on chains, damped loopy fallback on cyclic graphs |
-| FidGatedSwap | `strategies.fidelity_gated_swap` | Swap only when the node's mean link fidelity ≥ threshold |
 | PurifySwap | `strategies.purify_then_swap` | Purify if possible, else swap if possible |
 | Random | `strategies.random_policy` | Uniform random valid action per node |
+
+> `BeliefPropagationPolicy` and `fidelity_gated_swap` were deliberately removed 2026-07-09
+> (out of scope for the paper; recoverable from git history).
 
 Each strategy runs `n_episodes` episodes on identically configured environments. Results
 (average steps to success, average end-to-end fidelity, success rate) are printed in a table.
@@ -448,29 +445,25 @@ solid = NOOP, `///` = SWAP, `...` = PURIFY. A black patch marks the terminal ste
 
 ## 6. File: `strategies.py` - Baseline Policies
 
-Five heuristic strategies are provided for benchmarking. All respect the action mask
+Three heuristic strategies are provided for benchmarking. All respect the action mask
 (source/destination are NOOP) and return an `(N,)` int32 action array.
 
 **`swap_asap(env)`**: At every interior node where the mask allows SWAP, assign SWAP. This
 is the most aggressive strategy: it extends entanglement reach as fast as possible but does
 not improve fidelity through purification. Contention (multiple swaps competing for the same
-qubit) is handled gracefully by the underlying `network.swap()` method. It is also the
-reference oracle used by `WinnabilityCache`.
+qubit) is handled gracefully by the underlying `network.swap()` method.
 
 **`purify_then_swap(env)`**: At each node, prefer PURIFY if available; otherwise SWAP if
-available; otherwise NOOP. This prioritises link quality over speed.
-
-**`fidelity_gated_swap(env, f_threshold=0.5)`**: Swap only when the node's mean occupied-link
-fidelity meets the threshold, else hold; never purifies.
+available; otherwise NOOP. This prioritises link quality over speed. It is also the
+winnability-feasibility oracle used by `WinnabilityCache` (2026-07-12; swap-asap can livelock
+at `n_ch=4`, purify-then-swap does not).
 
 **`random_policy(env, rng)`**: At each node, sample uniformly from the set of valid actions.
 Takes an **explicit RNG that must be independent of `env.rng`**, sharing it would perturb the
 environment's own generation/BSM coin flips and invalidate the comparison. Lower-bound baseline.
 
-**`BeliefPropagationPolicy(...)`** (and its functional wrapper `belief_propagation_policy`):
-a training-free swap scheduler using exact tree-reachability messages on chains and a damped
-loopy fallback on cyclic graphs, scoring candidate swaps by endpoint-reachability × geodesic
-progress × `p_swap` × link quality.
+> `fidelity_gated_swap` and `BeliefPropagationPolicy` were deliberately removed 2026-07-09
+> (out of scope for the paper; recoverable from git history).
 
 
 ## 7. Typical Training and Evaluation Flow

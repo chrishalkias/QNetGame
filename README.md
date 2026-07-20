@@ -12,10 +12,10 @@
 A discrete-time quantum repeater network simulator with classical communication
 delays, built as the training environment for a reinforcement-learning agent
 that schedules **swap** / **purify** / **wait** decisions along a repeater
-chain (or grid, or the 24-node GÉANT topology). The simulator (`src/simulator`)
-is pure NumPy; the RL stack (`src/rl_stack`) is a GraphSAGE Double-DQN agent
-(PyTorch + PyTorch Geometric) that trains on small, randomized chains and
-generalises zero-shot to larger and out-of-distribution ones.
+chain. The simulator (`src/simulator`) is pure NumPy; the RL stack
+(`src/rl_stack`) is a GraphSAGE Double-DQN agent (PyTorch + PyTorch Geometric)
+that trains on small, randomized chains and generalises zero-shot to larger
+and out-of-distribution ones.
 
 **Dependencies:** NumPy (core). `torch` + `torch_geometric` for the RL stack.
 
