@@ -14,10 +14,10 @@ ceiling (N_train_max) past which the agent extrapolates (zero-shot).
 
 Two modes (one file):
   eval (default, for the cluster) -> MC-evaluates and writes a JSON
-      PYTHONPATH=. python experiments/comparisons/delivery_vs_N.py \
+      PYTHONPATH=src:. python experiments/comparisons/delivery_vs_N.py \
           --ckpt checkpoints/sota/policy.pth
   plot (--plot, local) -> reads the JSON and renders the lineplot
-      PYTHONPATH=. python experiments/comparisons/delivery_vs_N.py --plot
+      PYTHONPATH=src:. python experiments/comparisons/delivery_vs_N.py --plot
 """
 from __future__ import annotations
 import argparse, json, os
@@ -68,7 +68,7 @@ def parse_args():
 
 
 def run_eval(args):
-    from experiments.heatmap import optimal_baseline as ob
+    from experiments import mc_eval as ob
     from experiments.comparisons._common import eval_gated
     from rl_stack import strategies
 

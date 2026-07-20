@@ -5,7 +5,7 @@ Rows are grouped by (N, p_gen, p_swap, n_ch, cutoff) and dict-merged, so an
 agent-only file and a purify_swap-only file for the same cell become one row
 with both policies' columns. `.meta.json` sidecars are skipped.
 
-  PYTHONPATH=. python experiments/comparisons/merge_json.py \
+  PYTHONPATH=src:. python experiments/comparisons/merge_json.py \
       'results/comparisons/dvN_c30_H40000/*.json' -o results/comparisons/delivery_vs_N_c30_H40000.json
 """
 from __future__ import annotations

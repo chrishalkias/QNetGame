@@ -12,8 +12,8 @@ Produces two side-by-side paper barplots (appendix):
   right = mean delivered fidelity F per agent (error bar = standard deviation)
 
 Dual-mode + chunkable (each chunk is an independent seed, merge concatenates):
-  eval:  PYTHONPATH=. python experiments/comparisons/agents_seed_barplot.py --seed 0
-  plot:  PYTHONPATH=. python experiments/comparisons/agents_seed_barplot.py --plot
+  eval:  PYTHONPATH=src:. python experiments/comparisons/agents_seed_barplot.py --seed 0
+  plot:  PYTHONPATH=src:. python experiments/comparisons/agents_seed_barplot.py --plot
 """
 from __future__ import annotations
 import argparse
@@ -71,7 +71,7 @@ def _rollout(fn, N, n_ch, p_gen, p_swap, cutoff, ep_seed, H, pg_std, ps_std):
 
 
 def run_eval(a):
-    from experiments.heatmap.optimal_baseline import make_agent_fn
+    from experiments.mc_eval import make_agent_fn
     agents = {lab: make_agent_fn(ck, hidden=a.hidden)
               for lab, ck in zip(a.labels, a.ckpts)}
     master = np.random.default_rng(a.seed)
@@ -139,7 +139,7 @@ def run_plot(a):
     T_e = [st[l]["T_se"] for l in a.labels]
     axT.bar(x, T_m, yerr=T_e, capsize=5, color=colors, edgecolor="black", lw=0.6)
     axT.set_ylabel(r"mean delivery time $T$ (steps, censored at $H$)")
-    axT.set_title("(a) Delivery time")
+    axT.set_title("Delivery time")
     for xi, (m, e) in enumerate(zip(T_m, T_e)):
         axT.text(xi, m + e, f"{m:.1f}", ha="center", va="bottom", fontsize=9)
 
@@ -151,18 +151,20 @@ def run_plot(a):
     axF.text(len(a.labels) - 1, 0.5, " separable $F=1/2$", color="firebrick",
              fontsize=7, va="bottom", ha="right")
     axF.set_ylabel(r"mean delivered fidelity $\bar{F}$")
-    axF.set_title("(b) Delivered fidelity")
+    axF.set_title("Delivered fidelity")
     for xi, (m, s) in enumerate(zip(F_m, F_s)):
         axF.text(xi, m + s, f"{m:.3f}", ha="center", va="bottom", fontsize=9)
 
-    for ax in (axT, axF):
+    for ax, plab in ((axT, "(A)"), (axF, "(B)")):
         ax.set_xticks(x)
         ax.set_xticklabels([f"{l}\n({st[l]['deliv_rate']*100:.0f}% delivered)"
                             for l in a.labels])
         ax.grid(alpha=0.3, axis="y")
+        ax.text(-0.10, 1.03, plab, transform=ax.transAxes, fontsize=14,
+                fontweight="bold", va="bottom", ha="left")   # just outside top-left
     fig.suptitle(rf"SOTA seeds on {n} random training-domain episodes "
                  rf"($N\in[{a.n_lo},{a.n_hi}]$, $n_\mathrm{{ch}}\in\{{{','.join(map(str,a.n_ch))}\}}$, "
-                 rf"$H={a.horizon}$; error bars: (a) SE, (b) SD)", fontsize=9.5)
+                 rf"$H={a.horizon}$; error bars: (A) SE, (B) SD)", fontsize=9.5)
     C.savefig(fig, a.fig)
 
 

@@ -7,10 +7,14 @@ purify_then_swap? If yes, the benefit is "don't always purify" (a rate), not
 smart state-selection. See hybrid_policy.py for the policy and the RNG-
 independence invariant.
 
+--qcond adds the state-conditioned q(state) variant (make_conditional_fn) to
+the roster, to check whether closing the loop on state recovers more of the
+agent's edge than the constant-q hybrids do.
+
 Everything reuses the repo untouched:
-  - experiments.heatmap.optimal_baseline.mc_eval : THE canonical delivery-time
+  - experiments.mc_eval.mc_eval : THE canonical delivery-time
     evaluator (censored at H, seeded), used with return_stats=True.
-  - experiments.heatmap.optimal_baseline.make_agent_fn / swap_asap_fn.
+  - experiments.mc_eval.make_agent_fn / swap_asap_fn.
   - experiments.q_heuristic.hybrid_policy : the q-heuristic and the ptswap wrapper.
 
 Dual mode (one file), mirroring experiments/comparisons house style:
@@ -25,7 +29,7 @@ Only purify_then_swap and the hybrid q list are torch-free; pass --agents ''
 (empty) to keep the whole run numpy-only. torch is imported lazily by
 make_agent_fn, only when --agents is non-empty.
 
-Examples (from repo root, PYTHONPATH=.):
+Examples (from repo root, PYTHONPATH=src:.):
   python experiments/q_heuristic/eval_q_heuristic.py --sanity
   python experiments/q_heuristic/eval_q_heuristic.py --N 8 13 --agents ''
   python experiments/q_heuristic/eval_q_heuristic.py --plot --out 'results/comparisons/q_heuristic/eval_*.json'
@@ -55,6 +59,9 @@ def parse_args(argv=None):
                     help="chain sizes to evaluate")
     ap.add_argument("--q", type=float, nargs="+", default=[0.215, 0.369, 0.5],
                     help="both-legal purify probabilities for the hybrid roster")
+    ap.add_argument("--qcond", nargs="*", default=[],
+                    help="coefficient JSONs for the state-conditioned q-heuristic "
+                         "(make_conditional_fn); roster name qcond_{tag}")
     ap.add_argument("--agents", nargs="*", default=DEFAULT_AGENTS,
                     help="trained-agent checkpoints (torch); empty list = "
                          "heuristics+hybrids only, fully numpy-only")
@@ -118,34 +125,44 @@ def _load_existing(path):
 # ------------------------------ policy roster --------------------------------
 def build_policies(args):
     """Ordered {name: policy_fn(env, obs)}. purify_then_swap first, then the
-    hybrid q list, then agents (torch, only if requested), then swap_asap. The
-    order fixes the (N x policy) work list so chunk assignment is stable."""
+    hybrid q list, then the state-conditioned q-conditional roster, then
+    agents (torch, only if requested), then swap_asap. The order fixes the
+    (N x policy) work list so chunk assignment is stable."""
     from experiments.q_heuristic.hybrid_policy import (
-        make_hybrid_fn, purify_then_swap_fn)
+        make_hybrid_fn, purify_then_swap_fn, make_conditional_fn)
 
     policies = {"purify_then_swap": purify_then_swap_fn}
     for q in args.q:
         policies[f"hybrid_q{q:g}"] = make_hybrid_fn(q=q, seed=_hybrid_seed(q))
 
+    for idx, path in enumerate(args.qcond or []):
+        with open(path) as f:
+            tag = json.load(f)["tag"]
+        policies[f"qcond_{tag}"] = make_conditional_fn(
+            path, seed=3000 + idx, p_gen=args.p_gen, p_swap=args.p_swap,
+            cutoff=args.cutoff)
+
     agents = [a for a in (args.agents or []) if a]   # drop the empty-string sentinel
     if agents:
-        from experiments.heatmap.optimal_baseline import make_agent_fn
+        from experiments.mc_eval import make_agent_fn
         for ckpt in agents:
             policies[_agent_name(ckpt)] = make_agent_fn(ckpt, hidden=64)
 
     if args.include_swap_asap:
-        from experiments.heatmap.optimal_baseline import swap_asap_fn
+        from experiments.mc_eval import swap_asap_fn
         policies["swap_asap"] = swap_asap_fn
     return policies, [_agent_name(a) for a in agents]
 
 
 def _recovery(cell, agent_names):
     """Per-agent recovery fraction (T_pts - T_x) / (T_pts - T_agent) for each
-    hybrid present in this cell (None when the denominator is 0)."""
+    hybrid (constant-q or state-conditioned qcond_*) present in this cell
+    (None when the denominator is 0)."""
     if "purify_then_swap" not in cell:
         return None
     T_pts = cell["purify_then_swap"]["T"]
-    hybrid_names = [n for n in cell if n.startswith("hybrid")]
+    hybrid_names = [n for n in cell
+                    if n.startswith("hybrid") or n.startswith("qcond")]
     rec = {}
     for aname in agent_names:
         if aname not in cell:
@@ -163,7 +180,7 @@ def _recovery(cell, agent_names):
 
 # --------------------------------- eval mode ---------------------------------
 def run_eval(args):
-    from experiments.heatmap.optimal_baseline import mc_eval
+    from experiments.mc_eval import mc_eval
     from experiments.comparisons import _common as C
 
     out = _chunked_path(args.out or _default_out(args), args.chunk, args.nchunks)
@@ -172,7 +189,7 @@ def run_eval(args):
 
     policies, agent_names = build_policies(args)
     C.write_meta(args, extra=dict(
-        evaluator="optimal_baseline.mc_eval(return_stats=True, seed=%d)" % args.seed,
+        evaluator="mc_eval.mc_eval(return_stats=True, seed=%d)" % args.seed,
         policies=list(policies)))
 
     # (N, policy) work list, round-robin over chunks.
@@ -296,7 +313,7 @@ SANITY = dict(N=6, n_ch=4, p_gen=0.4, p_swap=0.8, cutoff=30, H=500,
 
 def run_sanity():
     """q=1.0 must be bit-identical to purify_then_swap (the graft plumbing check)."""
-    from experiments.heatmap.optimal_baseline import mc_eval
+    from experiments.mc_eval import mc_eval
     from experiments.q_heuristic.hybrid_policy import (
         make_hybrid_fn, purify_then_swap_fn)
     c = SANITY

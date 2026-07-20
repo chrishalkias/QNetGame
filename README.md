@@ -833,58 +833,47 @@ GÉANT).
 
 ---
 
-## 13. Optimal-Policy Benchmark
+## 13. Optimal-Policy Benchmark (retired)
 
-The **exact** dynamic-programming optimum is computed in
-`experiments/heatmap/optimal_baseline.py` (finite-horizon backward induction over
-the enumerated MDP; tractable for `n_ch=2`, `N ≤ 4–5`). `simulator/optimal_policy/`
-holds the *consumers* of a pickled optimal policy plus study/report helpers:
-
-| Script | Purpose |
-|---|---|
-| `simulator/optimal_policy/compare_optimal.py` | DP-optimal vs agent delivery-time comparison |
-| `simulator/optimal_policy/pgen_pswap_study.py` | sweep over $(p_{\text{gen}}, p_{\text{swap}})$ |
-| `simulator/optimal_policy/report.py` | aggregate / plot results |
-
-> Note: the DP "optimal" optimises only over `{NOOP, SWAP}`; the agent can
-> beat it via `PURIFY` (which frees a memory slot), so its delivery time is
-> **not** a universal lower bound, it is the swap-only optimum.
+The exact-DP swap-only optimum and its consumers were retired on 2026-07-18
+(code + pickles + heatmap results now under `.local/legacy/optimal_dp/`,
+recoverable from git history). The canonical delivery-time evaluator
+`mc_eval` survives in `experiments/mc_eval.py`.
 
 ---
 
 ## 14. Repository Layout & Runners
 
 ```
-simulator/        core simulator (NumPy only, imports without torch)
-  repeater.py, network.py    engine + build_network()
-  snapshots.py               frozen NodeState / Topology (F-domain read boundary)
-  optimal_policy/            consumers of the pickled DP-optimal policy + reports
-rl_stack/                    Double-DQN RL stack (torch imports guarded)
-  env_wrapper.py  agent.py  model.py  buffer.py  strategies.py  potential.py
-  winnability.py             swap-asap winnability oracle (training cell pruning)
+src/
+  simulator/                 core simulator (NumPy only, imports without torch)
+    repeater.py, network.py    engine + build_network()
+    snapshots.py               frozen NodeState / Topology (F-domain read boundary)
+  rl_stack/                  Double-DQN RL stack (torch imports guarded)
+    env_wrapper.py  agent.py  model.py  buffer.py  strategies.py  potential.py
+    winnability.py             swap-asap winnability oracle (training cell pruning)
 experiments/                 entry-point scripts (argparse at top of file)
-  training/                  train.py  validation.py  batch_validate.py  ...
-  heatmap/                   optimal_baseline.py (exact DP)  eval_*  plot_*
+  mc_eval.py                 THE canonical censored delivery-time evaluator
+  training/                  train.py  validation.py  batch_validate.py  replot.py
   comparisons/               paper figure suite (delivery_vs_* , _common.py)
-  baselines/                 sweep_heuristics.py (gather-once heuristic tables)
-diagnostics/
-  unittests/                 pytest suites (see §15)
+  q_heuristic/               stochastic q-heuristic control experiment
   policy_probes/             feature_importance.py  decision_map.py  _collect.py
-scripts/
-  local/                     local train.sh / test.sh
-  SLURM/                     cluster submit_*.sh
-  sync/                      upload.sh (code up) / download.sh (artifacts down)
+  scripts/
+    local/                     local train.sh / test.sh
+    SLURM/                     cluster submit_*.sh
+    sync/                      upload.sh (code up) / download.sh (artifacts down)
+tests/                       pytest suites (see §15)
 ```
 
 Runner scripts in `experiments/` put their `argparse` at the top of the
 file so the available flags are visible at a glance; they are invoked (with
-`PYTHONPATH=.`) by the `scripts/` shell wrappers.
+`PYTHONPATH=src:.`) by the `scripts/` shell wrappers.
 
 ---
 
 ## 15. Test Suites
 
-`pytest` suites live in `diagnostics/unittests/` (6 files, ~230 tests).
+`pytest` suites live in `tests/`.
 
 | File | Covers |
 |---|---|
@@ -892,17 +881,17 @@ file so the available flags are visible at a glance; they are invoked (with
 | `test_rl_stack.py` | Double-DQN update rule, Polyak averaging, masked-target argmax, done-mask, graph batching + reward broadcast, `QRNEnv` reset/step/features, `QRNAgent.select_actions`, `ReplayBuffer` |
 | `test_backends.py` | `RepeaterNetwork` read snapshots + `build_network`, inhomogeneity sampling (incl. `std=0` RNG-stream neutrality), frozen/read-only `NodeState`/`Topology`, urgency feature |
 | `test_potential.py` | `bfs_hops` and `path_progress` PBRS potential (incl. the adjacent-blob anti-exploit case) |
-| `test_game.py` | curriculum pool, rate/cutoff/n_ch draws, best/final checkpointing, early stopping, optimal-pickle round-trip |
+| `test_game.py` | curriculum pool, rate/cutoff/n_ch draws, best/final checkpointing, early stopping, run-config manifest |
 | `test_winnability.py` | the swap-asap winnability oracle |
 
 ### Running
 
 ```bash
 # all tests
-python -m pytest diagnostics/unittests -v
+PYTHONPATH=src:. python -m pytest tests -v
 
 # a single suite
-python -m pytest diagnostics/unittests/test_simulator.py -v
+PYTHONPATH=src:. python -m pytest tests/test_simulator.py -v
 ```
 
 ### Dependencies

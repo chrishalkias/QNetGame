@@ -3,8 +3,8 @@
 Agent (solid) and purify-then-swap (dashed) overlaid on one axis, coloured by
 p_gen, over the (p_swap, p_gen) operating regime at fixed N, cutoff, n_ch.
 
-  eval:  PYTHONPATH=. python experiments/comparisons/delivery_vs_pswap.py --ckpt ...
-  plot:  PYTHONPATH=. python experiments/comparisons/delivery_vs_pswap.py --plot
+  eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_pswap.py --ckpt ...
+  plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_pswap.py --plot
 """
 from __future__ import annotations
 import argparse

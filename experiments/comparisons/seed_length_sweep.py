@@ -7,7 +7,7 @@ seed variance from training length (the single-seed-per-length sweep conflated
 them). Heuristic lines (swap-ASAP, purify-then-swap) are ckpt-independent, so
 they are read from whichever JSON carries them and drawn once.
 
-  PYTHONPATH=. python experiments/comparisons/seed_length_sweep.py \
+  PYTHONPATH=src:. python experiments/comparisons/seed_length_sweep.py \
       --dir results/comparisons/delivery_vs_N_different_seeds \
       --fig results/figures/delivery_vs_N_seed_length_sweep
 """

@@ -8,8 +8,8 @@ agent was trained at sigma=0.15 (marked on the plot).
 
 Three policies: agent / swap-ASAP / purify-then-swap.
 
-  eval:  PYTHONPATH=. python experiments/comparisons/delivery_vs_std.py --ckpt ...
-  plot:  PYTHONPATH=. python experiments/comparisons/delivery_vs_std.py --plot
+  eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_std.py --ckpt ...
+  plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_std.py --plot
 """
 from __future__ import annotations
 import argparse

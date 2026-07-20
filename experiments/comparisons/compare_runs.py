@@ -1,6 +1,6 @@
 """Overlay agent delivery-time (T vs N) curves from several runs + the heuristics.
 
-  PYTHONPATH=. python experiments/comparisons/compare_runs.py \
+  PYTHONPATH=src:. python experiments/comparisons/compare_runs.py \
       --runs 3k=results/comparisons/delivery_vs_N.json \
              15k=results/comparisons/delivery_vs_N_omni_nopen_15k.json \
              35k=results/comparisons/delivery_vs_N_omni_nopen_35k.json

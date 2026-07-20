@@ -1,6 +1,6 @@
 """Shared helpers for the experiments/comparisons sweeps.
 
-All evals reuse optimal_baseline.mc_eval (delivery time T, censored at the
+All evals reuse mc_eval.mc_eval (delivery time T, censored at the
 horizon) and the same three policies, so every comparison is a paired,
 identically-configured measurement.
 
@@ -23,7 +23,7 @@ F_ENT = 0.5
 
 def build_policies(ckpt, hidden=64):
     """{name: policy_fn(env, obs)} for agent / swap-ASAP / purify-then-swap."""
-    from experiments.heatmap import optimal_baseline as ob
+    from experiments import mc_eval as ob
     from rl_stack import strategies
     return {
         "agent":       ob.make_agent_fn(ckpt, hidden=hidden),
@@ -38,7 +38,7 @@ def eval_T(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps,
     p_swap_std > 0 -> per-repeater inhomogeneous chain. f_min=0.5 switches T
     from time-to-connection to time-to-entanglement (default None = connection,
     keeping existing callers unchanged)."""
-    from experiments.heatmap import optimal_baseline as ob
+    from experiments import mc_eval as ob
     T, sd = ob.mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps,
                        p_gen_std=p_gen_std, p_swap_std=p_swap_std, f_min=f_min)
     return float(T), float(sd / math.sqrt(mc_eps))
@@ -99,7 +99,7 @@ def eval_gated(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=42,
 def eval_T_and_F(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=42,
                  f_min=None):
     """(T mean, T se, F mean, F se). T = delivery time censored at H (matches
-    optimal_baseline.mc_eval). F = mean terminal fidelity over *delivered*
+    mc_eval.mc_eval). F = mean terminal fidelity over *delivered*
     episodes only (censored/truncated episodes carry no delivery fidelity).
     f_min=0.5 gates delivery on the F>1/2 entanglement condition (a separable
     delivery is censored at H and excluded from F); default None = connection."""

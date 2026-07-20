@@ -3,8 +3,8 @@
 Grouped bars per n_ch: agent / swap-ASAP / purify-then-swap. n_ch>4 is past the
 training set {2,3,4} (zero-shot in memory size).
 
-  eval:  PYTHONPATH=. python experiments/comparisons/delivery_vs_nch.py --ckpt ...
-  plot:  PYTHONPATH=. python experiments/comparisons/delivery_vs_nch.py --plot
+  eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_nch.py --ckpt ...
+  plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_nch.py --plot
 """
 from __future__ import annotations
 import argparse
