@@ -1,4 +1,6 @@
-"""Offline policy distillation: teacher Q-values -> tiny student, masked MSE.
+"""
+--------------------------------------------------------------------------------
+Offline policy distillation: teacher Q-values -> tiny student, masked MSE.
 
 Roll the teacher greedily over the omni training distribution, freeze a dataset
 of (state, teacher-Q) per step, then regress the student's Q onto the teacher's
@@ -6,6 +8,7 @@ Q over VALID actions only. Plain MSE (no softmax/temperature): the teacher's
 Q-margins are ~0.005, so a KL objective would wash out to uniform; regression
 fits those tiny margins directly. The greedy policy is recovered as argmax over
 the student's Q at eval, exactly like the teacher.
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import numpy as np
@@ -17,7 +20,7 @@ from rl_stack.env_wrapper import QRNEnv
 from rl_stack.teacher_student.student_model import StudentQNetwork, STUDENT_FEAT_IDX
 
 
-# ───────────────────────── data collection ─────────────────────────
+# ------------------------- data collection -------------------------
 def _masked_argmax(q, mask):
     qm = q.copy()
     qm[~mask] = -1e9
@@ -61,7 +64,7 @@ def collect_teacher_dataset(teacher, *, episodes=400, seed=0, device="cpu",
     return data
 
 
-# ───────────────────────── loss ─────────────────────────
+# ------------------------- loss -------------------------
 def masked_mse_loss(q_student, q_teacher, mask):
     """MSE over valid (node, action) entries only. mask (bool/float) zeroes the
     forbidden actions so they contribute no gradient."""
@@ -70,7 +73,7 @@ def masked_mse_loss(q_student, q_teacher, mask):
     return sq / m.sum().clamp(min=1.0)
 
 
-# ───────────────────────── training ─────────────────────────
+# ------------------------- training -------------------------
 def _record_to_data(rec):
     return Data(
         x=torch.tensor(rec["x"][:, STUDENT_FEAT_IDX], dtype=torch.float32),
@@ -132,7 +135,7 @@ def distill_student(teacher, dataset, *, hidden=16, epochs=30, lr=1e-3,
     return student, best_state, best_val, hist
 
 
-# ───────────────────────── eval policy fn ─────────────────────────
+# ------------------------- eval policy fn -------------------------
 def student_policy_fn(student, device="cpu"):
     """fn(env, obs) -> masked-greedy actions; drops straight into mc_eval."""
     def fn(env, obs):

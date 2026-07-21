@@ -1,5 +1,7 @@
 """
-Train an RL agent on a specified system topology
+--------------------------------------------------------------------------------
+Train an RL agent on a specified system
+--------------------------------------------------------------------------------
 """
 
 import argparse
@@ -69,7 +71,7 @@ def parse_args():
     return parser.parse_args()
 
 
-# ── Run manifest ──────────────────────────────────────────────────────────
+# -- Run manifest ----------------------------------------------------------
 def _git_info():
     """(commit, dirty) from git; ('unknown', False) if git is unavailable so a
     missing repo never crashes a training run."""
@@ -115,7 +117,7 @@ def write_run_manifest(save_path, args):
     return manifest
 
 
-# ── Eval probe (delivery-time best-checkpoint selection) ───────────────────
+# -- Eval probe (delivery-time best-checkpoint selection) -------------------
 def build_eval_probe(args, hard_cells, probe_seed=12345, n_episodes=40):
     """Return a deterministic greedy-policy delivery-time probe for train()'s
     eval_fn hook. Reuses the agent's own paired-rollout machinery (no dependency

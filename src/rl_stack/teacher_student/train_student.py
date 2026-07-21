@@ -1,8 +1,11 @@
-"""CLI: distill the SOTA teacher into a tiny 1-hop / 3-feature student.
+"""
+--------------------------------------------------------------------------------
+CLI: distill the SOTA teacher into a tiny 1-hop / 3-feature student.
 
   PYTHONPATH=src:. python rl_stack/teacher_student/train_student.py \
       --teacher checkpoints/sota/policy.pth \
       --episodes 400 --epochs 30 --out checkpoints/teacher_student/student_h16
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os, pickle

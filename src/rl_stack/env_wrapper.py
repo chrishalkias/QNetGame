@@ -1,4 +1,5 @@
 """
+--------------------------------------------------------------------------------
 RL environment wrapper for the quantum repeater network simulator.
 
 Step flow
@@ -24,6 +25,7 @@ Entanglement generation is **not** an agent action - it is handled
 entirely by the automatic background generation step.
 
 Source and destination nodes are restricted to NOOP only.
+--------------------------------------------------------------------------------
 """
 
 from __future__ import annotations
@@ -41,23 +43,23 @@ PURIFY  = 2
 N_ACTIONS = 3
 ACTION_NAMES = ["noop", "swap", "purify"]
 
+"""
+
+      ▄▄▄▄▄   ▄▄▄▄▄▄▄   ▄▄▄    ▄▄▄        ▄▄▄▄▄▄▄
+    ▄███████▄ ███▀▀███▄ ████▄  ███       ███▀▀▀▀▀
+    ███   ███ ███▄▄███▀ ███▀██▄███       ███▄▄    ████▄ ██ ██
+    ███▄█▄███ ███▀▀██▄  ███  ▀████ ▀▀▀▀▀ ███      ██ ██ ██▄██
+     ▀█████▀  ███  ▀███ ███    ███       ▀███████ ██ ██  ▀█▀
+          ▀▀
+
+Gym-like wrapper around RepeaterNetwork for RL training.
+
+The agent decides SWAP / PURIFY / NOOP at each interior node.
+Source and destination nodes are always forced to NOOP.
+"""
+
 
 class QRNEnv:
-    """
-
-          ▄▄▄▄▄   ▄▄▄▄▄▄▄   ▄▄▄    ▄▄▄        ▄▄▄▄▄▄▄
-        ▄███████▄ ███▀▀███▄ ████▄  ███       ███▀▀▀▀▀
-        ███   ███ ███▄▄███▀ ███▀██▄███       ███▄▄    ████▄ ██ ██
-        ███▄█▄███ ███▀▀██▄  ███  ▀████ ▀▀▀▀▀ ███      ██ ██ ██▄██
-         ▀█████▀  ███  ▀███ ███    ███       ▀███████ ██ ██  ▀█▀
-              ▀▀
-
-    Gym-like wrapper around RepeaterNetwork for RL training.
-
-    The agent decides SWAP / PURIFY / NOOP at each interior node.
-    Source and destination nodes are always forced to NOOP.
-    """
-
     __slots__ = (
         "rng",        # RNG: per-episode physics + action sampling
         "max_steps",  # truncation horizon (steps before time-limit)

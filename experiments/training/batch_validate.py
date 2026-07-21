@@ -1,4 +1,5 @@
 """
+--------------------------------------------------------------------------------
 Batch validation: agent vs swap-ASAP across parameter sweeps.
 
 Produces two figures:
@@ -18,6 +19,7 @@ Usage
         --model checkpoints/sota/policy.pth \
         --episodes 200 \
         --save_dir results/batch_validate
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 
@@ -39,7 +41,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 
-# ── project imports ──────────────────────────────────────────────
+# -- project imports ----------------------------------------------
 from rl_stack.agent import QRNAgent, _obs_to_data
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP
 from rl_stack.strategies import swap_asap, purify_then_swap
@@ -294,7 +296,7 @@ def sweep_pgen_pswap(
     done_count = 0
 
     for n_nodes in node_counts:
-        # ── coarse grid ──
+        # -- coarse grid --
         for p_gen, p_swap in itertools.product(COARSE_GRID, COARSE_GRID):
             done_count += 1
             _log_progress("sweep1", done_count, total, n_nodes, p_gen, p_swap)
@@ -320,7 +322,7 @@ def sweep_pgen_pswap(
             pd.DataFrame(rows).to_csv(
                 os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False)
 
-        # ── inset (fine grid around p_gen ~ 0.1, p_swap ~ 0.9) ──
+        # -- inset (fine grid around p_gen ~ 0.1, p_swap ~ 0.9) --
         for p_gen, p_swap in itertools.product(INSET_P_GEN, INSET_P_SWAP):
             done_count += 1
             _log_progress("sweep1", done_count, total, n_nodes, p_gen, p_swap)
@@ -346,7 +348,7 @@ def sweep_pgen_pswap(
             pd.DataFrame(rows).to_csv(
                 os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False)
 
-        # ── incremental save after each N ──
+        # -- incremental save after each N --
         df_partial = pd.DataFrame(rows)
         df_partial.to_csv(
             os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False,
@@ -424,7 +426,7 @@ def sweep_pgen_cutoff(
                 "delta_pct": relative_improvement(res["agent"], res["swap_asap"]),
             })
 
-        # ── incremental save after each p_gen ──
+        # -- incremental save after each p_gen --
         df_partial = pd.concat(
             [df_existing, pd.DataFrame(rows)], ignore_index=True)
         df_partial.to_csv(csv_path, index=False)
@@ -638,7 +640,7 @@ def plot_pgen_pswap(df: pd.DataFrame, save_dir: str,
     ncols = min(2, len(node_counts))
     nrows = -(-len(node_counts) // ncols)   # ceil division
 
-    # ── Figure 1: coarse grid ──
+    # -- Figure 1: coarse grid --
     fig, axes = plt.subplots(nrows, ncols, figsize=(7 * ncols, 6 * nrows))
     axes_flat = np.atleast_1d(axes).flatten()
 
@@ -663,7 +665,7 @@ def plot_pgen_pswap(df: pd.DataFrame, save_dir: str,
     plt.close(fig)
     print(f"[plot] saved {path}")
 
-    # ── Figure 2: zoomed region (low p_gen, high p_swap) ──
+    # -- Figure 2: zoomed region (low p_gen, high p_swap) --
     if inset_df.empty:
         return
 

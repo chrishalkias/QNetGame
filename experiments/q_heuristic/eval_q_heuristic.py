@@ -1,4 +1,6 @@
-"""Evaluate the stochastic q-heuristic against purify_then_swap (and, optionally,
+"""
+--------------------------------------------------------------------------------
+Evaluate the stochastic q-heuristic against purify_then_swap (and, optionally,
 the trained agents) over a range of chain sizes N.
 
 Question under test: does a single scalar q (the both-legal purify probability
@@ -33,6 +35,7 @@ Examples (from repo root, PYTHONPATH=src:.):
   python experiments/q_heuristic/eval_q_heuristic.py --sanity
   python experiments/q_heuristic/eval_q_heuristic.py --N 8 13 --agents ''
   python experiments/q_heuristic/eval_q_heuristic.py --plot --out 'results/comparisons/q_heuristic/eval_*.json'
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse

@@ -1,4 +1,8 @@
-"""Simple replay buffer storing transitions as dicts of numpy arrays."""
+"""
+--------------------------------------------------------------------------------
+Simple replay buffer storing transitions as dicts of numpy arrays.
+--------------------------------------------------------------------------------
+"""
 
 from __future__ import annotations
 import random

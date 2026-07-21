@@ -1,4 +1,8 @@
-"""RL module for quantum repeater network routing."""
+"""
+--------------------------------------------------------------------------------
+RL module for quantum repeater network routing.
+--------------------------------------------------------------------------------
+"""
 from .env_wrapper import QRNEnv, N_ACTIONS, NOOP, SWAP, PURIFY
 from .buffer import ReplayBuffer
 from . import strategies

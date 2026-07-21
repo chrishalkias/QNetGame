@@ -1,4 +1,6 @@
-"""Stochastic q-heuristic policy for the purify-selectivity control experiment.
+"""
+--------------------------------------------------------------------------------
+Stochastic q-heuristic policy for the purify-selectivity control experiment.
 
 The rule search found the trained agent's purify selectivity is DIFFUSE (no
 compact both-legal rule; ceiling AUC ~0.63-0.71). This module packages the
@@ -21,6 +23,7 @@ q=1.0 identity hold bit-for-bit.
 
 Numpy-only: this module must import without torch. Trained-agent policies come
 from experiments.mc_eval at the eval layer, not here.
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 

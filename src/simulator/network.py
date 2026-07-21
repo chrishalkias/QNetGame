@@ -1,7 +1,9 @@
 """
+--------------------------------------------------------------------------------
 RepeaterNetwork with asynchronous classical communication delays.
 
 Handles the inter-node logic.
+--------------------------------------------------------------------------------
 """
 
 from __future__ import annotations

@@ -1,10 +1,13 @@
-"""Wiring guards for the q-conditional purify policy (make_conditional_fn).
+"""
+--------------------------------------------------------------------------------
+Wiring guards for the q-conditional purify policy (make_conditional_fn).
 
 Proves make_conditional_fn is plumbed correctly by exploiting its RNG
 discipline against make_hybrid_fn's: EXACTLY one rng.random() draw per
 both-legal node per step means a constant-q logistic (coef=0) reproduces the
 constant-q hybrid bit-for-bit, and a saturated logistic (q~1) reproduces the
 deterministic purify_then_swap heuristic bit-for-bit.
+--------------------------------------------------------------------------------
 """
 import json
 import math

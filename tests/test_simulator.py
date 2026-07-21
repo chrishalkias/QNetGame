@@ -1,4 +1,5 @@
 """
+--------------------------------------------------------------------------------
 test_simulator.py
 =================
 AI GENERATED
@@ -16,6 +17,7 @@ Covers:
 
 Run with:
     PYTHONPATH=src:. .venv/bin/python -m pytest tests/test_simulator.py -v
+--------------------------------------------------------------------------------
 """
 
 import math
@@ -23,7 +25,7 @@ import unittest
 import numpy as np
 import pytest
 
-# ── imports ──────────────────────────────────────────────────────────────────
+# -- imports ------------------------------------------------------------------
 from simulator.repeater import (
     Repeater, SwapPolicy,
     QUBIT_FREE, QUBIT_OCCUPIED, NO_PARTNER,
@@ -36,7 +38,7 @@ from simulator.network import (
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY
 
 
-# ── tiny helpers ─────────────────────────────────────────────────────────────
+# -- tiny helpers -------------------------------------------------------------
 
 def _perfect_chain(n, n_ch=4, cutoff=20, spacing=50.0):
     """Build a deterministic chain: p_gen=1, p_swap=1, no channel loss."""

@@ -1,12 +1,11 @@
-"""Delivery time vs chain size N, at a fixed (p_gen, p_swap).
+"""
+--------------------------------------------------------------------------------
+Delivery time vs chain size N, at a fixed (p_gen, p_swap).
 
-Primary metric: time to end-to-end ENTANGLEMENT T_ent = avg steps until the
-source holds a link to the dest with delivered fidelity F > 1/2 (a two-qubit
-Werner state is separable at F <= 1/2), censored at the horizon. Because the env
-terminates on the FIRST topological connection, a separable first delivery is a
-failure for T_ent (censored at H, no retry). The legacy time-to-connection
-T_conn (any F > 0) is recorded from the same rollouts so older numbers stay
-derivable. Three policies: agent (trained generalist), swap-ASAP,
+Metric: delivery time T = avg steps until the source holds a topological link
+to the dest (source-dest connected), censored at the horizon. Delivery is
+topological, not fidelity-gated: the cutoff already bounds how decohered a
+surviving link can be. Three policies: agent (trained generalist), swap-ASAP,
 purify-then-swap.
 
 N scans an in-distribution range and beyond; a dotted line marks the training
@@ -18,6 +17,7 @@ Two modes (one file):
           --ckpt checkpoints/sota/policy.pth
   plot (--plot, local) -> reads the JSON and renders the lineplot
       PYTHONPATH=src:. python experiments/comparisons/delivery_vs_N.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os
@@ -69,7 +69,7 @@ def parse_args():
 
 def run_eval(args):
     from experiments import mc_eval as ob
-    from experiments.comparisons._common import eval_gated
+    from experiments.comparisons._common import eval_stats
     from rl_stack import strategies
 
     wanted = ["agent"] if args.agent_only else args.policies
@@ -84,8 +84,7 @@ def run_eval(args):
     C.write_meta(args)
     Ns = list(range(args.n_lo, args.n_hi + 1))
     print(f"N={Ns} p_gen={args.p_gen} p_swap={args.p_swap} n_ch={args.n_ch} "
-          f"cutoff={args.cutoff} H={args.horizon} mc_eps={args.mc_eps} "
-          f"gate=F>1/2 (T_ent primary)")
+          f"cutoff={args.cutoff} H={args.horizon} mc_eps={args.mc_eps}")
 
     rows = []
     for N in Ns:
@@ -93,24 +92,17 @@ def run_eval(args):
                    cutoff=args.cutoff, horizon=args.horizon, mc_eps=args.mc_eps,
                    p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std)
         for name, fn in policies.items():
-            # One paired pass yields the primary T_ent and the legacy T_conn.
-            s = eval_gated(fn, N, args.n_ch, args.p_gen, args.p_swap,
+            s = eval_stats(fn, N, args.n_ch, args.p_gen, args.p_swap,
                            args.cutoff, args.horizon, args.mc_eps,
                            p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std)
-            # Existing key T_{name} keeps its connection meaning (schema additive).
-            row[f"T_{name}"] = s["T_conn"]
-            row[f"se_{name}"] = s["se_conn"]
-            row[f"T_ent_{name}"] = s["T_ent"]
-            row[f"se_ent_{name}"] = s["se_ent"]
+            row[f"T_{name}"] = s["T"]
+            row[f"se_{name}"] = s["se"]
             row[f"conn_rate_{name}"] = s["conn_rate"]
-            row[f"ent_rate_{name}"] = s["ent_rate"]
             row[f"F_{name}"] = s["mean_F_conn"]        # mean F over connected eps
             row[f"seF_{name}"] = s["seF_conn"]
-            row[f"Fent_{name}"] = s["mean_F_ent"]
             fstr = "nan" if s["mean_F_conn"] is None else f"{s['mean_F_conn']:.3f}"
-            print(f"  N={N:>2} {name:<12} T_ent={s['T_ent']:7.3f}±{s['se_ent']:.3f}"
-                  f"  T_conn={s['T_conn']:7.3f}  ent_rate={s['ent_rate']:.3f}"
-                  f"  F_conn={fstr}", flush=True)
+            print(f"  N={N:>2} {name:<12} T={s['T']:7.3f}±{s['se']:.3f}"
+                  f"  conn_rate={s['conn_rate']:.3f}  F_conn={fstr}", flush=True)
         rows.append(row)
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         json.dump(rows, open(args.out, "w"), indent=2)   # incremental save
@@ -118,13 +110,10 @@ def run_eval(args):
 
 
 def _primary_T(row, key):
-    """(T, se, gated?) for a policy: entanglement-gated T_ent when present,
-    otherwise the legacy connection T (old JSONs), flagged so labels can say so."""
-    if f"T_ent_{key}" in row:
-        return row[f"T_ent_{key}"], row.get(f"se_ent_{key}", 0.0), True
+    """(T, se) for a policy at this N; NaN if the policy is absent (ragged tail)."""
     if f"T_{key}" in row:
-        return row[f"T_{key}"], row.get(f"se_{key}", 0.0), False
-    return float("nan"), 0.0, True   # policy absent at this N (ragged tail) -> plot gap
+        return row[f"T_{key}"], row.get(f"se_{key}", 0.0)
+    return float("nan"), 0.0
 
 
 def run_plot(args):
@@ -137,12 +126,9 @@ def run_plot(args):
     Ns = [r["N"] for r in rows]
     sig = rows[0].get("p_gen_std", 0.0)
     inh = rf", $\sigma_\mathrm{{inh}}={sig:g}$" if sig else ""   # inhomogeneity tag
-    gated = "T_ent_agent" in rows[0]
-    gate_tag = "" if gated else " (connection semantics)"
 
     if args.metric == "delta":
-        # #2 headline: % delivery-time reduction of agent vs swap-ASAP, computed
-        # from the gated T when available (falls back to connection for old JSONs).
+        # #2 headline: % delivery-time reduction of agent vs swap-ASAP.
         Ta = np.array([_primary_T(r, "agent")[0] for r in rows])
         Ts = np.array([_primary_T(r, "swap_asap")[0] for r in rows])
         delta = 100.0 * (Ts - Ta) / Ts
@@ -156,9 +142,8 @@ def run_plot(args):
         pg, ps = rows[0]["p_gen"], rows[0]["p_swap"]
         cut = rows[0].get("cutoff", args.cutoff)
         hor = rows[0].get("horizon", args.horizon)
-        metric_name = "entanglement" if gated else "connection"
         ax.set_xlabel("chain size $N$")
-        ax.set_ylabel(f"{metric_name}-time reduction vs swap-ASAP (%)")
+        ax.set_ylabel("delivery-time reduction vs swap-ASAP (%)")
         ax.set_title(rf"Agent generalization "
                      rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
                      rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$, "
@@ -173,8 +158,7 @@ def run_plot(args):
               ("swap_asap", "Swap-ASAP", "tab:orange", "s"),
               ("purify_swap", "Purify-then-swap", "tab:green", "^")]
     # tolerate JSONs evaluated with a reduced policy roster (no swap-ASAP)
-    series = [s for s in series
-              if f"T_{s[0]}" in rows[0] or f"T_ent_{s[0]}" in rows[0]]
+    series = [s for s in series if f"T_{s[0]}" in rows[0]]
 
     plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
     fig, ax = plt.subplots(figsize=(6.0, 4.0), constrained_layout=True)
@@ -197,11 +181,9 @@ def run_plot(args):
     hor = rows[0].get("horizon", args.horizon)
     # a cutoff far beyond any horizon is operationally infinite (perfect memory)
     cut_lab = r"\infty" if cut >= 10**6 else str(cut)
-    ylab = ("time to end-to-end entanglement $T_\\mathrm{ent}$ (steps)"
-            if gated else "delivery time $T$ (avg steps to termination)")
     ax.set_xlabel("chain size $N$")
-    ax.set_ylabel(ylab)
-    ax.set_title(rf"Time to end-to-end entanglement vs chain size{gate_tag} "
+    ax.set_ylabel("delivery time $T$ (avg steps to termination)")
+    ax.set_title(rf"Delivery time vs chain size "
                  rf"($p_\mathrm{{gen}}={pg}$, $p_\mathrm{{swap}}={ps}$, "
                  rf"$n_\mathrm{{ch}}={rows[0]['n_ch']}$, "
                  rf"$\tau=\mathrm{{cutoff}}={cut_lab}$, $H={hor}${inh})",
@@ -211,9 +193,7 @@ def run_plot(args):
         ax.set_yscale("log")
     ax.grid(alpha=0.3)
 
-    # twin axis: mean end-to-end fidelity F over CONNECTED episodes (dashed),
-    # with the F=1/2 Werner separability line: below it a delivered link is
-    # separable and does NOT count toward T_ent.
+    # twin axis: mean end-to-end fidelity F over delivered episodes (dashed).
     have_F = rows[0].get("F_agent") is not None
     if have_F:
         ax2 = ax.twinx()
@@ -226,25 +206,13 @@ def run_plot(args):
             ax2.plot(Ns, F, marker=mk, color=color, ls="--", lw=1.4, ms=4,
                      label=rf"{lab} $\overline{{F}}$")
             ax2.fill_between(Ns, F - seF, F + seF, color=color, alpha=0.12, lw=0)
-        ax2.axhline(0.5, color="firebrick", lw=1.0, ls=":")
-        ax2.text(Ns[-1], 0.5, "separable $F=1/2$ ", color="firebrick",
-                 fontsize=7, va="bottom", ha="right")
-        ax2.set_ylabel(r"mean end-to-end fidelity $\overline{F}$ (connected eps)")
+        ax2.set_ylabel(r"mean end-to-end fidelity $\overline{F}$ (delivered eps)")
         h1, l1 = ax.get_legend_handles_labels()
         h2, l2 = ax2.get_legend_handles_labels()
         ax.legend(h1 + h2, l1 + l2, frameon=False, fontsize=8,
                   loc=args.legend_loc)
     else:
         ax.legend(frameon=False, loc=args.legend_loc)
-
-    # entangled-delivery rate for the agent, annotated per N (reliability that
-    # the winning connection is actually entangled), when the gated data exists.
-    if "ent_rate_agent" in rows[0]:
-        txt = "agent entangled-delivery rate: " + ", ".join(
-            f"N{r['N']}:{r['ent_rate_agent']:.2f}"
-            for r in rows if "ent_rate_agent" in r)   # skip ragged-tail rows
-        fig.text(0.5, -0.02, txt, ha="center", va="top", fontsize=6.5,
-                 color="tab:blue")
 
     os.makedirs(os.path.dirname(args.fig) or ".", exist_ok=True)
     fig.savefig(f"{args.fig}.pdf", bbox_inches="tight")

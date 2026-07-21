@@ -1,4 +1,6 @@
-"""Paired evaluation of the three SOTA training seeds (omni_v3_20k_s{1,2,3}).
+"""
+--------------------------------------------------------------------------------
+Paired evaluation of the three SOTA training seeds (omni_v3_20k_s{1,2,3}).
 
 Each episode draws random parameters (N, n_ch, p_gen, p_swap, cutoff, with
 sigma=0.15 per-repeater inhomogeneity) from the training domain and evaluates
@@ -14,6 +16,7 @@ Produces two side-by-side paper barplots (appendix):
 Dual-mode + chunkable (each chunk is an independent seed, merge concatenates):
   eval:  PYTHONPATH=src:. python experiments/comparisons/agents_seed_barplot.py --seed 0
   plot:  PYTHONPATH=src:. python experiments/comparisons/agents_seed_barplot.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse

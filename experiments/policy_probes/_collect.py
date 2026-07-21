@@ -1,4 +1,6 @@
-"""Shared real-rollout collector for the policy-interpretability plots.
+"""
+--------------------------------------------------------------------------------
+Shared real-rollout collector for the policy-interpretability plots.
 
 Everything here is grounded in the agent's *actual* visited distribution: load a
 checkpoint (node_dim auto-inferred from the weights), roll out the GREEDY policy
@@ -6,6 +8,7 @@ over the training distribution, and record for every interior-node decision the
 9-feature observation, the chosen action, the conv3 embedding, the Q-value margin,
 and the full per-step state (x, edge_index, mask) so features can be permuted and
 re-fed for importance analysis.
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import numpy as np

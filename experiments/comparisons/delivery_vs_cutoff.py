@@ -1,4 +1,6 @@
-"""#3  Delivery time T vs memory cutoff tau, at fixed (p_gen=p_swap=0.5, N=10).
+"""
+--------------------------------------------------------------------------------
+#3  Delivery time T vs memory cutoff tau, at fixed (p_gen=p_swap=0.5, N=10).
 
 Two policies (agent / purify-then-swap). Solid = delivery time T (left axis);
 dashed = mean terminal fidelity of delivered links (right axis). Shows behaviour
@@ -7,6 +9,7 @@ werner ~ exp(-age/cutoff)) where purification should pay off.
 
   eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_cutoff.py --ckpt ...
   plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_cutoff.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse

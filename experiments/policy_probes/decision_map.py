@@ -1,4 +1,6 @@
-"""Empirical action-eagerness maps over (occupancy, fidelity), tiled, paper figure.
+"""
+--------------------------------------------------------------------------------
+Empirical action-eagerness maps over (occupancy, fidelity), tiled, paper figure.
 
 2x3 panel grid over the agent's real greedy rollouts, one row per --n_chs value:
   col 1 = P(PURIFY | can_purify=1) per (occupied count, fidelity) tile
@@ -12,6 +14,7 @@ outlined, colour-coded, greyed where under-sampled. Purely empirical.
 Dual-mode so the figure re-renders without recomputing:
   compute: PYTHONPATH=src:. python experiments/policy_probes/decision_map.py --ckpt <path>
   plot:    PYTHONPATH=src:. python experiments/policy_probes/decision_map.py --plot --save_dir <dir>
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os, shutil

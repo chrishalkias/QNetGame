@@ -1,4 +1,6 @@
-"""Delivery-time-vs-N sweep over training length, with seed error bars.
+"""
+--------------------------------------------------------------------------------
+Delivery-time-vs-N sweep over training length, with seed error bars.
 
 Reads every delivery_vs_N JSON in a directory named ds_ep<K>[_s<seed>].json,
 groups them by training length <K> (e.g. 5k, 15k), and plots one line per length
@@ -10,6 +12,7 @@ they are read from whichever JSON carries them and drawn once.
   PYTHONPATH=src:. python experiments/comparisons/seed_length_sweep.py \
       --dir results/comparisons/delivery_vs_N_different_seeds \
       --fig results/figures/delivery_vs_N_seed_length_sweep
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, glob, json, os, re

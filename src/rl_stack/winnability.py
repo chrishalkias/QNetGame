@@ -1,4 +1,6 @@
-"""Lazy purify-then-swap winnability oracle.
+"""
+--------------------------------------------------------------------------------
+Lazy purify-then-swap winnability oracle.
 
 A cell `(p_gen, p_swap, cutoff, N, n_ch)` is *winnable* if purify-then-swap
 delivers end-to-end at least `min_deliveries` times over `n_pilots` rollouts at a
@@ -12,6 +14,7 @@ purify-then-swap is the oracle (user decision 2026-07-12): under the repaired
 cutoff physics purification extends link lifetimes, so it dominates swap-asap as
 a feasibility oracle; its n_ch=4 livelock risk is bounded by `probe_steps` and a
 livelocked pilot just marks the cell unwinnable (conservative).
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import numpy as np

@@ -1,4 +1,6 @@
-"""Merge per-cell / per-policy comparison JSONs (from SLURM array tasks) into
+"""
+--------------------------------------------------------------------------------
+Merge per-cell / per-policy comparison JSONs (from SLURM array tasks) into
 one figure JSON.
 
 Rows are grouped by (N, p_gen, p_swap, n_ch, cutoff) and dict-merged, so an
@@ -7,6 +9,7 @@ with both policies' columns. `.meta.json` sidecars are skipped.
 
   PYTHONPATH=src:. python experiments/comparisons/merge_json.py \
       'results/comparisons/dvN_c30_H40000/*.json' -o results/comparisons/delivery_vs_N_c30_H40000.json
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, glob, json, os

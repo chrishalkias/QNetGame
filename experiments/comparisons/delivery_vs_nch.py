@@ -1,10 +1,13 @@
-"""#6  Delivery time T vs memory size n_ch, at fixed (N=10, p_swap=0.8, p_gen=0.3).
+"""
+--------------------------------------------------------------------------------
+#6  Delivery time T vs memory size n_ch, at fixed (N=10, p_swap=0.8, p_gen=0.3).
 
 Grouped bars per n_ch: agent / swap-ASAP / purify-then-swap. n_ch>4 is past the
 training set {2,3,4} (zero-shot in memory size).
 
   eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_nch.py --ckpt ...
   plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_nch.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse

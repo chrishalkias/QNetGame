@@ -1,4 +1,6 @@
-"""Permutation feature importance over greedy rollouts, multi-seed, multi-panel.
+"""
+--------------------------------------------------------------------------------
+Permutation feature importance over greedy rollouts, multi-seed, multi-panel.
 
 For each observation feature, permute its values across all interior-node decisions
 collected from greedy rollouts, re-feed the (otherwise unchanged) states, and
@@ -16,6 +18,7 @@ standard deviation. Everything lands in ONE json + ONE pdf, re-renderable:
   compute: PYTHONPATH=src:. python experiments/policy_probes/feature_importance.py \
                --ckpt <path> --ranges 4-12 12-20 --seeds 0 1 2 3
   plot:    PYTHONPATH=src:. python experiments/policy_probes/feature_importance.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os

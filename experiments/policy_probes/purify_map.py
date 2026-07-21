@@ -1,4 +1,6 @@
-"""When does the trained agent choose PURIFY among its purify opportunities?
+"""
+--------------------------------------------------------------------------------
+When does the trained agent choose PURIFY among its purify opportunities?
 
 For every interior-node decision where PURIFY is a legal action, roll out the
 GREEDY full agent and record (a) whether it purified, (b) the 9-feature obs, a
@@ -11,6 +13,7 @@ purify-selectivity rule into a heuristic.
 Dual-mode so the figure re-renders without recomputing:
   compute: PYTHONPATH=src:. python experiments/policy_probes/purify_map.py --ckpt <path>
   plot:    PYTHONPATH=src:. python experiments/policy_probes/purify_map.py --plot --out_dir <dir>
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os

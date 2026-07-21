@@ -1,10 +1,12 @@
 """
+--------------------------------------------------------------------------------
 Immutable state snapshots returned by RepeaterNetwork read methods.
 
 Consumers (the RL env, strategies, the adversary) read these read-only,
 fidelity-domain snapshots instead of poking the engine's mutable arrays. All
 fidelities are F in [0, 1]; Werner parameters are an engine-internal detail and
 never cross this boundary.
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 from dataclasses import dataclass

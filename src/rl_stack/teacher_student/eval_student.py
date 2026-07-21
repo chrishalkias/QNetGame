@@ -1,4 +1,6 @@
-"""CLI: delivery-time-vs-N for the distilled student vs teacher vs heuristics.
+"""
+--------------------------------------------------------------------------------
+CLI: delivery-time-vs-N for the distilled student vs teacher vs heuristics.
 
 Answers the research question: does the 1-hop / 3-feature student keep the
 teacher's edge over swap-asap and purify-then-swap? Reuses the canonical
@@ -8,6 +10,7 @@ the suite.
   PYTHONPATH=src:. python rl_stack/teacher_student/eval_student.py \
       --student checkpoints/teacher_student/student_h16/policy.pth
   PYTHONPATH=src:. python rl_stack/teacher_student/eval_student.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os

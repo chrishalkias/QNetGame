@@ -1,4 +1,6 @@
-"""#7  Delivery time T vs inhomogeneity strength sigma, at fixed
+"""
+--------------------------------------------------------------------------------
+#7  Delivery time T vs inhomogeneity strength sigma, at fixed
 (N=10, p_gen=0.5, p_swap=0.5, n_ch=4).
 
 sigma sets BOTH p_gen_std and p_swap_std: per-repeater rates are drawn uniform
@@ -10,6 +12,7 @@ Three policies: agent / swap-ASAP / purify-then-swap.
 
   eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_std.py --ckpt ...
   plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_std.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse

@@ -1,5 +1,5 @@
 #!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Sync the local working tree UP to the ALICE cluster (alice-gw).
 # Pushes CODE only — excludes venvs, caches and generated artifacts
 # (checkpoints/results/slurm_logs) so cluster outputs are never clobbered, and
@@ -10,7 +10,7 @@
 #
 # Override host/path via env, e.g.:
 #   REMOTE_HOST=chalkiasc1@alice-gw ./scripts/upload.sh
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 set -euo pipefail
 
 REMOTE_HOST="${REMOTE_HOST:-alice-gw}"

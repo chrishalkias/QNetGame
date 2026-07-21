@@ -1,4 +1,8 @@
-"""Structural guards for the teacher-student distillation feature."""
+"""
+--------------------------------------------------------------------------------
+Structural guards for the teacher-student distillation feature.
+--------------------------------------------------------------------------------
+"""
 import os
 import tempfile
 

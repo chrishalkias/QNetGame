@@ -1,4 +1,6 @@
-"""TEMP experiment: delivery time T vs chain size N WITH classical-communication
+"""
+--------------------------------------------------------------------------------
+TEMP experiment: delivery time T vs chain size N WITH classical-communication
 (CC) delays turned on. Same setup as results/figures/delivery_vs_N_15k.pdf, but
 every deferred event (swap/purify) resolves only after a classical signal has
 traversed the physical distance between the involved nodes.
@@ -16,6 +18,7 @@ dt_seconds=0, so this is a zero-shot robustness probe.
 
   eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_N_ccdelay.py --ckpt ...
   plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_N_ccdelay.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, math, os

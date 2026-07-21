@@ -1,4 +1,6 @@
-"""Fit a state-conditioned purify probability P(purify | state) on the
+"""
+--------------------------------------------------------------------------------
+Fit a state-conditioned purify probability P(purify | state) on the
 both-legal subset of the purify_map probe data, and export it as plain
 coefficients so it can run numpy-only on the cluster (no sklearn at eval
 time).
@@ -46,6 +48,7 @@ Usage (from repo root, PYTHONPATH=src:.):
     python experiments/q_heuristic/fit_q_conditional.py
     python experiments/q_heuristic/fit_q_conditional.py --tag s1
     python experiments/q_heuristic/fit_q_conditional.py --verify
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 

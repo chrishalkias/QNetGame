@@ -1,4 +1,6 @@
-"""Double-DQN agent for quantum repeater network routing.
+"""
+--------------------------------------------------------------------------------
+Double-DQN agent for quantum repeater network routing.
 
 The agent learns a per-node policy on small chains and generalises
 zero-shot to larger, differently-parameterised ones.
@@ -10,6 +12,7 @@ Key fixes over the original:
     background-only and not an agent decision.
   - Reward scale fixed: SUCCESS >> cumulative step penalty.
   - 3-layer GNN for 3-hop receptive field.
+--------------------------------------------------------------------------------
 """
 
 from __future__ import annotations
@@ -218,11 +221,11 @@ class QRNAgent:
             np.concatenate([t["m_"] for t in batch]),
             dtype=torch.bool, device=self.device)
 
-        # ── Current Q(s, a) ──
+        # -- Current Q(s, a) --
         q_all    = self.policy_net(states)
         current_q = q_all.gather(1, actions.unsqueeze(1)).squeeze(1)
 
-        # ── Target Q (Double DQN with masked next actions) ──
+        # -- Target Q (Double DQN with masked next actions) --
         with torch.no_grad():
             next_q_policy = self.policy_net(next_states)
             next_q_policy[~next_masks] = -float("inf")   # took alot time finding this bug...

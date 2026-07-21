@@ -1,10 +1,13 @@
-"""#4  Delivery time T vs p_swap, one line per p_gen (5 lines), single panel.
+"""
+--------------------------------------------------------------------------------
+#4  Delivery time T vs p_swap, one line per p_gen (5 lines), single panel.
 
 Agent (solid) and purify-then-swap (dashed) overlaid on one axis, coloured by
 p_gen, over the (p_swap, p_gen) operating regime at fixed N, cutoff, n_ch.
 
   eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_pswap.py --ckpt ...
   plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_pswap.py --plot
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse
@@ -53,16 +56,12 @@ def run_eval(a):
             row = dict(p_gen=pg, p_swap=ps, N=a.N, n_ch=a.n_ch, cutoff=a.cutoff,
                        horizon=a.horizon, mc_eps=a.mc_eps)
             for name, fn in pols.items():
-                # Paired gated pass: T = primary T_ent; T_conn kept alongside so
-                # the post-fix invariant (ent_rate == conn_rate) stays checkable.
-                s = C.eval_gated(fn, a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
-                row[f"T_{name}"], row[f"se_{name}"] = s["T_ent"], s["se_ent"]
-                row[f"T_conn_{name}"] = s["T_conn"]
-                row[f"ent_rate_{name}"] = s["ent_rate"]
+                s = C.eval_stats(fn, a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
+                row[f"T_{name}"], row[f"se_{name}"] = s["T"], s["se"]
                 row[f"conn_rate_{name}"] = s["conn_rate"]
                 row[f"F_{name}"] = s["mean_F_conn"]
                 print(f"  p_gen={pg:.1f} p_swap={ps:.1f} {name:<12} "
-                      f"T={s['T_ent']:9.2f}  ent_rate={s['ent_rate']:.3f}", flush=True)
+                      f"T={s['T']:9.2f}  conn_rate={s['conn_rate']:.3f}", flush=True)
             rows.append(row)
             C.save_json(rows, a.out)
     print(f"saved -> {a.out}")

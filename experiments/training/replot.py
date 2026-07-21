@@ -1,9 +1,12 @@
-"""Regenerate training plots from a saved metrics.json — no retraining needed.
+"""
+--------------------------------------------------------------------------------
+Regenerate training plots from a saved metrics.json — no retraining needed.
 
 train() writes <save_path>/metrics.json; this reloads it and re-runs the
 plotting, so stylistic tweaks to the figures are a few-second turnaround.
 
   PYTHONPATH=$(pwd) python experiments/training/replot.py --dir checkpoints/legacy/cluster/compare_optimal
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse

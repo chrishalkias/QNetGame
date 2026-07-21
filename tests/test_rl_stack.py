@@ -1,4 +1,5 @@
 """
+--------------------------------------------------------------------------------
 test_rl_stack.py
 ================
 Comprehensive unittest suite for the Double-DQN RL stack of the
@@ -21,6 +22,7 @@ Run with:
     python -m pytest test_rl_stack.py -v
   or
     python -m unittest test_rl_stack -v
+--------------------------------------------------------------------------------
 """
 
 import math
@@ -30,14 +32,14 @@ import numpy as np
 import torch
 from torch_geometric.data import Data, Batch
 
-# ── project imports ───────────────────────────────────────────────────────────
+# -- project imports -----------------------------------------------------------
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY, N_ACTIONS
 from rl_stack.model       import QNetwork
 from rl_stack.buffer      import ReplayBuffer
 from rl_stack.agent       import QRNAgent, _obs_to_data
 
 
-# ── shared helpers ────────────────────────────────────────────────────────────
+# -- shared helpers ------------------------------------------------------------
 
 def _perfect_env(n=5):
     """Deterministic environment: p_gen=1, p_swap=1, no channel loss."""

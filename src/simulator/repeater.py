@@ -1,7 +1,9 @@
 """
+--------------------------------------------------------------------------------
 Repeater module with qubit locking for classical communication delays.
 
 Handles the intra-node logic.
+--------------------------------------------------------------------------------
 """
 
 from __future__ import annotations

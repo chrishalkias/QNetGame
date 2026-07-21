@@ -1,4 +1,8 @@
-"""GNN that outputs per-node Q-values for the 3 repeater actions"""
+"""
+--------------------------------------------------------------------------------
+GNN that outputs per-node Q-values for the 3 repeater actions
+--------------------------------------------------------------------------------
+"""
 
 import torch
 import torch.nn as nn

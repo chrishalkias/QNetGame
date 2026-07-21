@@ -1,4 +1,6 @@
-"""Topology-general PBRS potential: the single entanglement link that shortcuts
+"""
+--------------------------------------------------------------------------------
+Topology-general PBRS potential: the single entanglement link that shortcuts
 the most of the source->dest path. Pure (no env/torch deps).
 
 Phi(s) = max over entangled links (a, b) of
@@ -13,6 +15,7 @@ Adjacent links span only 1 hop each, so a single-longest-link potential is only
 raised by SWAP-built long links — the progress the agent actually controls. The
 cost: it under-credits a chain of swapped links (credited by their longest
 member, not their union). See docs/superpowers for the debugging trail.
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 from collections import deque

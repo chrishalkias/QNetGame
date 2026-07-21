@@ -1,4 +1,6 @@
-"""Average agent decisions over the operation-quality plane (p_swap x p_gen).
+"""
+--------------------------------------------------------------------------------
+Average agent decisions over the operation-quality plane (p_swap x p_gen).
 
 Top row: three panels over a p_s (x) by p_e (y) grid, 0.1-wide bins, aggregated
 across the whole training distribution (all sizes / n_ch):
@@ -13,6 +15,7 @@ fills beyond the [0.4,0.9] episode-mean range. Tiles greyed where under-sampled.
 
   compute: PYTHONPATH=src:. python experiments/policy_probes/quality_map.py --ckpt <path>
   plot:    PYTHONPATH=src:. python experiments/policy_probes/quality_map.py --plot --save_dir <dir>
+--------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os, shutil

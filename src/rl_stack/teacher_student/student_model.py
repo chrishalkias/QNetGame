@@ -1,4 +1,6 @@
-"""Distilled student Q-network: a single GraphSAGE layer over 5 local features.
+"""
+--------------------------------------------------------------------------------
+Distilled student Q-network: a single GraphSAGE layer over 5 local features.
 
 One SAGEConv => 1-hop receptive field (self + nearest neighbours only). The
 student sees only the post-fix top-5 permutation-importance features (urgency,
@@ -8,6 +10,7 @@ full 3-hop teacher uses (mean_fidelity, p_gen, p_swap, is_target are withheld).
 Kept as its own class (not a generalised QNetwork) so the teacher's
 conv1/conv2/conv3 state-dict keys are never disturbed and every existing
 checkpoint keeps loading.
+--------------------------------------------------------------------------------
 """
 
 import torch
