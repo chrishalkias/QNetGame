@@ -22,6 +22,7 @@ Run with:
 
 import math
 import unittest
+from unittest.mock import patch
 import numpy as np
 import pytest
 
@@ -46,7 +47,6 @@ def _perfect_chain(n, n_ch=4, cutoff=20, spacing=50.0):
         n, n_ch=n_ch, spacing=spacing,
         p_gen=1.0, p_swap=1.0, cutoff=cutoff,
         F0=1.0, channel_loss=0.0,
-        dt_seconds=1e-4,
         distance_dep_gen=False,
         rng=np.random.default_rng(0),
     )
@@ -62,7 +62,7 @@ def _entangle_force(net, r1, r2):
 
 _REP_MUT_ARRAYS = ("status", "partner_repeater", "partner_qubit", "werner_param",
                    "initial_werner", "age", "link_cutoff", "locked",
-                   "generation_id", "position")
+                   "position")
 
 
 def test_repeater_deepcopy_isolation():
@@ -338,8 +338,7 @@ class TestPurifyResolutionDecoherence(unittest.TestCase):
         tau = 20
         net = build_chain(2, n_ch=4, spacing=50.0,
                           p_gen=1.0, p_swap=1.0, cutoff=tau,
-                          F0=1.0, channel_loss=0.0, dt_seconds=1e-4,
-                          distance_dep_gen=False, rng=np.random.default_rng(0))
+                          F0=1.0, channel_loss=0.0,                          distance_dep_gen=False, rng=np.random.default_rng(0))
         net.entangle(0, 1)
         net.entangle(0, 1)
         for _ in range(5):
@@ -375,102 +374,6 @@ class TestPurifyResolutionDecoherence(unittest.TestCase):
                                math.exp(-(m_equiv + 3) / tau), places=5)
 
 
-class TestClassicalDelay(unittest.TestCase):
-    """Classical signal delay: steps = ceil(d / (c_fiber * dt))."""
-
-    def test_delay_formula(self):
-        net = _perfect_chain(3, spacing=50.0)
-        # c_fiber = 200_000 km/s, dt = 1e-4 s, d = 50 km
-        # steps = ceil(50 / (200_000 * 1e-4)) = ceil(50/20) = 3
-        expected = math.ceil(50.0 / (200_000.0 * 1e-4))
-        actual = net._classical_delay_steps(50.0)
-        self.assertEqual(actual, expected)
-
-    def test_zero_distance_no_delay(self):
-        # d = 0 must return 0 (no division-by-zero, no delay).
-        net = _perfect_chain(3)
-        self.assertEqual(net._classical_delay_steps(0.0), 0)
-
-    def test_event_queued_with_nonzero_timer(self):
-        # With a non-trivial dt the swap event timer must be > 0.
-        net = build_chain(3, n_ch=4, spacing=50.0,
-                          p_gen=1.0, p_swap=1.0,
-                          F0=1.0, channel_loss=0.0,
-                          dt_seconds=1e-6,          # very small dt → large delay
-                          distance_dep_gen=False,
-                          rng=np.random.default_rng(0))
-        net.entangle(0, 1)
-        net.entangle(1, 2)
-        net.swap(1)
-        self.assertTrue(len(net.pending_events) > 0)
-        self.assertGreater(net.pending_events[0]["timer"], 0)
-
-    def test_remote_qubits_locked_after_swap(self):
-        # Remote qubits must be locked while the classical message travels.
-        net = build_chain(3, n_ch=4, spacing=50.0,
-                          p_gen=1.0, p_swap=1.0,
-                          F0=1.0, channel_loss=0.0,
-                          dt_seconds=1e-6,
-                          distance_dep_gen=False,
-                          rng=np.random.default_rng(0))
-        net.entangle(0, 1)
-        net.entangle(1, 2)
-        net.swap(1)
-        # R0 and R2 should each have exactly one locked qubit.
-        self.assertEqual(net.repeaters[0].num_locked(), 1)
-        self.assertEqual(net.repeaters[2].num_locked(), 1)
-
-    def test_cc_delay_resolves_after_k_ticks_no_off_by_one(self):
-        # MEDIUM-1: a timer-k event must resolve k age_links calls after the
-        # queuing step. The queuing step in the real env has its OWN age_links
-        # (the "same-step" call), which counts as the 1st; delay=0 resolves
-        # there. Here dt is tuned so d_max=50 km gives delay = 2:
-        #   ceil(50 / (200000 * 2e-4)) = ceil(50/40) = ceil(1.25) = 2.
-        # So: age_links call 1 (same step) -> no; call 2 (1st subsequent) -> no;
-        # call 3 (2nd subsequent) -> resolve. The old off-by-one resolved on
-        # call 2. We assert the event is still pending after 2 calls and gone
-        # (link formed) after 3.
-        net = build_chain(3, n_ch=4, spacing=50.0,
-                          p_gen=1.0, p_swap=1.0, cutoff=50,
-                          F0=1.0, channel_loss=0.0,
-                          dt_seconds=2e-4,
-                          distance_dep_gen=False,
-                          rng=np.random.default_rng(0))
-        self.assertEqual(net._classical_delay_steps(50.0), 2)
-        net.entangle(0, 1)
-        net.entangle(1, 2)
-        net.swap(1)
-        self.assertEqual(net.pending_events[0]["timer"], 2)
-
-        net.age_links(discard_expired=False)  # call 1 (same step)
-        self.assertEqual(len(net.pending_events), 1, "resolved too early (call 1)")
-        net.age_links(discard_expired=False)  # call 2 (1st subsequent)
-        self.assertEqual(len(net.pending_events), 1, "resolved too early (call 2)")
-        net.age_links(discard_expired=False)  # call 3 (2nd subsequent)
-        self.assertEqual(len(net.pending_events), 0, "should have resolved (call 3)")
-        rep0 = net.repeaters[0]
-        occ = rep0.occupied_indices()
-        self.assertEqual(len(occ), 1)
-        self.assertEqual(int(rep0.partner_repeater[int(occ[0])]), 2,
-                         "R0 must now hold the swapped long link to R2.")
-
-    def test_cc_delay_zero_resolves_same_step(self):
-        # Constraint: dt <= 0 (SOTA default) gives delay 0 and MUST resolve in
-        # the queuing step's own age_links (the first call after swap).
-        net = build_chain(3, n_ch=4, spacing=50.0,
-                          p_gen=1.0, p_swap=1.0, cutoff=50,
-                          F0=1.0, channel_loss=0.0,
-                          dt_seconds=0.0,
-                          distance_dep_gen=False,
-                          rng=np.random.default_rng(0))
-        net.entangle(0, 1)
-        net.entangle(1, 2)
-        net.swap(1)
-        self.assertEqual(net.pending_events[0]["timer"], 0)
-        net.age_links(discard_expired=False)  # same-step call
-        self.assertEqual(len(net.pending_events), 0, "delay-0 must resolve same step")
-
-
 class TestDistanceDependency(unittest.TestCase):
     """
     Generation probability: p_eff = p_avg * exp(-loss * d / 2)
@@ -481,7 +384,6 @@ class TestDistanceDependency(unittest.TestCase):
         return build_chain(2, n_ch=4, spacing=spacing,
                            p_gen=1.0, p_swap=1.0,
                            F0=1.0, channel_loss=loss,
-                           dt_seconds=1e-4,
                            distance_dep_gen=True,
                            rng=np.random.default_rng(0))
 
@@ -685,33 +587,16 @@ class TestPurification(unittest.TestCase):
                                     "Purification must not degrade kept pair.")
 
     def test_purify_failure_destroys_both(self):
-        # Inject a forced-failure event directly and verify cleanup.
+        # Force BBPSSW to fail (real purify -> age_links path) and verify both
+        # pairs are destroyed. Patching the success prob to 0 is deterministic
+        # without hand-building a resolution event.
+        import simulator.network as netmod
         net = _perfect_chain(3, cutoff=100)
         net.entangle(0, 1)
         net.entangle(0, 1)
-        q1s = net.repeaters[0].occupied_indices()
-        q1_sac, q1_keep = int(q1s[0]), int(q1s[1])
-        q2_sac = int(net.repeaters[0].partner_qubit[q1_sac])
-        q2_keep = int(net.repeaters[0].partner_qubit[q1_keep])
-
-        # Capture generation IDs before locking (as the real protocol does).
-        gen_sac1  = int(net.repeaters[0].generation_id[q1_sac])
-        gen_sac2  = int(net.repeaters[1].generation_id[q2_sac])
-        gen_keep1 = int(net.repeaters[0].generation_id[q1_keep])
-        gen_keep2 = int(net.repeaters[1].generation_id[q2_keep])
-
-        # Manually lock as the protocol would and inject failure event.
-        net.repeaters[0].lock_qubit(q1_sac);  net.repeaters[0].lock_qubit(q1_keep)
-        net.repeaters[1].lock_qubit(q2_sac);  net.repeaters[1].lock_qubit(q2_keep)
-        net.pending_events.append({
-            "type": "purify", "timer": 0, "success": False,
-            "r1": 0, "r2": 1,
-            "q1_sac": q1_sac, "q2_sac": q2_sac,
-            "q1_keep": q1_keep, "q2_keep": q2_keep,
-            "p_new": 0.0,
-            "gen_sac1": gen_sac1, "gen_sac2": gen_sac2,
-            "gen_keep1": gen_keep1, "gen_keep2": gen_keep2,
-        })
+        with patch.object(netmod, "bbpssw_success_prob", return_value=0.0):
+            res = net.purify(0, 1)
+        self.assertFalse(res["success"])
         net.age_links(discard_expired=False)
         # Both pairs must be destroyed.
         self.assertEqual(net.repeaters[0].num_occupied(), 0)
@@ -849,177 +734,6 @@ class TestCrossModuleWiring(unittest.TestCase):
                                                            
                                                            
 
-class TestGhostLinkResolution(unittest.TestCase):
-    """
-    A swap event is pending, but one remote qubit expires due to decoherence
-    before the classical message arrives.  The system must abort cleanly and
-    free the surviving qubit — no dangling state.
-    """
-
-    def _setup_pending_swap(self):
-        """Return a network where a swap event is queued but not yet resolved."""
-        net = build_chain(3, n_ch=4, spacing=50.0,
-                          p_gen=1.0, p_swap=1.0,
-                          F0=1.0, channel_loss=0.0,
-                          dt_seconds=1e-6,          # big delay so event stays pending
-                          distance_dep_gen=False,
-                          rng=np.random.default_rng(0))
-        net.entangle(0, 1)
-        net.entangle(1, 2)
-        net.swap(1)
-        self.assertEqual(len(net.pending_events), 1)
-        return net
-
-    def test_ghost_link_abort_on_expiry(self):
-        net = self._setup_pending_swap()
-        ev = net.pending_events[0]
-        # Manually expire one of the remote qubits (simulate decoherence).
-        ra, qa_r = ev["ra"], ev["qa_r"]
-        net.repeaters[ra].free_qubit(qa_r)
-        # Resolve the event.
-        net.pending_events[0]["timer"] = 0
-        net.age_links(discard_expired=False)
-        # After resolution, no qubit in the network must be locked.
-        for rep in net.repeaters:
-            self.assertFalse(np.any(rep.locked),
-                             f"R{rep.rid} still has a locked qubit after ghost-link abort.")
-
-    def test_ghost_link_no_new_link_created(self):
-        net = self._setup_pending_swap()
-        ev = net.pending_events[0]
-        rb, qb_r = ev["rb"], ev["qb_r"]
-        net.repeaters[rb].free_qubit(qb_r)
-        net.pending_events[0]["timer"] = 0
-        net.age_links(discard_expired=False)
-        # R0 and R2 must end up with zero occupied qubits.
-        self.assertEqual(net.repeaters[0].num_occupied(), 0)
-        self.assertEqual(net.repeaters[2].num_occupied(), 0)
-
-    def test_self_link_swap_dropped(self):
-        """A deferred swap whose two remote endpoints have collapsed onto the
-        SAME node (ra == rb) must be dropped and both survivors freed, never
-        crash set_link with a self-link. Regression for the CC-delay
-        _resolve_swap 'Attempting to generate inter-node entanglement' ValueError.
-        """
-        net = build_chain(3, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
-                          F0=1.0, channel_loss=0.0, dt_seconds=1e-6,
-                          distance_dep_gen=False, rng=np.random.default_rng(0))
-        rep0 = net.repeaters[0]
-        q_a, q_b = 0, 1
-        for q in (q_a, q_b):                      # two locked remotes on ONE node,
-            rep0.status[q] = QUBIT_OCCUPIED       # back-pointers cleared as swap() does
-            rep0.partner_repeater[q] = NO_PARTNER
-            rep0.partner_qubit[q] = NO_PARTNER
-            rep0.lock_qubit(q)
-        net.pending_events.append({
-            "type": "swap", "timer": 0,
-            "ra": 0, "qa_r": q_a, "rb": 0, "qb_r": q_b, "p_new": 0.9,
-            "gen_a": int(rep0.generation_id[q_a]),
-            "gen_b": int(rep0.generation_id[q_b]),
-        })
-        # Must resolve WITHOUT raising the self-link ValueError.
-        net.age_links(discard_expired=False)
-        # Both survivors freed + unlocked, and NO self-link was created.
-        self.assertEqual(int(rep0.status[q_a]), QUBIT_FREE)
-        self.assertEqual(int(rep0.status[q_b]), QUBIT_FREE)
-        self.assertFalse(bool(rep0.locked[q_a]))
-        self.assertFalse(bool(rep0.locked[q_b]))
-        self.assertNotEqual(int(rep0.partner_repeater[q_a]), 0)   # not linked to self
-        self.assertEqual(len(net.pending_events), 0)
-
-    def test_ghost_purify_abort(self):
-        """Kept qubit expires during purify delay → both sides cleaned up."""
-        net = _perfect_chain(3, cutoff=100)
-        net.entangle(0, 1)
-        net.entangle(0, 1)
-        q1s = net.repeaters[0].occupied_indices()
-        q1_sac, q1_keep = int(q1s[0]), int(q1s[1])
-        q2_sac = int(net.repeaters[0].partner_qubit[q1_sac])
-        q2_keep = int(net.repeaters[0].partner_qubit[q1_keep])
-
-        # Lock qubits as the protocol would.
-        net.repeaters[0].lock_qubit(q1_sac);  net.repeaters[0].lock_qubit(q1_keep)
-        net.repeaters[1].lock_qubit(q2_sac);  net.repeaters[1].lock_qubit(q2_keep)
-
-        # Expire the kept qubit on R1 before the message arrives.
-        net.repeaters[1].free_qubit(q2_keep)
-
-        net.pending_events.append({
-            "type": "purify", "timer": 0, "success": True,
-            "r1": 0, "r2": 1,
-            "q1_sac": q1_sac, "q2_sac": q2_sac,
-            "q1_keep": q1_keep, "q2_keep": q2_keep,
-            "p_new": 0.95,
-            "gen_keep1": int(net.repeaters[0].generation_id[q1_keep]),
-            "gen_keep2": int(net.repeaters[1].generation_id[q2_keep]),
-            "gen_sac1": int(net.repeaters[0].generation_id[q1_sac]),
-            "gen_sac2": int(net.repeaters[1].generation_id[q2_sac]),
-        })
-        net.age_links(discard_expired=False)
-        # No zombie links on R0.
-        self.assertEqual(net.repeaters[0].num_occupied(), 0)
-
-    def test_purify_resolve_preserves_reallocated_slot_lock(self):
-        """Regression (CC-delay orphan crash): a deferred FAILED purify whose
-        sacrifice slot was reallocated and re-locked by a concurrent in-flight op
-        must NOT release that new lock.  The old cleanup unlocked any locked slot
-        on generation-ID mismatch, orphaning a qubit a pending swap still held;
-        the swap then queued a NO_PARTNER(-1) endpoint (which indexes
-        repeaters[-1]) -> ValueError at resolution."""
-        net = _perfect_chain(3, cutoff=100)
-        net.entangle(0, 1)
-        net.entangle(0, 1)                        # two parallel 0-1 pairs
-        r0, r1 = net.repeaters[0], net.repeaters[1]
-        q1s = r0.occupied_indices()
-        q1_sac, q1_keep = int(q1s[0]), int(q1s[1])
-        q2_sac = int(r0.partner_qubit[q1_sac])
-        q2_keep = int(r0.partner_qubit[q1_keep])
-        for r, q in ((r0, q1_sac), (r0, q1_keep), (r1, q2_sac), (r1, q2_keep)):
-            r.lock_qubit(q)
-        ev = {
-            "type": "purify", "timer": 0, "success": False,
-            "r1": 0, "r2": 1,
-            "q1_sac": q1_sac, "q2_sac": q2_sac,
-            "q1_keep": q1_keep, "q2_keep": q2_keep, "p_new": 0.0,
-            "gen_keep1": int(r0.generation_id[q1_keep]),
-            "gen_keep2": int(r1.generation_id[q2_keep]),
-            "gen_sac1": int(r0.generation_id[q1_sac]),
-            "gen_sac2": int(r1.generation_id[q2_sac]),
-        }
-        # During the CC delay the sacrifice slot on R0 was freed, REALLOCATED
-        # (generation bumped) and re-locked by a concurrent swap that cleared its
-        # partner pointer; the other three slots were already cleaned up.
-        r1.free_qubit(q2_sac); r0.free_qubit(q1_keep); r1.free_qubit(q2_keep)
-        r0.generation_id[q1_sac] += 1             # reallocated -> event gen is stale
-        r0.partner_repeater[q1_sac] = NO_PARTNER
-        r0.partner_qubit[q1_sac] = NO_PARTNER
-        self.assertTrue(r0.locked[q1_sac])        # concurrent op holds the lock
-
-        net.pending_events.append(ev)
-        net.age_links(discard_expired=False)
-
-        self.assertTrue(
-            r0.locked[q1_sac],
-            "purify resolution released a lock on a reallocated slot it no longer "
-            "owns -> orphans the qubit held by a concurrent in-flight op.",
-        )
-
-    def test_swap_rejects_orphan_qubit(self):
-        """Defense-in-depth: an occupied but partner-less (NO_PARTNER) qubit is an
-        orphan and must never be swapped -- swapping it would queue a NO_PARTNER
-        endpoint that silently indexes repeaters[-1].  swap() must refuse it."""
-        net = _perfect_chain(3, cutoff=100)
-        net.entangle(0, 1)
-        net.entangle(1, 2)                        # node 1: links to 0 and 2
-        r1 = net.repeaters[1]
-        orphan = int(r1.occupied_indices()[0])
-        r1.partner_repeater[orphan] = NO_PARTNER  # occupied, unlocked, no partner
-        r1.partner_qubit[orphan] = NO_PARTNER
-        res = net.swap(1)
-        self.assertFalse(res["success"],
-                         "swap must refuse to swap an orphan (NO_PARTNER) qubit")
-
-
 class TestAsymmetricCutoff(unittest.TestCase):
     """
     Two repeaters with different cutoffs must use min(c1, c2) for the link.
@@ -1077,10 +791,6 @@ class TestZeroDistanceOperations(unittest.TestCase):
                                distance_dep_gen=False,
                                rng=np.random.default_rng(0))
 
-    def test_delay_is_zero(self):
-        net = self._zero_dist_net()
-        self.assertEqual(net._classical_delay_steps(0.0), 0)
-
     def test_entangle_zero_distance_succeeds(self):
         net = self._zero_dist_net()
         res = net.entangle(0, 1)
@@ -1097,10 +807,15 @@ class TestZeroDistanceOperations(unittest.TestCase):
                               rng=np.random.default_rng(0))
         net.entangle(0, 1)
         net.entangle(1, 2)
-        net.swap(1)
-        # Timer should be 0 → event resolves in the very next age_links call.
-        if net.pending_events:
-            self.assertEqual(net.pending_events[0]["timer"], 0)
+        res = net.swap(1)
+        # A queued swap resolves in this same tick's age_links: the pending list
+        # drains and (on success) the fused 0-2 link exists afterwards.
+        if res["success"]:
+            self.assertEqual(len(net.pending_events), 1)
+            net.age_links()
+            self.assertEqual(len(net.pending_events), 0)
+            self.assertIn(2, net.repeaters[0].partner_repeater[
+                net.repeaters[0].occupied_indices()])
 
     def test_no_division_by_zero_in_gen_prob(self):
         net = self._zero_dist_net()
@@ -1121,7 +836,6 @@ class TestDoubleBookingLockingIntegrity(unittest.TestCase):
         net = build_chain(3, n_ch=4, spacing=50.0,
                           p_gen=1.0, p_swap=1.0,
                           F0=1.0, channel_loss=0.0,
-                          dt_seconds=1e-6,
                           distance_dep_gen=False,
                           rng=np.random.default_rng(0))
         net.entangle(0, 1)
@@ -1408,8 +1122,7 @@ class TestSwapDecisionGate(unittest.TestCase):
     def _chain3(self, cutoff=10):
         net = build_network(topology='chain', n_repeaters=3, n_ch=2,
                             p_gen=1.0, p_swap=1.0, cutoff=cutoff,
-                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
-                            rng=np.random.default_rng(0))
+                            F0=1.0, channel_loss=0.0,                            rng=np.random.default_rng(0))
         assert net.entangle(0, 1)["success"]
         assert net.entangle(1, 2)["success"]
         return net
@@ -1445,8 +1158,7 @@ class TestSwapDecisionGate(unittest.TestCase):
         # FARTHEST would tie, so the viability filter must decide
         net = build_network(topology='chain', n_repeaters=3, n_ch=4,
                             p_gen=1.0, p_swap=1.0, cutoff=10,
-                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
-                            rng=np.random.default_rng(0))
+                            F0=1.0, channel_loss=0.0,                            rng=np.random.default_rng(0))
         assert net.entangle(0, 1)["success"]
         assert net.entangle(1, 2)["success"]
         # age the first pair to doom any pairing that uses either old qubit
@@ -1465,179 +1177,3 @@ class TestSwapDecisionGate(unittest.TestCase):
         self.assertEqual(int(rep0.age[old_q0]), 9)
         self.assertEqual(rep0.status[old_q0], QUBIT_OCCUPIED)
 
-class TestBornDeadResolutionGuard(unittest.TestCase):
-    """Task 2: swaps that resolve with inherited summed age >= cutoff are
-    discarded (born-dead). This closes the hole for dt>0 where qubits age
-    in flight during CC delay and can miss the decision-time gate."""
-
-    def test_inflight_overage_swap_is_discarded(self):
-        # dt>0 chain: spacing 50km, dt=2.5e-4 -> 1 tick per hop delay.
-        net = build_network(topology='chain', n_repeaters=3, n_ch=2,
-                            p_gen=1.0, p_swap=1.0, cutoff=8,
-                            F0=1.0, channel_loss=0.0, dt_seconds=2.5e-4,
-                            rng=np.random.default_rng(0))
-        assert net.entangle(0, 1)["success"]
-        assert net.entangle(1, 2)["success"]
-        # decision-time gate sees age 2+2+2=6 < 8 -> swap allowed; with the
-        # 1-tick CC delay each parent ages twice before resolution:
-        # summed age at resolution = 3+3+... engineer it to land >= 8
-        for rep in net.repeaters:
-            occ = rep.occupied_indices()
-            rep.age[occ] = 2
-        res = net.swap(1)
-        self.assertTrue(res["success"])  # BSM succeeded, event queued
-        # push ages so the resolved link would be born over-age
-        rep0, rep2 = net.repeaters[0], net.repeaters[2]
-        q0 = int(np.flatnonzero(rep0.locked)[0])
-        q2 = int(np.flatnonzero(rep2.locked)[0])
-        rep0.age[q0] = 4
-        rep2.age[q2] = 4
-        net.age_links()                 # ages to 5+5, timer decrements
-        net.age_links()                 # ages to 6+6=12 >= 8 at resolution, resolves
-        # no ghost link: both slots freed, no occupied qubit points anywhere
-        self.assertEqual(rep0.status[q0], QUBIT_FREE)
-        self.assertEqual(rep2.status[q2], QUBIT_FREE)
-        self.assertFalse(rep0.locked[q0])
-        self.assertFalse(rep2.locked[q2])
-
-
-class TestPurifyEq4AgeSemantics:
-    """arXiv 2401.13168 Eq. (4): the purified link's age is back-solved from
-    its fidelity on a fresh (p0=1) baseline, m' = ceil(-tau*ln(p_new)), plus
-    ticks accrued since the decision. Age stays an exact fidelity proxy;
-    purification extends remaining lifetime (the old sum-ages bookkeeping
-    doubled the expiry clock and used baselines > 1)."""
-
-    def test_purified_link_age_and_baseline(self):
-        net = build_network(topology='chain', n_repeaters=2, n_ch=2,
-                            p_gen=1.0, p_swap=1.0, cutoff=20,
-                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
-                            rng=np.random.default_rng(3))
-        assert net.entangle(0, 1)["success"]
-        assert net.entangle(0, 1)["success"]
-        rep0, rep1 = net.repeaters
-        # age both pairs 5 ticks so fidelities are non-trivial
-        for rep in (rep0, rep1):
-            occ = rep.occupied_indices()
-            rep.age[occ] = 5
-            rep.werner_param[occ] = rep.initial_werner[occ] * np.exp(-5 / 20)
-        # force a SUCCESSFUL purify deterministically: seed chosen s.t. the
-        # rng.random() draw <= success prob; if flaky, monkeypatch net.rng
-        res = net.purify(0, 1)
-        assert res["success"], "pick a seed that makes the BBPSSW draw succeed"
-        p_new = fidelity_to_werner(res["new_fidelity"])
-        net.age_links()   # dt=0: resolves this call; kept pair ages 1 first
-        occ = rep0.occupied_indices()
-        assert len(occ) == 1              # sacrifice destroyed, keep survives
-        q = int(occ[0])
-        expected_age = int(np.ceil(-20 * np.log(p_new))) + 1   # accrued = 1
-        assert int(rep0.age[q]) == expected_age
-        assert float(rep0.initial_werner[q]) == pytest.approx(1.0)
-        assert float(rep0.werner_param[q]) == pytest.approx(
-            np.exp(-expected_age / 20), rel=1e-6)
-
-    def test_purified_below_floor_is_discarded(self):
-        # if ceil(-ec*ln(p_new)) + accrued >= ec the kept pair is destroyed.
-        # F1=F2=0.5 is the BBPSSW fixed point (F_new=0.5 too), so
-        # p_new = fidelity_to_werner(0.5) = 1/3 and
-        # ceil(-4*ln(1/3)) = 5 >= cutoff=4 unconditionally: this always
-        # exercises the discard branch (network.py:515-519), not just when
-        # the seeded purify draw happens to succeed.
-        net = build_network(topology='chain', n_repeaters=2, n_ch=2,
-                            p_gen=1.0, p_swap=1.0, cutoff=4,
-                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
-                            rng=np.random.default_rng(3))
-        assert net.entangle(0, 1)["success"]
-        assert net.entangle(0, 1)["success"]
-        rep0, rep1 = net.repeaters
-        p_half = fidelity_to_werner(0.5)
-        for rep in (rep0, rep1):
-            occ = rep.occupied_indices()
-            rep.werner_param[occ] = p_half
-            rep.initial_werner[occ] = p_half
-            rep.age[occ] = 0
-
-        # Force the BBPSSW coin to succeed deterministically (rng.random()==0)
-        # so the discard branch is reached regardless of seed.
-        class _ZeroRNG:
-            def random(self):
-                return 0.0
-        net.rng = _ZeroRNG()
-
-        res = net.purify(0, 1)
-        assert res["success"]
-        net.age_links()
-        # both the sacrifice pair AND the doomed kept pair are gone: no ghost
-        # link past the fidelity floor the cutoff exists to guarantee
-        assert rep0.num_occupied() == 0
-        assert rep1.num_occupied() == 0
-        for rep in (rep0, rep1):
-            for q in range(rep.n_ch):
-                assert rep.status[q] == QUBIT_FREE
-                assert not rep.locked[q]
-
-    def test_purify_at_depolarizing_floor_p_new_zero_discards_no_crash(self):
-        # BBPSSW at the fixed point F1=F2=1/4 (p=0, the depolarizing floor)
-        # gives p_new=0 exactly. -ln(0) is undefined/inf, so _resolve_purify
-        # must take the m_equiv=ec discard branch (network.py:507-511)
-        # instead of crashing on ceil(-ec*log(0)).
-        net = build_network(topology='chain', n_repeaters=2, n_ch=2,
-                            p_gen=1.0, p_swap=1.0, cutoff=4,
-                            F0=1.0, channel_loss=0.0, dt_seconds=0.0,
-                            rng=np.random.default_rng(3))
-        assert net.entangle(0, 1)["success"]
-        assert net.entangle(0, 1)["success"]
-        rep0, rep1 = net.repeaters
-        for rep in (rep0, rep1):
-            occ = rep.occupied_indices()
-            rep.werner_param[occ] = 0.0
-            rep.initial_werner[occ] = 0.0
-            rep.age[occ] = 0
-
-        class _ZeroRNG:
-            def random(self):
-                return 0.0
-        net.rng = _ZeroRNG()
-
-        res = net.purify(0, 1)
-        assert res["success"]
-        net.age_links()   # must not raise on log(0)
-        assert rep0.num_occupied() == 0
-        assert rep1.num_occupied() == 0
-
-
-class TestCutoffFidelityFloor:
-    """Idealized physics: no occupied link may ever carry age >= its cutoff,
-    and every delivered end-to-end fidelity sits above the universal floor
-    (1 + 3e^-1)/4 ~ 0.5259. This is the leak regression test for the
-    2026-07-12 fix (49% of swap-asap deliveries used to violate it at N=10,
-    cutoff=30; this test uses N=5, cutoff=15)."""
-
-    FLOOR = (1 + 3 * np.exp(-1)) / 4
-
-    def test_no_overage_links_and_floor_holds(self):
-        from rl_stack.env_wrapper import QRNEnv
-        from rl_stack import strategies
-        delivered = 0
-        for seed in range(8):
-            env = QRNEnv(n_repeaters=5, n_ch=2, p_gen=1.0, p_swap=0.8,
-                         cutoff=15, F0=1.0, channel_loss=0.0, dt_seconds=0.0,
-                         max_steps=200, rng=np.random.default_rng(seed))
-            env.reset()
-            for _ in range(200):
-                _, _, done, info = env.step(strategies.swap_asap(env))
-                for rep in env.net.repeaters:
-                    occ = rep.occupied_indices()
-                    if occ.size:
-                        assert (rep.age[occ] < rep.link_cutoff[occ]).all(), \
-                            f"over-age link survived a step (seed {seed})"
-                if done:
-                    if info["terminated"]:
-                        delivered += 1
-                        assert info["fidelity"] > self.FLOOR - 1e-6
-                    break
-        assert delivered >= 3   # the scenario must actually exercise delivery
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)

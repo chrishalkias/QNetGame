@@ -50,19 +50,17 @@ def parse_args():
     ap.add_argument("--save_dir", default=None)
     ap.add_argument("--color", default="#4C72B0",
                     help="bar color (CC-delay agent uses purple by convention)")
-    ap.add_argument("--dt_seconds", type=float, default=0.0,
-                    help="CC delay per step (2.5e-4 = 1 step/hop at spacing=50)")
     ap.add_argument("--max_steps", type=int, default=200,
-                    help="episode cap for rollout collection (bump under CC delays)")
+                    help="episode cap for rollout collection")
     ap.add_argument("--xmax", type=float, default=None,
                     help="fixed x-axis limit (default: auto from the data)")
     return ap.parse_args()
 
 
-def _flip_fractions(ckpt, episodes, seed, sizes, dt_seconds, max_steps):
+def _flip_fractions(ckpt, episodes, seed, sizes, max_steps):
     """One collection -> {feature: flip fraction}."""
     d = C.collect(ckpt, episodes=episodes, seed=seed, sizes=sizes,
-                  dt_seconds=dt_seconds, max_steps=max_steps)
+                  max_steps=max_steps)
     model, states, idx, base = d["model"], d["states"], d["idx"], d["A"]
     rng = np.random.default_rng(seed)
     flip = {}
@@ -89,7 +87,7 @@ def compute(a, out_json):
         for seed in a.seeds:
             print(f"[range {lo}-{hi}, seed {seed}]", flush=True)
             flip = _flip_fractions(a.ckpt, a.episodes, seed, range(lo, hi + 1),
-                                   a.dt_seconds, a.max_steps)
+                                   a.max_steps)
             for name, v in flip.items():
                 per_seed[name].append(v)
         panels.append(dict(n_lo=lo, n_hi=hi, note=note, flip=per_seed))

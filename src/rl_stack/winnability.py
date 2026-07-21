@@ -31,13 +31,12 @@ def _bin(p_gen, p_swap, cutoff, n_repeaters, n_ch):
 
 class WinnabilityCache:
     def __init__(self, n_pilots=5, probe_steps=400, min_deliveries=1, seed=0,
-                 dt_seconds=0.0, channel_loss=0.0, F0=1.0):
+                 channel_loss=0.0, F0=1.0):
         self.n_pilots = n_pilots
         self.probe_steps = probe_steps
         self.min_deliveries = min_deliveries
         self.rng = np.random.default_rng(seed)
         # physics must match the training regime (idealized by default)
-        self.dt_seconds = dt_seconds
         self.channel_loss = channel_loss
         self.F0 = F0
         self._cache: dict = {}
@@ -53,7 +52,7 @@ class WinnabilityCache:
             env = QRNEnv(
                 n_repeaters=int(n_repeaters), n_ch=int(n_ch),
                 p_gen=float(p_gen), p_swap=float(p_swap), cutoff=int(cutoff),
-                max_steps=self.probe_steps, dt_seconds=self.dt_seconds,
+                max_steps=self.probe_steps,
                 channel_loss=self.channel_loss, F0=self.F0, topology="chain",
                 rng=np.random.default_rng(self.rng.integers(2**32)))
             env.reset()

@@ -36,7 +36,7 @@ def _teacher_q(teacher, x, edge_index, device):
 def collect_teacher_dataset(teacher, *, episodes=400, seed=0, device="cpu",
                             sizes=range(4, 13), n_chs=(2, 3, 4),
                             p_lo=0.4, p_hi=0.9, cut_lo=10, cut_hi=50,
-                            max_steps=200, dt_seconds=0.0):
+                            max_steps=200):
     """Greedy teacher rollouts over the omni training distribution (mirrors
     experiments/policy_probes/_collect.py). Returns a list of per-step records
     {x:(N,9), edge_index:(2,E), mask:(N,3) bool, q:(N,3) teacher Q}."""
@@ -49,7 +49,7 @@ def collect_teacher_dataset(teacher, *, episodes=400, seed=0, device="cpu",
                      p_swap=float(rng.uniform(p_lo, p_hi)),
                      cutoff=int(rng.integers(cut_lo, cut_hi + 1)),
                      p_gen_std=0.15, p_swap_std=0.15, F0=1.0,
-                     channel_loss=0.0, dt_seconds=dt_seconds, max_steps=max_steps,
+                     channel_loss=0.0, max_steps=max_steps,
                      topology="chain",
                      rng=np.random.default_rng(int(rng.integers(2**31))))
         obs = env.reset()

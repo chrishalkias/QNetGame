@@ -99,7 +99,6 @@ class QRNEnv:
                  cutoff = 20,
                  F0 = 0.95,
                  channel_loss = 0.02,
-                 dt_seconds = 1e-4,
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
                  topology = 'chain',
@@ -118,7 +117,7 @@ class QRNEnv:
             topology=topology, n_repeaters=n_repeaters, n_ch=n_ch,
             spacing=spacing, p_gen=p_gen, p_swap=p_swap,
             p_gen_std=p_gen_std, p_swap_std=p_swap_std, cutoff=cutoff,
-            F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
+            F0=F0, channel_loss=channel_loss,
             rng=self.rng)
 
         self._topo = self.net.topology()

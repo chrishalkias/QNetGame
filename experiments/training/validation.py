@@ -37,7 +37,6 @@ def parse_args():
     # CC variables
     parser.add_argument("--F0", type=float, default=1.0)
     parser.add_argument("--channel_loss", type=float, default=0.0)
-    parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
 
     parser.add_argument("--path", type=str, default="checkpoints/sota/")
     parser.add_argument("--dict", type=str, default="policy.pth")
@@ -63,9 +62,8 @@ if __name__ == "__main__":
         p_gen_std=args.p_gen_std,
         p_swap_std=args.p_swap_std,
         cutoff=args.cutoff,
-        F0=args.F0, 
+        F0=args.F0,
         channel_loss=args.channel_loss,
-        dt_seconds=args.dt_seconds, 
         plot_actions=args.plot_actions,
         save_dir=args.path,
         topology=args.topology,

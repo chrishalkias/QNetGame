@@ -83,7 +83,6 @@ def build_network(
     cutoff: int = 20,
     F0: float = 0.95,
     channel_loss: float = 0.02,
-    dt_seconds: float = 1e-4,
     rng=None,
 ) -> RepeaterNetwork:
     """Build a RepeaterNetwork for the given topology.
@@ -101,7 +100,7 @@ def build_network(
     net = build_chain(
         n_repeaters, n_ch=n_ch, spacing=spacing,
         p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
-        F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
+        F0=F0, channel_loss=channel_loss,
         distance_dep_gen=True, rng=rng)
 
     if p_gen_std > 0.0 or p_swap_std > 0.0:
@@ -132,9 +131,7 @@ class RepeaterNetwork:
         "distance_dep_gen", # Have distance affect p_e
         "rng",              # Allow the use of user specified rng
         "time_step",        # The simulation timestep
-        "dt_seconds",       # Simulation time to physical time
-        "c_fiber",          # Speed of ligt in fibre
-        "pending_events",   # List of pending events (for CC)
+        "pending_events",   # Within-step scratch list: swap/purify apply at end of age_links
         "_positions",        # Array of repeater positions in space
         "_dist_matrix",      # Matrix of distances between repeaters
         "_cutoffs"           # Array of per-repeater cutoffs for swap viability gate
@@ -148,7 +145,6 @@ class RepeaterNetwork:
                  F0: float = 1.0,
                  distance_dep_gen: bool = True,
                  rng: Optional[np.random.Generator] = None,
-                 dt_seconds: float = 1e-4
                  ):
         
         #--- Base parameters
@@ -168,9 +164,10 @@ class RepeaterNetwork:
         self.rng = rng if rng is not None else np.random.default_rng()
         self.time_step: int = 0
 
-        # ---Classical delay parameters
-        self.dt_seconds = dt_seconds
-        self.c_fiber: float = 200_000.0  # km/s
+        # Swap/purify decide against the frozen start-of-tick state, lock their
+        # remote qubits, and record the outcome here; age_links applies the whole
+        # list at end of tick. This deferral is the synchronous-tick barrier: it
+        # stops swaps cascading within a tick, so long links build over rounds.
         self.pending_events: List[dict] = []
 
         # ---Cached geometry
@@ -186,13 +183,6 @@ class RepeaterNetwork:
 
     def distance(self, r1: int, r2: int) -> float:
         return float(self._dist_matrix[r1, r2])
-
-    def _classical_delay_steps(self, d_km: float) -> int:
-        """Discrete steps for a classical signal to travel d_km through fibre."""
-        if d_km <= 0.0 or self.dt_seconds <= 0.0:
-            return 0
-        simStepsForCC = int(np.ceil(d_km / (self.c_fiber * self.dt_seconds)))
-        return simStepsForCC
 
     def _gen_prob(self, r1: int, r2: int) -> float:
         """Returns the effective p_e between two repeaters (can be distance dependent)"""
@@ -331,18 +321,12 @@ class RepeaterNetwork:
         rep_b.partner_repeater[qb_r] = NO_PARTNER
         rep_b.partner_qubit[qb_r]    = NO_PARTNER
 
-        # determine the max distance between the BSM station and the remote ones
-        d_max = max(self.distance(r, ra), self.distance(r, rb))
-        delay = self._classical_delay_steps(d_max)
-
-        # append event to the queue
+        # append event to the queue (applied at end of this tick's age_links)
         self.pending_events.append({
-            "type": "swap", "timer": delay,
+            "type": "swap",
             "r": r, "qa": qa, "qb": qb,
             "ra": ra, "qa_r": qa_r, "rb": rb, "qb_r": qb_r,
             "p_new": p_new,
-            "gen_a": int(rep_a.generation_id[qa_r]),
-            "gen_b": int(rep_b.generation_id[qb_r]),
         })
 
         result.update(success=True,
@@ -390,19 +374,13 @@ class RepeaterNetwork:
         rep1.lock_qubit(q1_sac); rep1.lock_qubit(q1_keep)
         rep2.lock_qubit(q2_sac); rep2.lock_qubit(q2_keep)
 
-        delay = self._classical_delay_steps(self.distance(r1, r2))
-
         self.pending_events.append({
-            "type": "purify", "timer": delay, "success": success,
+            "type": "purify", "success": success,
             "r1": r1, "r2": r2,
             "q1_sac": q1_sac, "q2_sac": q2_sac,
             "q1_keep": q1_keep, "q2_keep": q2_keep,
             "p_new": p_new,
             "age_keep": int(rep1.age[q1_keep]),
-            "gen_keep1": int(rep1.generation_id[q1_keep]),
-            "gen_keep2": int(rep2.generation_id[q2_keep]),
-            "gen_sac1": int(rep1.generation_id[q1_sac]),
-            "gen_sac2": int(rep2.generation_id[q2_sac]),
         })
 
         result.update(success=success,
@@ -433,29 +411,17 @@ class RepeaterNetwork:
             for qi in rep.age_occupied():
                 expired_pairs.append((rep.rid, int(qi)))
 
-        # 2) resolve pending events (before expiring, so locked qubits
-        #    involved in in-flight operations get resolved first)
-        resolved = 0
-        still_pending = []
-
+        # 2) apply every event queued this tick (before expiring, so the aged
+        #    remote qubits are consumed into the fused/purified link first). All
+        #    events resolve in the same age_links call that this step queued them.
+        resolved = len(self.pending_events)
         for ev in self.pending_events:
-            ev["timer"] -= 1 # reduce timer by one step (event is closer to resolution)
-            # A timer-k event resolves k age_links calls after the queuing step,
-            # counting that step's own age_links as the first. delay 0 -> timer
-            # 0 -> resolves in the same step (SOTA default); delay k>=1 defers to
-            # k subsequent calls. Resolution fires only once timer goes negative.
-            if ev["timer"] >= 0:
-                still_pending.append(ev)
-                continue
-            else:
-                resolved += 1
-                if ev["type"] == "swap":
-                    self._resolve_swap(ev)
+            if ev["type"] == "swap":
+                self._resolve_swap(ev)
+            elif ev["type"] == "purify":
+                self._resolve_purify(ev)
 
-                elif ev["type"] == "purify":
-                    self._resolve_purify(ev)
-
-        self.pending_events = still_pending
+        self.pending_events = []
 
         # 3) expire old links (after resolving events)
         n_destroyed = 0
@@ -482,49 +448,20 @@ class RepeaterNetwork:
                                                                                               
 
     def _resolve_swap(self, ev: dict):
-        """Resolve a deferred swap: rewrite remote qubits to point to each other.
-        Local qubits were already freed at BSM time."""
+        """Resolve a swap queued earlier this tick: rewrite the two remote qubits
+        to point at each other. Local qubits were freed at BSM time.
+
+        Same-tick resolution means the remote qubits are always OCCUPIED, distinct
+        nodes, and viable here: they were locked at decision (so no other node
+        touched them), the swap() same_partner guard rules out ra==rb, and the
+        select_swap_pair gate age_a+age_b+2 < ec keeps the fused age below cutoff
+        even after this tick's aging. No in-flight guards are needed without CC.
+        """
         ra, qa_r, rb, qb_r = ev["ra"], ev["qa_r"], ev["rb"], ev["qb_r"]
         rep_a, rep_b = self.repeaters[ra], self.repeaters[rb]
 
-        # [Guard] remote qubits may have been freed by expiry during the delay,
-        # or reallocated to a new link (ghost link / dangling pointer check).
-        a_alive = (rep_a.status[qa_r] == QUBIT_OCCUPIED and
-                   int(rep_a.generation_id[qa_r]) == ev["gen_a"])
-        b_alive = (rep_b.status[qb_r] == QUBIT_OCCUPIED and
-                   int(rep_b.generation_id[qb_r]) == ev["gen_b"])
-
-        if not (a_alive and b_alive):
-            # At least one side expired or was reallocated — clean up the survivor
-            if a_alive:
-                rep_a.free_qubit(qa_r)
-            if b_alive:
-                rep_b.free_qubit(qb_r)
-            return
-
-        # [Guard] Both remote endpoints have collapsed onto the SAME node
-        # (ra == rb): a deferred swap cannot form an inter-node link between two
-        # qubits on one repeater. Immediate swap() refuses this via the
-        # same_partner guard the deferred path must too (else set_link raises
-        # "Attempting to generate inter-node entanglement"). Drop the void swap
-        # and free both locked survivors, mirroring the expiry cleanup above.
-        if int(ra) == int(rb):
-            rep_a.free_qubit(qa_r)
-            rep_b.free_qubit(qb_r)
-            return
-
         ec = min(rep_a.cutoff, rep_b.cutoff)
         summed_age = int(rep_a.age[qa_r]) + int(rep_b.age[qb_r])
-        # [Guard] Born-dead link: the fused state's inherited age already
-        # reached the cutoff (in-flight CC accrual, or any path the decision
-        # gate could not see). Creating it would leak a link past the fidelity
-        # floor the cutoff exists to guarantee (expiry phase 3 only sweeps the
-        # pre-resolution list, so it would survive to this step's delivery
-        # check). Discard instead: free both remote endpoints, no link.
-        if summed_age >= ec:
-            rep_a.free_qubit(qa_r)
-            rep_b.free_qubit(qb_r)
-            return
         # Sum-ages history. The resolved value must be exactly the product of
         # the two remote links' already-decohered Werner values at resolution
         # (w_A*w_B); set_link must not re-apply decay on top (that would
@@ -552,47 +489,19 @@ class RepeaterNetwork:
         q1_keep, q2_keep = ev["q1_keep"], ev["q2_keep"]
         rep1, rep2 = self.repeaters[r1], self.repeaters[r2]
 
+        # Same-tick resolution: all four qubits were locked at decision and are
+        # still OCCUPIED and ours here (no CC flight window to expire/reallocate
+        # them), so no generation-ID guards are needed.
         if ev["success"]:
-            # Destroy sacrifice pair — check both sides' generation-IDs before
-            # calling _break_link, which follows partner pointers that may be stale.
-            s1_valid = (rep1.status[q1_sac] == QUBIT_OCCUPIED and
-                        int(rep1.generation_id[q1_sac]) == ev["gen_sac1"])
-            s2_valid = (rep2.status[q2_sac] == QUBIT_OCCUPIED and
-                        int(rep2.generation_id[q2_sac]) == ev["gen_sac2"])
-            if s1_valid and s2_valid:
-                self._break_link(r1, q1_sac)   # frees both sides via partner ptr
-            else:
-                # At least one side expired/reallocated — free survivors individually.
-                if s1_valid:
-                    rep1.free_qubit(q1_sac)
-                if s2_valid:
-                    rep2.free_qubit(q2_sac)
-                # Release only OUR lingering lock. A slot whose generation no
-                # longer matches this event was reallocated and re-locked by a
-                # newer in-flight op — unlocking it there would orphan that op's
-                # qubit (occupied + unlocked + NO_PARTNER), which then gets swapped
-                # and queues a NO_PARTNER(-1) endpoint. Leave such locks untouched.
-                if int(rep1.generation_id[q1_sac]) == ev["gen_sac1"] and rep1.locked[q1_sac]:
-                    rep1.unlock_qubit(q1_sac)
-                if int(rep2.generation_id[q2_sac]) == ev["gen_sac2"] and rep2.locked[q2_sac]:
-                    rep2.unlock_qubit(q2_sac)
-
-            # Guard: kept qubits may have been freed by expiry or reallocated
-            k1_alive = (rep1.status[q1_keep] == QUBIT_OCCUPIED and
-                        int(rep1.generation_id[q1_keep]) == ev["gen_keep1"])
-            k2_alive = (rep2.status[q2_keep] == QUBIT_OCCUPIED and
-                        int(rep2.generation_id[q2_keep]) == ev["gen_keep2"])
-            if not (k1_alive and k2_alive):
-                if k1_alive: self._break_link(r1, q1_keep)
-                if k2_alive: self._break_link(r2, q2_keep)
-                return
+            # Destroy the sacrifice pair (frees both sides via partner pointer).
+            self._break_link(r1, q1_sac)
 
             ec = min(rep1.cutoff, rep2.cutoff)
             safe_ec = max(int(ec), 1)
             # Eq.(4) age semantics (arXiv 2401.13168): represent the purified
             # fidelity as an equivalent age on a fresh p0=1 baseline,
-            # m' = ceil(-tau*ln(p_new)), plus ticks accrued since the decision
-            # (CC delay + same-tick aging). Age is then an exact fidelity
+            # m' = ceil(-tau*ln(p_new)), plus the one tick accrued since the
+            # decision (same-tick aging). Age is then an exact fidelity
             # proxy for every link and purification extends remaining
             # lifetime. Replaces the old sum-of-endpoint-ages bookkeeping
             # (doubled expiry clock) and its baseline>1 back-solve.
@@ -620,28 +529,10 @@ class RepeaterNetwork:
             rep1.unlock_qubit(q1_keep)
             rep2.unlock_qubit(q2_keep)
         else:
-            # Failure: destroy all four qubits, guarding each with generation-ID
-            # to avoid corrupting a new link that reused the same qubit slot.
-            for rep, q, gen_key in (
-                (rep1, q1_sac,  "gen_sac1"),
-                (rep2, q2_sac,  "gen_sac2"),
-                (rep1, q1_keep, "gen_keep1"),
-                (rep2, q2_keep, "gen_keep2"),
-            ):
-                if (rep.status[q] == QUBIT_OCCUPIED and
-                        int(rep.generation_id[q]) == ev[gen_key]):
-                    # Partner pointer still valid — use _break_link to free both sides.
-                    # Determine which repeater index owns this qubit.
-                    rid = rep.rid
-                    self._break_link(rid, q)
-                else:
-                    # Slot no longer holds our link. Clear a lingering lock ONLY
-                    # if the slot is still ours (e.g. freed by expiry, generation
-                    # unchanged). If it was reallocated (generation differs) the
-                    # lock now belongs to a newer in-flight op — leave it, else we
-                    # orphan that op's qubit.
-                    if int(rep.generation_id[q]) == ev[gen_key] and rep.locked[q]:
-                        rep.unlock_qubit(q)
+            # Failure: destroy both pairs. Each _break_link frees a qubit and its
+            # partner, so two calls clear all four (free_qubit also clears locks).
+            self._break_link(r1, q1_sac)
+            self._break_link(r1, q1_keep)
 
                                                    
 # ▄▄▄▄▄                                     ▄▄       

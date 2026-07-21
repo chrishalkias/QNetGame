@@ -68,8 +68,7 @@ class Repeater:
         "initial_werner",    # Werner param to be used for ageing
         "age",               # The ages of the links
         "link_cutoff",       # Effective link cutoff (min(c1, c2))
-        "locked",            # Locked qubits (used for CC)
-        "generation_id",     # Monotonic counter incremented on each allocation
+        "locked",            # Locked qubits (invisible to the policy while an op is pending)
     )
 
     def __init__(self, 
@@ -100,7 +99,6 @@ class Repeater:
         self.age = np.zeros(n_ch, dtype=np.int32)
         self.link_cutoff = np.full(n_ch, cutoff, dtype=np.int32)
         self.locked = np.zeros(n_ch, dtype=np.bool_)
-        self.generation_id = np.zeros(n_ch, dtype=np.uint32)
 
     def __deepcopy__(self, memo):
         """Fast clone: the per-qubit arrays are the only mutable state, so copy
@@ -128,7 +126,6 @@ class Repeater:
         new.age = self.age.copy()
         new.link_cutoff = self.link_cutoff.copy()
         new.locked = self.locked.copy()
-        new.generation_id = self.generation_id.copy()
         return new
 
                                                                                  
@@ -194,7 +191,6 @@ class Repeater:
             return -1
         qubit = int(freeQubits[0]) # choose the first one in the list
         self.status[qubit] = QUBIT_OCCUPIED
-        self.generation_id[qubit] += 1
         return qubit
 
     def set_link(self, 
@@ -295,10 +291,10 @@ class Repeater:
 
         Viability (arXiv 2401.13168 protocol step 2, adapted to same-tick
         resolution): the fused link inherits age_a + age_b, and both parents
-        age once more before a dt=0 event resolves, so it survives its cutoff
-        iff age_a + age_b + 2 < ec with ec = min(remote endpoints' cutoffs).
-        With CC delays the in-flight accrual is larger; network._resolve_swap
-        holds the authoritative born-dead guard for that case.
+        age once more before the swap resolves this same tick, so it survives its
+        cutoff iff age_a + age_b + 2 < ec with ec = min(remote endpoints'
+        cutoffs). This gate is what lets _resolve_swap create the link
+        unconditionally: no born-dead link can reach resolution.
         """
         occupiedQubits = self.available_indices()
         if len(occupiedQubits) < 2:

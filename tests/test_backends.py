@@ -68,7 +68,7 @@ from simulator.network import build_chain, RepeaterNetwork
 def _chain():
     return build_chain(3, n_ch=4, spacing=50.0, p_gen=1.0, p_swap=1.0,
                        cutoff=20, F0=0.95, channel_loss=0.0,
-                       dt_seconds=1e-4, distance_dep_gen=True,
+                       distance_dep_gen=True,
                        rng=np.random.default_rng(0))
 
 

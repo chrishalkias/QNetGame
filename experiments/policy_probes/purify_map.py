@@ -134,7 +134,7 @@ def collect(a, model):
         return np.random.default_rng(int(master.integers(2**31)))
 
     common = dict(p_gen_std=0.15, p_swap_std=0.15, F0=1.0,
-                  channel_loss=0.0, dt_seconds=0.0, topology="chain")
+                  channel_loss=0.0, topology="chain")
 
     # --- train cell (the _collect.collect training distribution) -------------
     if a.smoke:

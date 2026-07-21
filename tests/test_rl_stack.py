@@ -47,7 +47,7 @@ def _perfect_env(n=5):
         n_repeaters=n, n_ch=4, spacing=50.0,
         p_gen=1.0, p_swap=1.0, cutoff=30,
         F0=1.0, channel_loss=0.0,
-        dt_seconds=1e-4, max_steps=50,
+        max_steps=50,
         rng=np.random.default_rng(0),
     )
 
@@ -991,7 +991,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
         from rl_stack.strategies import swap_asap
         env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0,
                      cutoff=50, max_steps=80, topology="chain",
-                     dt_seconds=0.0, rng=np.random.default_rng(7))
+                     rng=np.random.default_rng(7))
         env.reset()
         reached = False
         for _ in range(80):
@@ -1072,7 +1072,7 @@ def test_can_swap_masked_when_only_doomed_pairs():
     """SWAP mask must reject pairs that would not survive same-tick resolution
     (age_i + age_j + 2 >= link_cutoff). Feature 4 agrees."""
     env = QRNEnv(n_repeaters=3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=10,
-                 F0=1.0, channel_loss=0.0, dt_seconds=0.0, max_steps=20,
+                 F0=1.0, channel_loss=0.0, max_steps=20,
                  rng=np.random.default_rng(0))
     env.reset()
     # age every link so any pair sums past the viability margin

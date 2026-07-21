@@ -342,7 +342,6 @@ class QRNAgent:
               cutoff = 30,
               F0 = 0.95,
               channel_loss = 0.02,
-              dt_seconds = 1e-3,
               curriculum = True,
               curriculum_frac = 0.5,
               topology = 'chain',
@@ -430,7 +429,7 @@ class QRNAgent:
             from rl_stack.winnability import WinnabilityCache
             self._wc = WinnabilityCache(
                 probe_steps=max(3 * max_steps, 200),
-                dt_seconds=dt_seconds, channel_loss=channel_loss, F0=F0)
+                channel_loss=channel_loss, F0=F0)
         else:
             self._wc = None
         disable_actions = tuple(disable_actions)
@@ -476,7 +475,6 @@ class QRNAgent:
                     'gamma': self.gamma,   # env PBRS gamma == DQN discount
                     'F0' : F0,
                     'channel_loss' : channel_loss,
-                    'dt_seconds': dt_seconds,
                     'max_steps' : max_steps,
                     'topology' : topology,
                     }
@@ -674,7 +672,6 @@ class QRNAgent:
                  cutoff=15,
                  F0=0.95,
                  channel_loss=0.02,
-                 dt_seconds=1e-3,
                  plot_actions=True,
                  topology = 'chain',
                  verbose = 0,
@@ -711,7 +708,6 @@ class QRNAgent:
             'cutoff': cutoff,
             'F0' : F0,
             'channel_loss' : channel_loss,
-            'dt_seconds': dt_seconds,
             'max_steps' : max_steps,
             'topology' : topology,
             }

@@ -150,7 +150,6 @@ def _pilot_swap_asap(
             max_steps=max_steps,
             F0=1.0,
             channel_loss=0.0,
-            dt_seconds=0.0,
             topology="chain",
             rng=np.random.default_rng(rng.integers(2**32)),
         )
@@ -207,8 +206,7 @@ def run_comparison(
                 max_steps=cfg.max_steps,
                 F0=1.0,
                 channel_loss=0.0,
-                dt_seconds=0.0,
-                topology="chain",
+                    topology="chain",
                 rng=np.random.default_rng(rng.integers(2**32)),
             )
             obs = env.reset()

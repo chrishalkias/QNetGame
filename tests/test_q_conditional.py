@@ -21,7 +21,7 @@ from experiments.q_heuristic.hybrid_policy import (
     make_hybrid_fn, make_conditional_fn, purify_then_swap_fn)
 
 ENV_KW = dict(n_repeaters=6, n_ch=4, p_gen=0.4, p_swap=0.8, cutoff=30,
-              F0=1.0, channel_loss=0.0, dt_seconds=0.0, topology="chain")
+              F0=1.0, channel_loss=0.0, topology="chain")
 H = 200
 
 

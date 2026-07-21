@@ -53,8 +53,6 @@ def parse_args():
     parser.add_argument("--gamma", type=float, default=0.995,
                         help="DQN discount AND env PBRS gamma (kept matched)")
 
-    # CC Variables
-    parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
     parser.add_argument("--channel_loss", type=float, default=0.00)
     parser.add_argument("--F0", type=float, default=1.0)
     
@@ -142,7 +140,6 @@ def build_eval_probe(args, hard_cells, probe_seed=12345, n_episodes=40):
                 "gamma": agent.gamma,
                 "F0": args.F0,
                 "channel_loss": args.channel_loss,
-                "dt_seconds": args.dt_seconds,
                 "max_steps": max_steps,
                 "topology": args.topology,
             }
@@ -170,7 +167,7 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
             p_gen=cell["p_gen"], p_swap=cell["p_swap"],
             p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std,
             cutoff=cell["cutoff"], F0=args.F0,
-            channel_loss=args.channel_loss, dt_seconds=args.dt_seconds,
+            channel_loss=args.channel_loss,
             max_steps=args.max_steps, topology=args.topology,
             rng=np.random.default_rng(seed + k))
         env.reset()
@@ -299,7 +296,6 @@ if __name__ == "__main__":
                 if args.cutoff_lo is not None else args.cutoff),
         channel_loss=args.channel_loss,
         F0=args.F0,
-        dt_seconds=args.dt_seconds,
         env_seed=args.seed,
         eval_fn=eval_fn,
         eval_every=eval_every,
