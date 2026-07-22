@@ -29,7 +29,7 @@ import pytest
 # -- imports ------------------------------------------------------------------
 from simulator.repeater import (
     Repeater, SwapPolicy,
-    QUBIT_FREE, QUBIT_OCCUPIED, NO_PARTNER,
+    QUBIT_FREE, QUBIT_OCCUPIED, NO_PARTNER, LEFT, RIGHT,
     fidelity_to_werner, werner_to_fidelity,
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
@@ -353,7 +353,8 @@ class TestPurifyResolutionDecoherence(unittest.TestCase):
         res = net.purify(0, 1)
         self.assertEqual(res["reason"], "pending")
         ev = net.pending_events[0]
-        self.assertTrue(ev["success"])
+        self.assertTrue(ev["keep_purified"])   # two equal F<1 links -> beneficial, forced success
+        self.assertIsNotNone(ev["keep"])
         p_new = float(ev["p_new"])
         # Resolve directly (no age tick) so zero ticks accrue past the
         # decision-time age recorded in ev["age_keep"].
@@ -588,12 +589,15 @@ class TestPurification(unittest.TestCase):
 
     def test_purify_failure_destroys_both(self):
         # Force BBPSSW to fail (real purify -> age_links path) and verify both
-        # pairs are destroyed. Patching the success prob to 0 is deterministic
-        # without hand-building a resolution event.
+        # pairs are destroyed. Links must be F<1 so the beneficial-purify guard
+        # actually attempts BBPSSW (two F=1 links are kept, not purified).
         import simulator.network as netmod
         net = _perfect_chain(3, cutoff=100)
         net.entangle(0, 1)
         net.entangle(0, 1)
+        for qi in net.repeaters[0].occupied_indices():
+            net.repeaters[0].werner_param[qi] = fidelity_to_werner(0.8)
+            net.repeaters[0].initial_werner[qi] = fidelity_to_werner(0.8)
         with patch.object(netmod, "bbpssw_success_prob", return_value=0.0):
             res = net.purify(0, 1)
         self.assertFalse(res["success"])
@@ -874,8 +878,8 @@ class TestDoubleBookingLockingIntegrity(unittest.TestCase):
                          "Purify mask must be False when < 2 available qubits to same partner.")
 
     def test_has_free_qubit_ignores_locked_free_slots(self):
-        # A node whose only free slot is locked must report no free qubit.
-        rep = Repeater(rid=0, n_ch=1, cutoff=20)
+        # A single-port node whose only free slot is locked must report no free qubit.
+        rep = Repeater(rid=0, n_ch=1, cutoff=20, n_left=1, n_right=0)
         rep.locked[0] = True   # lock the sole qubit (still FREE)
         self.assertFalse(rep.has_free_qubit())
 
@@ -883,18 +887,21 @@ class TestDoubleBookingLockingIntegrity(unittest.TestCase):
 class TestSelfSwapping(unittest.TestCase):
     """
     A repeater must not swap two qubits that are both linked to the *same*
-    remote repeater — this would create a self-loop (unphysical).
+    remote repeater — this would create a self-loop (unphysical). With
+    left/right ports this is structurally impossible: both links to one partner
+    live on the same port, and a swap needs one LEFT + one RIGHT link.
     """
 
     def test_same_partner_swap_rejected(self):
-        # R0 holds two qubits both linked to R1; swap at R0 must be rejected.
+        # R0 (an end node) holds two RIGHT-port links both to R1; with no LEFT
+        # link a swap at R0 cannot even form a pair and is rejected.
         net = _perfect_chain(3, cutoff=50)
         net.entangle(0, 1)
         net.entangle(0, 1)
         res = net.swap(0)
         self.assertFalse(res["success"])
-        self.assertEqual(res["reason"], "same_partner",
-                         "Swap of two links to the same partner must return 'same_partner'.")
+        self.assertEqual(res["reason"], "insufficient_qubits",
+                         "Same-partner links share a port, so no left x right pair exists.")
 
     def test_valid_swap_different_partners_accepted(self):
         # R1 holds one link to R0 and one to R2 → swap must succeed.
@@ -1074,15 +1081,16 @@ class TestRepeaterInternals(unittest.TestCase):
 
     def test_allocate_qubit_returns_index(self):
         rep = Repeater(rid=0, n_ch=4, cutoff=20)
-        qi = rep.allocate_qubit()
+        qi = rep.allocate_qubit(RIGHT)
         self.assertGreaterEqual(qi, 0)
         self.assertEqual(rep.status[qi], QUBIT_OCCUPIED)
 
     def test_allocate_qubit_full_returns_minus_one(self):
+        # n_ch qubits per side; fill the RIGHT port then the next RIGHT alloc fails.
         rep = Repeater(rid=0, n_ch=2, cutoff=20)
-        rep.allocate_qubit()
-        rep.allocate_qubit()
-        self.assertEqual(rep.allocate_qubit(), -1)
+        rep.allocate_qubit(RIGHT)
+        rep.allocate_qubit(RIGHT)
+        self.assertEqual(rep.allocate_qubit(RIGHT), -1)
 
     def test_free_qubit_clears_all_fields(self):
         rep = Repeater(rid=0, n_ch=2, cutoff=20)
@@ -1130,11 +1138,10 @@ class TestSwapDecisionGate(unittest.TestCase):
     def test_overage_pair_is_refused(self):
         net = self._chain3(cutoff=10)
         rep1 = net.repeaters[1]
-        # age both links so summed age + 2 >= cutoff: 4 + 4 + 2 = 10 >= 10
-        for q in range(2):
-            for rep in net.repeaters:
-                if rep.status[q] == QUBIT_OCCUPIED:
-                    rep.age[q] = 4
+        # age both of R1's links so summed age + 2 >= cutoff: 4 + 4 + 2 = 10 >= 10
+        for rep in net.repeaters:
+            for q in rep.occupied_indices():
+                rep.age[q] = 4
         res = net.swap(1)
         self.assertFalse(res["success"])
         self.assertEqual(res["reason"], "no_valid_pair")
@@ -1176,4 +1183,116 @@ class TestSwapDecisionGate(unittest.TestCase):
         # exists with its age intact (the swap consumed the fresh pair)
         self.assertEqual(int(rep0.age[old_q0]), 9)
         self.assertEqual(rep0.status[old_q0], QUBIT_OCCUPIED)
+
+
+class TestPorts(unittest.TestCase):
+    """Left/right port split: n_ch qubits per side, 2*n_ch on interior nodes,
+    n_ch on end nodes; a swap fuses one LEFT link with one RIGHT link."""
+
+    def test_interior_capacity_is_2nch_ends_nch(self):
+        net = _perfect_chain(4, n_ch=2)
+        caps = [(r.n_left, r.n_right, r.status.size) for r in net.repeaters]
+        self.assertEqual(caps[0],  (0, 2, 2))   # source: RIGHT only
+        self.assertEqual(caps[1],  (2, 2, 4))   # interior: both ports
+        self.assertEqual(caps[2],  (2, 2, 4))
+        self.assertEqual(caps[-1], (2, 0, 2))   # dest: LEFT only
+
+    def test_entangle_allocates_facing_ports(self):
+        net = _perfect_chain(3, n_ch=2)
+        rep1 = net.repeaters[1]
+        net.entangle(0, 1)                      # R1 faces LEFT toward R0
+        left = rep1.available_on_side(LEFT)
+        self.assertEqual(len(left), 1)
+        self.assertLess(int(left[0]), rep1.n_left)          # in LEFT block
+        self.assertEqual(int(rep1.partner_repeater[left[0]]), 0)
+        net.entangle(1, 2)                      # R1 faces RIGHT toward R2
+        right = rep1.available_on_side(RIGHT)
+        self.assertEqual(len(right), 1)
+        self.assertGreaterEqual(int(right[0]), rep1.n_left)  # in RIGHT block
+        self.assertEqual(int(rep1.partner_repeater[right[0]]), 2)
+
+    def test_swap_needs_one_link_per_side(self):
+        net = _perfect_chain(3, n_ch=2, cutoff=50)
+        rep1 = net.repeaters[1]
+        net.entangle(0, 1)                      # only a LEFT link -> no swap
+        self.assertFalse(rep1.can_swap())
+        self.assertFalse(net.swap(1)["success"])
+        net.entangle(1, 2)                      # now a RIGHT link too -> swap ok
+        self.assertTrue(rep1.can_swap())
+        self.assertTrue(net.swap(1)["success"])
+
+    def test_two_same_side_links_cannot_swap(self):
+        # An end node with two same-partner (same-side) links can never swap.
+        net = _perfect_chain(3, n_ch=2, cutoff=50)
+        net.entangle(0, 1)
+        net.entangle(0, 1)
+        self.assertFalse(net.repeaters[0].can_swap())
+
+
+class TestPurifyCascade(unittest.TestCase):
+    """Sorted-adjacent distillation cascade (arXiv 2401.13168) with the
+    beneficial-purify guard F_new(F1,F2) > max(F1,F2)."""
+
+    def _place(self, net, fids):
+        """Hand-place len(fids) links R0->R1 with the given fidelities."""
+        rep0, rep1 = net.repeaters[0], net.repeaters[1]
+        for f in fids:
+            q0 = rep0.allocate_qubit(RIGHT)
+            q1 = rep1.allocate_qubit(LEFT)
+            p = float(fidelity_to_werner(f))
+            rep0.set_link(q0, 1, q1, p, link_age=0, effective_cutoff=1000)
+            rep1.set_link(q1, 0, q0, p, link_age=0, effective_cutoff=1000)
+
+    def _fresh(self, n_ch=4):
+        return build_chain(3, n_ch=n_ch, p_gen=1.0, p_swap=1.0, cutoff=1000,
+                           F0=1.0, channel_loss=0.0, distance_dep_gen=False,
+                           rng=np.random.default_rng(0))
+
+    def test_guard_skips_when_not_beneficial(self):
+        # F_new(0.95, 0.55) < 0.95 -> guard skips BBPSSW: keep the 0.95 link
+        # untouched, discard the weak one, and consume NO rng draw.
+        self.assertLess(float(bbpssw_new_fidelity(0.95, 0.55)), 0.95)
+        net = self._fresh()
+        self._place(net, [0.95, 0.55])
+        net.rng = np.random.default_rng(0)
+        state_before = net.rng.bit_generator.state
+        net.purify(0, 1)
+        self.assertEqual(net.rng.bit_generator.state, state_before)  # no coin flip
+        net.age_links(discard_expired=False)
+        links = net.get_all_links()
+        self.assertEqual(len(links), 1)
+        self.assertAlmostEqual(float(links[0, 4]), 0.95, places=1)
+
+    def test_beneficial_purify_improves(self):
+        # Two equal F=0.8 links -> beneficial; forced success raises the survivor.
+        net = self._fresh()
+        self._place(net, [0.8, 0.8])
+        class _ZeroRNG:                     # rng.random()==0 -> always succeeds
+            def random(self): return 0.0
+        net.rng = _ZeroRNG()
+        net.purify(0, 1)
+        net.age_links(discard_expired=False)
+        links = net.get_all_links()
+        self.assertEqual(len(links), 1)
+        self.assertGreater(float(links[0, 4]), 0.8)
+
+    def test_cascade_leaves_at_most_one_survivor(self):
+        for seed in range(8):
+            net = self._fresh()
+            self._place(net, [0.7, 0.72, 0.78, 0.85])
+            net.rng = np.random.default_rng(seed)
+            net.purify(0, 1)
+            net.age_links(discard_expired=False)
+            self.assertLessEqual(len(net.get_all_links()), 1)
+
+    def test_all_fail_annihilates(self):
+        # Two beneficial links, BBPSSW forced to fail -> nothing survives.
+        import simulator.network as netmod
+        net = self._fresh()
+        self._place(net, [0.8, 0.8])
+        with patch.object(netmod, "bbpssw_success_prob", return_value=0.0):
+            res = net.purify(0, 1)
+        self.assertFalse(res["success"])
+        net.age_links(discard_expired=False)
+        self.assertEqual(len(net.get_all_links()), 0)
 

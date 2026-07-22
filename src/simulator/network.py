@@ -14,6 +14,7 @@ import numpy as np
 
 from .repeater import (
     Repeater, SwapPolicy, NO_PARTNER, QUBIT_FREE, QUBIT_OCCUPIED,
+    LEFT, RIGHT,
     fidelity_to_werner, werner_to_fidelity,
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
@@ -28,14 +29,21 @@ def build_chain(n_repeaters,
                 cutoff=20, 
                 **kw
                 )-> RepeaterNetwork:
-    """Creates a chain topology network"""
+    """Creates a chain topology network.
+
+    Each node's ports face its neighbours: the leftmost node (rid 0) is
+    RIGHT-only, the rightmost (rid n-1) is LEFT-only, interior nodes carry both
+    ports of width n_ch (2*n_ch qubits total).
+    """
     reps = [
-            Repeater(rid=i, 
-                     n_ch=n_ch, 
+            Repeater(rid=i,
+                     n_ch=n_ch,
+                     n_left=0 if i == 0 else n_ch,
+                     n_right=0 if i == n_repeaters - 1 else n_ch,
                      swap_policy=swap_policy,
                      position=np.array([i * spacing, 0.0]),
-                     p_gen=p_gen, 
-                     p_swap=p_swap, 
+                     p_gen=p_gen,
+                     p_swap=p_swap,
                      cutoff=cutoff
                      )
             for i in range(n_repeaters)
@@ -230,18 +238,23 @@ class RepeaterNetwork:
 
         if self.adj[r1, r2] == 0:
             result["reason"] = "not_adjacent"; return result
-            
-        if not rep1.has_free_qubit():
+
+        # Each endpoint uses the port facing the other: the lower-index node
+        # generates on its RIGHT port, the higher-index node on its LEFT port.
+        side1 = RIGHT if r2 > r1 else LEFT
+        side2 = LEFT if r2 > r1 else RIGHT
+
+        if not rep1.has_free_qubit(side1):
             result["reason"] = "no_free_qubit_r1"; return result
-        
-        if not rep2.has_free_qubit():
+
+        if not rep2.has_free_qubit(side2):
             result["reason"] = "no_free_qubit_r2"; return result
-        
+
         if self.rng.random() > self._gen_prob(r1, r2):
             result["reason"] = "generation_failed"; return result
-        
-        # allocate one qubit on each repeater
-        q1, q2 = rep1.allocate_qubit(), rep2.allocate_qubit()
+
+        # allocate one qubit on the facing port of each repeater
+        q1, q2 = rep1.allocate_qubit(side1), rep2.allocate_qubit(side2)
         # give them the same shared fidelity
         fid = self._gen_fidelity(r1, r2)
         p = fidelity_to_werner(fid)
@@ -344,12 +357,22 @@ class RepeaterNetwork:
 
     # -- ACTION 3: purify (deferred via event queue) ------------
     def purify(self, r1: int, r2: int) -> Dict[str, Any]:
-        """                                                                                                                                     
-        BBPSSW purification. Lock all 4 qubits, queue event.
-        Both success and failure are deferred (neither side knows outcome
-        until classical message arrives).
+        """BBPSSW purification cascade over ALL links shared with r2.
+
+        Sorted-adjacent multiplexed distillation (arXiv 2401.13168): sort the
+        shared links by fidelity and fold up the list carrying a running
+        survivor, purifying consecutive (closest-fidelity) links until one
+        survives or none do. Beneficial-purify guard (Fig. 11 there): a pair is
+        only put through the stochastic BBPSSW when the twirled output beats the
+        better input, F_new(F1,F2) > max(F1,F2); otherwise we skip the coin flip
+        and just keep the stronger link (purification must strictly beat
+        discarding the weak link). BBPSSW failure destroys both inputs.
+
+        The whole cascade is decided now against the frozen start-of-tick state
+        (all RNG drawn here); every involved qubit is locked and one event
+        applies the outcome at end of tick (the synchronous-tick barrier).
         """
-        result = {"success": False, "old_fidelity": 0.0, "new_fidelity": 0.0, "reason": ""} # Dict[str, Any]
+        result = {"success": False, "old_fidelity": 0.0, "new_fidelity": 0.0, "reason": ""}
         rep1, rep2 = self.repeaters[r1], self.repeaters[r2]
         q1s = rep1.qubits_to(r2)
 
@@ -357,35 +380,63 @@ class RepeaterNetwork:
             result["reason"] = "insufficient_shared_pairs"
             return result
 
-        werners = rep1.werner_param[q1s]
-        si = np.argsort(werners)
-        #QUESTION: is keeping the best and the worst good?
-        q1_sac, q1_keep = int(q1s[si[0]]), int(q1s[si[-1]])
-        q2_sac = int(rep1.partner_qubit[q1_sac])
-        q2_keep = int(rep1.partner_qubit[q1_keep])
-        p_keep, p_sac = rep1.werner_param[q1_keep], rep1.werner_param[q1_sac]
-        f_keep, f_sac = werner_to_fidelity(p_keep), werner_to_fidelity(p_sac)
+        # sort shared links ascending by Werner p (== ascending fidelity)
+        order = np.argsort(rep1.werner_param[q1s])
+        q_sorted = [int(q1s[i]) for i in order]
+        result["old_fidelity"] = float(werner_to_fidelity(rep1.werner_param[q_sorted[-1]]))
 
-        result["old_fidelity"] = float(f_keep)
+        # lock every involved qubit (both ends) for the barrier
+        for q in q_sorted:
+            rep1.lock_qubit(q)
+            rep2.lock_qubit(int(rep1.partner_qubit[q]))
 
-        success = self.rng.random() <= bbpssw_success_prob(f_keep, f_sac)
-        p_new = fidelity_to_werner(bbpssw_new_fidelity(f_keep, f_sac)) if success else 0.0
+        # --- sequential-accumulate cascade + beneficial guard -----------
+        keep = q_sorted[0]
+        keep_p = float(rep1.werner_param[keep])
+        keep_purified = False
+        sacrificed: List[int] = []
+        i = 1
+        while i < len(q_sorted):
+            L = q_sorted[i]; i += 1
+            pL = float(rep1.werner_param[L])
+            F1 = float(werner_to_fidelity(keep_p))
+            F2 = float(werner_to_fidelity(pL))
+            f_new = float(bbpssw_new_fidelity(F1, F2))
+            if f_new > max(F1, F2):
+                # beneficial region -> attempt stochastic BBPSSW
+                if self.rng.random() <= bbpssw_success_prob(F1, F2):
+                    keep_p = float(fidelity_to_werner(f_new))
+                    keep_purified = True
+                    sacrificed.append(L)
+                else:
+                    # failure destroys both inputs; reseed from the next link
+                    sacrificed.append(keep); sacrificed.append(L)
+                    if i < len(q_sorted):
+                        keep = q_sorted[i]; keep_p = float(rep1.werner_param[keep])
+                        keep_purified = False; i += 1
+                    else:
+                        keep = None
+            else:
+                # not beneficial -> keep the stronger link, discard the weaker
+                if F1 >= F2:
+                    sacrificed.append(L)
+                else:
+                    sacrificed.append(keep)
+                    keep = L; keep_p = pL; keep_purified = False
 
-        # Lock all 4 qubits
-        rep1.lock_qubit(q1_sac); rep1.lock_qubit(q1_keep)
-        rep2.lock_qubit(q2_sac); rep2.lock_qubit(q2_keep)
-
+        keep_partner = int(rep1.partner_qubit[keep]) if keep is not None else NO_PARTNER
         self.pending_events.append({
-            "type": "purify", "success": success,
+            "type": "purify",
             "r1": r1, "r2": r2,
-            "q1_sac": q1_sac, "q2_sac": q2_sac,
-            "q1_keep": q1_keep, "q2_keep": q2_keep,
-            "p_new": p_new,
-            "age_keep": int(rep1.age[q1_keep]),
+            "sacrificed": sacrificed,
+            "keep": keep, "q2_keep": keep_partner,
+            "keep_purified": keep_purified,
+            "p_new": keep_p if keep is not None else 0.0,
+            "age_keep": int(rep1.age[keep]) if keep is not None else 0,
         })
 
-        result.update(success=success,
-                      new_fidelity=float(werner_to_fidelity(p_new)) if success else 0.0,
+        result.update(success=(keep is not None),
+                      new_fidelity=float(werner_to_fidelity(keep_p)) if keep is not None else 0.0,
                       reason="pending")
         return result
 
@@ -483,57 +534,65 @@ class RepeaterNetwork:
 
 
     def _resolve_purify(self, ev: dict):
-        """Resolve a deferred purify: on success upgrade kept pair,
-        on failure destroy both pairs."""
+        """Resolve a deferred purify cascade: destroy every sacrificed pair; if a
+        survivor remains, either leave it as-is (never purified, just kept) or
+        re-register it at the purified fidelity via Eq.(4) age semantics.
+
+        Same-tick resolution: all involved qubits were locked at decision and are
+        still OCCUPIED and ours here (no CC flight window), so no staleness guards
+        are needed.
+        """
         r1, r2 = ev["r1"], ev["r2"]
-        q1_sac, q2_sac = ev["q1_sac"], ev["q2_sac"]
-        q1_keep, q2_keep = ev["q1_keep"], ev["q2_keep"]
         rep1, rep2 = self.repeaters[r1], self.repeaters[r2]
 
-        # Same-tick resolution: all four qubits were locked at decision and are
-        # still OCCUPIED and ours here (no CC flight window to expire/reallocate
-        # them), so no generation-ID guards are needed.
-        if ev["success"]:
-            # Destroy the sacrifice pair (frees both sides via partner pointer).
-            self._break_link(r1, q1_sac)
+        # Destroy every sacrificed pair (each frees both ends via partner pointer).
+        for q in ev["sacrificed"]:
+            self._break_link(r1, int(q))
 
-            ec = min(rep1.cutoff, rep2.cutoff)
-            safe_ec = max(int(ec), 1)
-            # Eq.(4) age semantics (arXiv 2401.13168): represent the purified
-            # fidelity as an equivalent age on a fresh p0=1 baseline,
-            # m' = ceil(-tau*ln(p_new)), plus the one tick accrued since the
-            # decision (same-tick aging). Age is then an exact fidelity
-            # proxy for every link and purification extends remaining
-            # lifetime. Replaces the old sum-of-endpoint-ages bookkeeping
-            # (doubled expiry clock) and its baseline>1 back-solve.
-            p_new = float(ev["p_new"])
-            accrued = max(int(rep1.age[q1_keep]) - int(ev["age_keep"]), 0)
-            if p_new >= 1.0:
-                m_equiv = 0
-            elif p_new <= 0.0:
-                # already at/below the depolarizing floor (F=1/4, p=0):
-                # -ln(0) is undefined/inf, so force the discard branch below
-                # rather than let ceil() overflow on int conversion.
-                m_equiv = int(ec)
-            else:
-                m_equiv = int(np.ceil(-safe_ec * np.log(p_new)))
-            new_age = m_equiv + accrued
-            if new_age >= ec:
-                # purified state already below the cutoff fidelity floor:
-                # discard rather than create a link expiry can never police
-                self._break_link(r1, q1_keep)
-                return
-            rep1.set_link(q1_keep, r2, q2_keep, 1.0,
-                          link_age=new_age, effective_cutoff=ec)
-            rep2.set_link(q2_keep, r1, q1_keep, 1.0,
-                          link_age=new_age, effective_cutoff=ec)
-            rep1.unlock_qubit(q1_keep)
-            rep2.unlock_qubit(q2_keep)
+        keep = ev["keep"]
+        if keep is None:
+            return                      # no links survived
+        keep = int(keep)
+        q2_keep = int(ev["q2_keep"])
+
+        if not ev["keep_purified"]:
+            # Survivor was only kept (weaker links discarded), never purified: its
+            # existing (initial_werner, age) registration is still correct — just
+            # release the locks and let it decohere normally.
+            rep1.unlock_qubit(keep)
+            if q2_keep != NO_PARTNER:
+                rep2.unlock_qubit(q2_keep)
+            return
+
+        # Purified survivor: Eq.(4) age semantics (arXiv 2401.13168). Represent
+        # the purified fidelity as an equivalent age on a fresh p0=1 baseline,
+        # m' = ceil(-tau*ln(p_new)), plus the one tick accrued since the decision
+        # (same-tick aging). Age is then an exact fidelity proxy and purification
+        # extends remaining lifetime.
+        ec = min(rep1.cutoff, rep2.cutoff)
+        safe_ec = max(int(ec), 1)
+        p_new = float(ev["p_new"])
+        accrued = max(int(rep1.age[keep]) - int(ev["age_keep"]), 0)
+        if p_new >= 1.0:
+            m_equiv = 0
+        elif p_new <= 0.0:
+            # at/below the depolarizing floor (F=1/4, p=0): -ln(0) is undefined,
+            # so force the discard branch rather than overflow ceil() -> int.
+            m_equiv = int(ec)
         else:
-            # Failure: destroy both pairs. Each _break_link frees a qubit and its
-            # partner, so two calls clear all four (free_qubit also clears locks).
-            self._break_link(r1, q1_sac)
-            self._break_link(r1, q1_keep)
+            m_equiv = int(np.ceil(-safe_ec * np.log(p_new)))
+        new_age = m_equiv + accrued
+        if new_age >= ec:
+            # purified state already below the cutoff fidelity floor: discard
+            # rather than create a link expiry can never police
+            self._break_link(r1, keep)
+            return
+        rep1.set_link(keep, r2, q2_keep, 1.0,
+                      link_age=new_age, effective_cutoff=ec)
+        rep2.set_link(q2_keep, r1, keep, 1.0,
+                      link_age=new_age, effective_cutoff=ec)
+        rep1.unlock_qubit(keep)
+        rep2.unlock_qubit(q2_keep)
 
                                                    
 # ▄▄▄▄▄                                     ▄▄       

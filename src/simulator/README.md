@@ -116,7 +116,11 @@ an entanglement swap. Three policies are defined:
 
 ### 2.4 `Repeater` class
 
-Represents a single quantum repeater node with `n_ch` qubit slots (communication channels).
+Represents a single quantum repeater node with two fixed **ports**: `n_left` LEFT-facing
+qubits (indices `[0, n_left)`, entangle only with a lower-index neighbour) and `n_right`
+RIGHT-facing qubits (indices `[n_left, n_left+n_right)`, higher-index neighbour). `n_ch` counts
+qubits **per side**, so an interior chain node holds `2*n_ch` qubits and an end node `n_ch`
+(the other port width is 0). A swap fuses one LEFT link with one RIGHT link.
 Uses `__slots__` for memory efficiency.
 
 `Repeater.__deepcopy__` overrides the generic recursive `copy.deepcopy` with 10 flat
@@ -129,8 +133,10 @@ currently unused but harmless if a future consumer needs cheap `Repeater` clones
 **Node-level (set at construction, persist across resets of qubit state):**
 
 - `rid` (int): Unique repeater ID, used as the index into the network's repeater list.
-- `n_ch` (int): Number of qubit slots. All repeaters in a network are assumed to share the
-  same `n_ch` (the supported, tested case).
+- `n_ch` (int): Number of qubit slots **per side**. All repeaters share the same `n_ch` (the
+  supported, tested case).
+- `n_left` / `n_right` (int): LEFT / RIGHT port widths (total qubits = `n_left + n_right`).
+  `build_chain` sets interior nodes to `n_left = n_right = n_ch` and end nodes to a single port.
 - `swap_policy` (SwapPolicy): Policy for selecting swap pairs.
 - `position` (ndarray, shape `(2,)`): Spatial coordinates `[x, y]` in km.
 - `p_gen` (float): Probability that an elementary link generation attempt succeeds at this
@@ -405,32 +411,35 @@ states and follows from the depolarising channel composition.
 and `reason`.
 
 
-### 3.4 ACTION 3: `purify(r1, r2)` - BBPSSW Purification
+### 3.4 ACTION 3: `purify(r1, r2)` - BBPSSW distillation cascade
 
-Applies bilateral CNOT purification (BBPSSW protocol) to two entangled pairs shared between
-repeaters `r1` and `r2`.
+Applies a **sorted-adjacent distillation cascade** (multiplexed BBPSSW, arXiv 2401.13168) to
+ALL entangled pairs shared between repeaters `r1` and `r2`, not a single best/worst round.
 
-**Pair selection:**
-Among all available (occupied, unlocked) qubits on `r1` that are linked to `r2`, select
-the pair with the lowest and highest Werner parameters (`argsort`). The highest-quality link
-is designated "keep" and the lowest-quality link is "sacrifice". The rationale is that the
-sacrifice pair provides the most information gain for the keep pair.
+**Cascade (sequential accumulate):**
+Sort the shared links ascending by Werner parameter (== ascending fidelity) and fold up the
+list carrying a running survivor. For each next link, purify it with the survivor; on success
+the survivor improves, on BBPSSW failure both inputs are destroyed and the cascade restarts
+from the next link. It ends with one survivor or none. (Pairing sorted-adjacent links keeps
+the two inputs at the closest available fidelities, which is where BBPSSW works best.)
+
+**Beneficial-purify guard (Fig. 11 there):** a pair is only put through the *stochastic*
+BBPSSW when the twirled output beats the better input, `F_new(F1,F2) > max(F1,F2)`. Otherwise
+the coin flip is skipped and the stronger link is kept (purification must strictly beat
+discarding the weak link); this branch consumes no RNG.
 
 **Procedure:**
 1. Require at least 2 shared pairs between `r1` and `r2`.
-2. Select sacrifice and keep qubits on both sides.
-3. Compute the BBPSSW success probability using the Werner parameters of the keep and
-   sacrifice pairs (converted to fidelities internally by the BBPSSW formulas).
-4. Sample the outcome immediately.
-5. Lock all 4 qubits (2 on each side).
-6. Compute CC delay from `distance(r1, r2)`.
-7. Enqueue a `"purify"` event carrying the outcome, involved qubit indices, the new Werner
-   parameter (if successful), the keep qubit's age at decision time (`age_keep`, used to
-   compute ticks accrued during the delay), and all four qubits' `generation_id`s (liveness
-   checks at resolution, §3.6).
+2. Sort shared links by fidelity; lock every involved qubit (both ends).
+3. Run the guarded cascade against the frozen start-of-tick state (all RNG drawn now).
+4. Enqueue ONE `"purify"` event: the sacrificed qubit list, the surviving qubit (or `None`),
+   whether it was actually purified (`keep_purified`), the survivor's Werner parameter, and
+   its age at decision time (`age_keep`, for the Eq.(4) rebase at resolution, §3.6).
 
-**Both success and failure are deferred** because neither side knows the outcome until the
-classical measurement results are exchanged.
+The whole cascade is deferred to end-of-tick (the synchronous-tick barrier); a survivor that
+was only kept (never purified) retains its original registration, while a purified survivor is
+re-registered via Eq.(4) age semantics. One PURIFY *action* runs this cascade on every partner
+with which the node shares >=2 links (env `_exec_purify`).
 
 
 ### 3.5 ACTION 4: `age_links(discard_expired=True)` - Clock Advance
@@ -602,11 +611,11 @@ by a separate action mask, not by edges in the graph.
 
 | Index | Name | Content |
 |---|---|---|
-| 0 | `frac_occupied` | occupied / `n_ch` |
+| 0 | `frac_occupied` | occupied / physical capacity (`2*n_ch` interior, `n_ch` ends) |
 | 1 | `mean_fidelity` | avg F of available (unlocked) qubits, 0 if none |
 | 2 | `in_endnode` | 1.0 if source **or** dest (endpoints are symmetric) |
-| 3 | `frac_available` | available (unlocked occupied) / `n_ch` |
-| 4 | `can_swap` | 1.0 if a *viable* swap pair exists: ≥2 available qubits to different partners whose fused link would survive same-tick resolution (`age_i + age_j + 2 < min cutoff`, mirrors §2.4.5); forced 0 at endpoints |
+| 3 | `frac_available` | available (unlocked occupied) / physical capacity |
+| 4 | `can_swap` | 1.0 if a *viable* swap pair exists: one available LEFT link (partner < node) + one available RIGHT link (partner > node) whose fused link would survive same-tick resolution (`age_i + age_j + 2 < min cutoff`, mirrors §2.4.5); forced 0 at endpoints |
 | 5 | `can_purify` | 1.0 if ≥2 available qubits to the same partner (forced 0 at endpoints) |
 | 6 | `p_gen` | per-repeater link-generation prob. (inhomogeneity signal) |
 | 7 | `p_swap` | per-repeater BSM success prob. (inhomogeneity signal) |

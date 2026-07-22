@@ -460,6 +460,44 @@ class TestObservationFeatures(unittest.TestCase):
         self.assertTrue((ei >= 0).all())
         self.assertTrue((ei < self.env.N).all())
 
+    def test_frac_occupied_denominator_is_physical_capacity(self):
+        # feats[i,0] must divide by the node's physical qubit count
+        # (2*n_ch interior, n_ch ends), not the per-side n_ch field.
+        env = _perfect_env(4)               # n_ch=4 -> interior cap 8, ends cap 4
+        x = env.reset()["x"]
+        for i in range(env.N):
+            ns = env.net.node_state(i)
+            cap = ns.occupied.size
+            occ = int(ns.occupied.sum())
+            self.assertAlmostEqual(float(x[i, 0]) * cap, occ, places=4)
+        # capacities really differ between interior and end nodes
+        self.assertEqual(env.net.node_state(1).occupied.size, 8)
+        self.assertEqual(env.net.node_state(0).occupied.size, 4)
+
+
+class TestMultiPartnerPurify(unittest.TestCase):
+    """One PURIFY action runs the distillation cascade on every partner with
+    which the node shares >=2 links (left partner AND right partner)."""
+
+    def test_purify_touches_both_partners(self):
+        env = QRNEnv(n_repeaters=3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=1000,
+                     F0=1.0, channel_loss=0.0, max_steps=50, topology="chain",
+                     rng=np.random.default_rng(0))
+        env.reset()
+        # Two links on each side of the interior node R1.
+        for _ in range(2):
+            env.net.entangle(0, 1)
+            env.net.entangle(1, 2)
+        rep1 = env.net.repeaters[1]
+        self.assertEqual(rep1.num_occupied(), 4)      # 2 left + 2 right
+        res = env._exec_purify(1)
+        self.assertTrue(res["success"])
+        env.net.age_links(discard_expired=False)
+        # Each partner's cascade leaves <=1 survivor: at most one link per side.
+        self.assertLessEqual(len(rep1.qubits_to(0)), 1)
+        self.assertLessEqual(len(rep1.qubits_to(2)), 1)
+        self.assertLessEqual(rep1.num_occupied(), 2)
+
 
 class TestStepFunction(unittest.TestCase):
 
@@ -522,9 +560,10 @@ class TestStepFunction(unittest.TestCase):
         env.net.reset()
         env.source, env.dest = 0, 2
         # Directly inject a link from R0 to R2 (simulates a successful swap).
-        from simulator.repeater import fidelity_to_werner
-        q0 = env.net.repeaters[0].allocate_qubit()
-        q2 = env.net.repeaters[2].allocate_qubit()
+        # R0 (leftmost) faces RIGHT toward R2; R2 (rightmost) faces LEFT toward R0.
+        from simulator.repeater import fidelity_to_werner, LEFT, RIGHT
+        q0 = env.net.repeaters[0].allocate_qubit(RIGHT)
+        q2 = env.net.repeaters[2].allocate_qubit(LEFT)
         p  = fidelity_to_werner(0.95)
         env.net.repeaters[0].set_link(q0, 2, q2, p)
         env.net.repeaters[2].set_link(q2, 0, q0, p)

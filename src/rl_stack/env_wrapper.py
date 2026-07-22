@@ -178,11 +178,11 @@ class QRNEnv:
         """Build size-agnostic node features + topology.
 
         Features per node (9):
-            [0] frac_occupied     — occupied / n_ch
+            [0] frac_occupied     — occupied / physical capacity (2*n_ch interior, n_ch ends)
             [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
             [2] in_endnode        — 1.0 if source OR dest (endpoints are symmetric)
-            [3] frac_available    — available (unlocked occupied) / n_ch
-            [4] can_swap          — 1.0 if a viable swap pair exists: ≥2 available qubits to different partners whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
+            [3] frac_available    — available (unlocked occupied) / physical capacity
+            [4] can_swap          — 1.0 if a viable swap pair exists: one available LEFT link (partner<node) + one available RIGHT link (partner>node) whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
             [5] can_purify        — 1.0 if ≥2 available qubits to same partner
             [6] p_gen             — per-repeater link-generation prob. (inhomogeneity)
             [7] p_swap            — per-repeater BSM success prob. (inhomogeneity)
@@ -199,11 +199,12 @@ class QRNEnv:
             ns = self.net.node_state(i)
             occ = ns.occupied
             avail = occ & (~ns.locked)
-            feats[i, 0] = int(occ.sum()) / ns.n_ch
+            capacity = occ.size  # physical qubit count (2*n_ch interior, n_ch ends)
+            feats[i, 0] = int(occ.sum()) / capacity
             feats[i, 1] = (float(ns.fidelity[avail].mean())
                            if bool(avail.any()) else 0.0)
             feats[i, 2] = 1.0 if self.is_target(i) else 0.0
-            feats[i, 3] = int(avail.sum()) / ns.n_ch
+            feats[i, 3] = int(avail.sum()) / capacity
             if self.is_target(i):
                 feats[i, 4] = 0.0
                 feats[i, 5] = 0.0
@@ -230,24 +231,26 @@ class QRNEnv:
 
 
     def _can_swap_from(self, ns) -> bool:
-        """True if ns has a VIABLE swap pair: >=2 available qubits to distinct
-        partners whose fused link survives same-tick resolution
-        (age_i + age_j + 2 < min(link_cutoff_i, link_cutoff_j)). Mirrors the
-        engine's decision gate; exact for homogeneous cutoffs (the only
-        regime in use), and the engine stays authoritative regardless."""
+        """True if ns has a VIABLE swap pair: one available LEFT link
+        (partner < node) and one available RIGHT link (partner > node) whose
+        fused link survives same-tick resolution
+        (age_L + age_R + 2 < min(link_cutoff_L, link_cutoff_R)). Mirrors the
+        engine's left x right decision gate; exact for homogeneous cutoffs (the
+        only regime in use), and the engine stays authoritative regardless."""
         avail = np.flatnonzero(ns.occupied & (~ns.locked))
-        if avail.size < 2:
-            return False
         partners = ns.partner_node[avail]
         real = partners != NO_PARTNER
         avail, partners = avail[real], partners[real]
-        if avail.size < 2:
+        left = avail[partners < ns.node_id]
+        right = avail[partners > ns.node_id]
+        if left.size == 0 or right.size == 0:
             return False
-        i, j = np.triu_indices(avail.size, k=1)
-        ages = ns.age[avail].astype(np.int64)
-        cuts = ns.link_cutoff[avail].astype(np.int64)
-        viable = (ages[i] + ages[j] + 2) < np.minimum(cuts[i], cuts[j])
-        return bool(np.any((partners[i] != partners[j]) & viable))
+        la = ns.age[left].astype(np.int64)[:, None]
+        ra = ns.age[right].astype(np.int64)[None, :]
+        lc = ns.link_cutoff[left].astype(np.int64)[:, None]
+        rc = ns.link_cutoff[right].astype(np.int64)[None, :]
+        viable = (la + ra + 2) < np.minimum(lc, rc)
+        return bool(np.any(viable))
 
     def _can_purify_from(self, ns) -> bool:
         """True if ns has ≥2 available qubits linked to the *same* partner.
@@ -376,6 +379,9 @@ class QRNEnv:
         return self.net.swap(r)
 
     def _exec_purify(self, r: int) -> Dict:
+        """One PURIFY action runs the distillation cascade on EVERY partner with
+        which node r shares >=2 available links (each cascade leaves one survivor
+        or none)."""
         ns = self.net.node_state(r)
         avail = ns.occupied & (~ns.locked)
         if int(avail.sum()) < 2:
@@ -383,11 +389,14 @@ class QRNEnv:
         partners = ns.partner_node[avail]
         unique, counts = np.unique(partners[partners != NO_PARTNER],
                                    return_counts=True)
-        valid = [(int(p), c) for p, c in zip(unique, counts) if c >= 2]
+        valid = [int(p) for p, c in zip(unique, counts) if c >= 2]
         if not valid:
             return {"success": False, "reason": "no_valid_pair"}
-        best_nb = max(valid, key=lambda x: x[1])[0]
-        return self.net.purify(r, best_nb)
+        any_ok = False
+        for p in valid:
+            res = self.net.purify(r, p)
+            any_ok = any_ok or res["success"]
+        return {"success": any_ok, "reason": "pending"}
 
     def _check_e2e(self) -> Tuple[bool, float]:
         """Check whether source and dest share a direct entanglement link."""
