@@ -1,7 +1,7 @@
 #!/bin/bash -l
-#SBATCH --job-name=qrn_pp5k
-#SBATCH --output=slurm_logs/portpurify_5k_%j.out
-#SBATCH --error=slurm_logs/portpurify_5k_%j.err
+#SBATCH --job-name=qrn_pp2k
+#SBATCH --output=slurm_logs/portpurify_2k_%j.out
+#SBATCH --error=slurm_logs/portpurify_2k_%j.err
 #SBATCH --time=02:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -10,10 +10,12 @@
 #SBATCH --partition=cpu-short
 
 # Smoke run after the purify-cascade + left/right-ports change (branch
-# fix/purification): 5k episodes, HOMOGENEOUS chain (std=0), curriculum N 7-10,
+# fix/purification): 2k episodes, HOMOGENEOUS chain (std=0), curriculum N 7-10,
 # n_ch=2 PER SIDE (=> 4 physical qubits interior). Purpose: inspect how training
-# dynamics shifted vs the pre-change omni_v3 runs. ~80 min at ~64 ep/min plus
-# winnability/probe overhead; 2h has margin (cpu-short cap is 4h).
+# dynamics shifted vs the pre-change omni_v3 runs. Measured ~28 ep/min on this
+# model (doubled qubit count + prune + eval probes), so ~70 min; 2h wall has
+# margin (cpu-short cap is 4h). metrics.json is written only at run end, so the
+# wall must exceed the full run.
 
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
@@ -27,9 +29,9 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR/src:$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)  seed: 1"
 
 python -u experiments/training/train.py \
-    --run_id "portpurify_5k_s1" \
+    --run_id "portpurify_2k_s1" \
     --seed 1 \
-    --episodes 5000 --batch_size 64 --hidden 64 --lr 5e-4 \
+    --episodes 2000 --batch_size 64 --hidden 64 --lr 5e-4 \
     --max_steps 200 --gamma 0.995 \
     --n_lo 7 --n_hi 10 --n_ch 2 \
     --p_gen 0.4 0.9 --p_swap 0.4 0.9 \
