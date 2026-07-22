@@ -419,8 +419,3 @@ class QRNEnv:
     @staticmethod
     def action_label(action: int, node: int) -> str:
         return f"{['W','S','P'][action]}({node})"
-
-    def render(self, filepath=None, figsize=None, dpi=250):
-        return self.net.render(filepath=filepath, figsize=figsize,
-                               dpi=dpi,
-                               source_dest=(self.source, self.dest))

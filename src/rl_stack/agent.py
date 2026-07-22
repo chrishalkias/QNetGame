@@ -674,7 +674,6 @@ class QRNAgent:
                  channel_loss=0.02,
                  plot_actions=True,
                  topology = 'chain',
-                 verbose = 0,
                  save_dir="."
                 ):
         """
@@ -744,10 +743,6 @@ class QRNAgent:
                     obs, reward, done, info = env.step(acts)
                     fid = info.get("fidelity", 0.0)
 
-                    if verbose==1 and name=="Agent":
-                        savedir=f"{save_dir}visual/state_{step}.png"
-                        os.makedirs(os.path.dirname(savedir), exist_ok=True)
-                        env.render(filepath=savedir)
                     if done:
                         break
 

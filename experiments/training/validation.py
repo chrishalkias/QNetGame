@@ -41,8 +41,7 @@ def parse_args():
     parser.add_argument("--path", type=str, default="checkpoints/sota/")
     parser.add_argument("--dict", type=str, default="policy.pth")
     parser.add_argument("--no_plot_actions", dest="plot_actions", action="store_false", default=True)
-    parser.add_argument("--verbose", type=int, default=0)
-    
+
     return parser.parse_args()
 
 
@@ -67,5 +66,4 @@ if __name__ == "__main__":
         plot_actions=args.plot_actions,
         save_dir=args.path,
         topology=args.topology,
-        verbose=args.verbose,
     )
