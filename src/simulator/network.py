@@ -2,8 +2,8 @@
 --------------------------------------------------------------------------------
 RepeaterNetwork: inter-node logic (entangle / swap / purify / age_links).
 
-Swap and purify decide against the frozen start-of-tick state and apply at the
-end of the tick (the synchronous-tick barrier); see age_links.
+Swap and purify apply their outcome immediately (sequential-sweep model, no
+end-of-tick deferral); age_links only ages and expires links.
 --------------------------------------------------------------------------------
 """
 
@@ -140,7 +140,6 @@ class RepeaterNetwork:
         "distance_dep_gen", # Have distance affect p_e
         "rng",              # Allow the use of user specified rng
         "time_step",        # The simulation timestep
-        "pending_events",   # Within-step scratch list: swap/purify apply at end of age_links
         "_positions",        # Array of repeater positions in space
         "_dist_matrix",      # Matrix of distances between repeaters
         "_cutoffs"           # Array of per-repeater cutoffs for swap viability gate
@@ -172,12 +171,6 @@ class RepeaterNetwork:
         self.distance_dep_gen = distance_dep_gen
         self.rng = rng if rng is not None else np.random.default_rng()
         self.time_step: int = 0
-
-        # Swap/purify decide against the frozen start-of-tick state, lock their
-        # remote qubits, and record the outcome here; age_links applies the whole
-        # list at end of tick. This deferral is the synchronous-tick barrier: it
-        # stops swaps cascading within a tick, so long links build over rounds.
-        self.pending_events: List[dict] = []
 
         # ---Cached geometry
         self._positions = np.stack([r.position for r in self.repeaters], axis=0)
@@ -275,11 +268,12 @@ class RepeaterNetwork:
 #                        ██                 ██ 
 #                        ▀▀               ▀▀▀  
 
-    # -- ACTION 2: swap (deferred via event queue) ------------
+    # -- ACTION 2: swap (applies immediately) ------------
     def swap(self, r: int) -> Dict[str, Any]:
-        """                                     
-        Perform BSM at repeater r. On success, lock qubits and queue event.
-        On failure, destroy both links immediately (no classical comm needed).
+        """
+        Perform BSM at repeater r. On success, the fused remote link exists
+        immediately (sequential-sweep model, no deferral). On failure, destroy
+        both links immediately (no classical comm needed).
         """
         result = {"success": False, "new_fidelity": 0.0,"partners": None, "reason": ""} # Dict[str, Any]
         rep = self.repeaters[r]
@@ -312,40 +306,23 @@ class RepeaterNetwork:
             result["reason"] = "swap_failed"
             return result
 
-        # -Success: compute p_new, free local qubits (BSM consumes them),
-        #  lock remote qubits, queue event.
-        # store the remote repeater and qubits
+        # -- Success: BSM consumes local qubits now; create the fused remote
+        #    link IMMEDIATELY (sequential-sweep model, no deferral).
         ra, qa_r = int(rep.partner_repeater[qa]), int(rep.partner_qubit[qa])
         rb, qb_r = int(rep.partner_repeater[qb]), int(rep.partner_qubit[qb])
-        p_new = float(rep.werner_param[qa]) * float(rep.werner_param[qb])
-
-        # The BSM physically destroys the local qubits — free them immediately
-        # so the swapping repeater can reuse its memory slots.
         rep.free_qubit(qa)
         rep.free_qubit(qb)
 
-        # Lock only the remote qubits (they must wait for classical notification).
-        # Clear their stale back-pointers to the now-freed local qubits so that
-        # an expiry during the delay does not corrupt reallocated local slots.
         rep_a, rep_b = self.repeaters[ra], self.repeaters[rb]
-        rep_a.lock_qubit(qa_r)
-        rep_b.lock_qubit(qb_r)
-        rep_a.partner_repeater[qa_r] = NO_PARTNER
-        rep_a.partner_qubit[qa_r]    = NO_PARTNER
-        rep_b.partner_repeater[qb_r] = NO_PARTNER
-        rep_b.partner_qubit[qb_r]    = NO_PARTNER
-
-        # append event to the queue (applied at end of this tick's age_links)
-        self.pending_events.append({
-            "type": "swap",
-            "r": r, "qa": qa, "qb": qb,
-            "ra": ra, "qa_r": qa_r, "rb": rb, "qb_r": qb_r,
-            "p_new": p_new,
-        })
+        ec = min(rep_a.cutoff, rep_b.cutoff)
+        summed_age = int(rep_a.age[qa_r]) + int(rep_b.age[qb_r])
+        base = float(rep_a.initial_werner[qa_r]) * float(rep_b.initial_werner[qb_r])
+        rep_a.set_link(qa_r, rb, qb_r, base, link_age=summed_age, effective_cutoff=ec)
+        rep_b.set_link(qb_r, ra, qa_r, base, link_age=summed_age, effective_cutoff=ec)
 
         result.update(success=True,
-                      new_fidelity=float(werner_to_fidelity(p_new)),
-                      partners=(ra, rb), reason="pending")
+                      new_fidelity=float(werner_to_fidelity(base * np.exp(-summed_age / max(ec,1)))),
+                      partners=(ra, rb), reason="ok")
         return result
 
 # ▄▄▄▄▄▄▄                    ▄▄                                       
@@ -355,7 +332,7 @@ class RepeaterNetwork:
 # ███       ▀██▀█ ██    ██▄ ██  ██▄ ▀████ ▀█▄██  ██   ██▄ ▀███▀ ██ ██ 
 
 
-    # -- ACTION 3: purify (deferred via event queue) ------------
+    # -- ACTION 3: purify (applies immediately) ------------
     def purify(self, r1: int, r2: int) -> Dict[str, Any]:
         """BBPSSW purification cascade over ALL links shared with r2.
 
@@ -368,9 +345,9 @@ class RepeaterNetwork:
         and just keep the stronger link (purification must strictly beat
         discarding the weak link as Jan said). BBPSSW failure destroys both inputs.
 
-        The whole cascade is decided now against the frozen start-of-tick state
-        (all RNG drawn here). Every involved qubit is locked and one event
-        applies the outcome at end of tick (the synchronous-tick barrier).
+        The whole cascade is decided AND applied now against the current state
+        (all RNG drawn here); the outcome exists immediately, before any
+        age_links call (sequential-sweep model, no deferral).
         """
         result = {"success": False, "old_fidelity": 0.0, "new_fidelity": 0.0, "reason": ""}
         rep1, rep2 = self.repeaters[r1], self.repeaters[r2]
@@ -384,11 +361,6 @@ class RepeaterNetwork:
         order = np.argsort(rep1.werner_param[q1s])
         q_sorted = [int(q1s[i]) for i in order]
         result["old_fidelity"] = float(werner_to_fidelity(rep1.werner_param[q_sorted[-1]]))
-
-        # lock every involved qubit (both ends) for the barrier
-        for q in q_sorted:
-            rep1.lock_qubit(q)
-            rep2.lock_qubit(int(rep1.partner_qubit[q]))
 
         # --- sequential-accumulate cascade + beneficial guard -----------
         keep = q_sorted[0]
@@ -425,20 +397,56 @@ class RepeaterNetwork:
                     sacrificed.append(keep)
                     keep = L; keep_p = pL; keep_purified = False
 
-        keep_partner = int(rep1.partner_qubit[keep]) if keep is not None else NO_PARTNER
-        self.pending_events.append({
-            "type": "purify",
-            "r1": r1, "r2": r2,
-            "sacrificed": sacrificed,
-            "keep": keep, "q2_keep": keep_partner,
-            "keep_purified": keep_purified,
-            "p_new": keep_p if keep is not None else 0.0,
-            "age_keep": int(rep1.age[keep]) if keep is not None else 0,
-        })
+        # -- Apply immediately: destroy every sacrificed pair, then either
+        #    leave a merely-kept survivor as-is or re-register a purified one
+        #    via the Eq.(4) age proxy (arXiv 2401.13168).
+        for q in sacrificed:
+            self._break_link(r1, int(q))
 
-        result.update(success=(keep is not None),
-                      new_fidelity=float(werner_to_fidelity(keep_p)) if keep is not None else 0.0,
-                      reason="pending")
+        if keep is None:
+            result.update(success=False, new_fidelity=0.0, reason="cascade_failed")
+            return result
+        keep = int(keep)
+        q2_keep = int(rep1.partner_qubit[keep])
+
+        if not keep_purified:
+            # Survivor was only kept (weaker links discarded), never purified:
+            # its existing (initial_werner, age) registration is still correct.
+            result.update(success=True,
+                          new_fidelity=float(werner_to_fidelity(keep_p)),
+                          reason="ok")
+            return result
+
+        # Purified survivor: Eq.(4) age semantics (arXiv 2401.13168). Represent
+        # the purified fidelity as an equivalent age on a fresh p0=1 baseline,
+        # m' = ceil(-tau*ln(p_new)). Applied immediately, so zero ticks have
+        # accrued since the decision (the old accrued-since-decision term is
+        # therefore always 0 now).
+        ec = min(rep1.cutoff, rep2.cutoff)
+        safe_ec = max(int(ec), 1)
+        p_new = float(keep_p)
+        if p_new >= 1.0:
+            m_equiv = 0
+        elif p_new <= 0.0:
+            # at/below the depolarizing floor (F=1/4, p=0): -ln(0) is undefined,
+            # so force the discard branch rather than overflow ceil() -> int.
+            m_equiv = int(ec)
+        else:
+            m_equiv = int(np.ceil(-safe_ec * np.log(p_new)))
+        new_age = m_equiv
+        if new_age >= ec:
+            # purified state already below the cutoff fidelity floor: discard
+            # rather than create a link expiry can never police
+            self._break_link(r1, keep)
+            result.update(success=False, new_fidelity=0.0, reason="purify_discarded_over_cutoff")
+            return result
+        rep1.set_link(keep, r2, q2_keep, 1.0,
+                      link_age=new_age, effective_cutoff=ec)
+        rep2.set_link(q2_keep, r1, keep, 1.0,
+                      link_age=new_age, effective_cutoff=ec)
+        result.update(success=True,
+                      new_fidelity=float(werner_to_fidelity(p_new)),
+                      reason="ok")
         return result
 
 
@@ -450,33 +458,21 @@ class RepeaterNetwork:
 #             ██              ██ 
 #           ▀▀▀             ▀▀▀  
 
-    # -- ACTION 4: age_links (+ event resolution) -------------------
+    # -- ACTION 4: age_links -------------------
 
     def age_links(self, discard_expired: bool = True) -> Dict[str, Any]:
-        """                              
-        Advance clock: age qubits, resolve pending events, expire old links."""
+        """
+        Advance clock: age qubits, expire old links."""
         self.time_step += 1
 
-        # 1) age all occupied qubits (including locked)
+        # 1) age all occupied qubits
         expired_pairs: List[Tuple[int, int]] = []
 
         for rep in self.repeaters:
             for qi in rep.age_occupied():
                 expired_pairs.append((rep.rid, int(qi)))
 
-        # 2) apply every event queued this tick (before expiring, so the aged
-        #    remote qubits are consumed into the fused/purified link first). All
-        #    events resolve in the same age_links call that this step queued them.
-        resolved = len(self.pending_events)
-        for ev in self.pending_events:
-            if ev["type"] == "swap":
-                self._resolve_swap(ev)
-            elif ev["type"] == "purify":
-                self._resolve_purify(ev)
-
-        self.pending_events = []
-
-        # 3) expire old links (after resolving events)
+        # 2) expire old links
         n_destroyed = 0
         if discard_expired:
             for rid, qidx in expired_pairs:
@@ -487,116 +483,10 @@ class RepeaterNetwork:
 
         return {"expired_count": n_destroyed,
                 "over_cutoff_count": len(expired_pairs),
-                "resolved_count": resolved,
-                "pending_count": len(self.pending_events),
                 "time_step": self.time_step}
 
-                                                                                                  
-#  ▄▄▄▄▄▄▄                           ▄▄▄▄▄▄▄                     ▄▄                             
-# ███▀▀▀▀▀                    ██     ███▀▀███▄                   ██        ██   ▀▀              
-# ███▄▄    ██ ██ ▄█▀█▄ ████▄ ▀██▀▀   ███▄▄███▀ ▄█▀█▄ ▄█▀▀▀ ▄███▄ ██ ██ ██ ▀██▀▀ ██  ▄███▄ ████▄ 
-# ███      ██▄██ ██▄█▀ ██ ██  ██     ███▀▀██▄  ██▄█▀ ▀███▄ ██ ██ ██ ██ ██  ██   ██  ██ ██ ██ ██ 
-# ▀███████  ▀█▀  ▀█▄▄▄ ██ ██  ██     ███  ▀███ ▀█▄▄▄ ▄▄▄█▀ ▀███▀ ██ ▀██▀█  ██   ██▄ ▀███▀ ██ ██ 
-                                                                                              
-                                                                                              
 
-    def _resolve_swap(self, ev: dict):
-        """Resolve a swap queued earlier this tick: rewrite the two remote qubits
-        to point at each other. Local qubits were freed at BSM time.
-
-        Same-tick resolution means the remote qubits are always OCCUPIED, distinct
-        nodes, and viable here: they were locked at decision (so no other node
-        touched them), the swap() same_partner guard rules out ra==rb, and the
-        select_swap_pair gate age_a+age_b+2 < ec keeps the fused age below cutoff
-        even after this tick's aging. No in-flight guards are needed without CC.
-        """
-        ra, qa_r, rb, qb_r = ev["ra"], ev["qa_r"], ev["rb"], ev["qb_r"]
-        rep_a, rep_b = self.repeaters[ra], self.repeaters[rb]
-
-        ec = min(rep_a.cutoff, rep_b.cutoff)
-        summed_age = int(rep_a.age[qa_r]) + int(rep_b.age[qb_r])
-        # Sum-ages history. The resolved value must be exactly the product of
-        # the two remote links' already-decohered Werner values at resolution
-        # (w_A*w_B); set_link must not re-apply decay on top (that would
-        # double-count the pre-swap decoherence). Storing the baseline product
-        # p0_A*p0_B with age = age_A + age_B reproduces w_A*w_B exactly and lets
-        # future decay continue from it: for a shared cutoff tau,
-        # p0_A*p0_B*exp(-(age_A+age_B)/tau) = (p0_A*e^{-age_A/tau})(p0_B*e^{-age_B/tau}).
-        # Exact for the homogeneous per-link cutoffs used everywhere today; an
-        # approximation only if the two links carried different cutoffs.
-        base = float(rep_a.initial_werner[qa_r]) * float(rep_b.initial_werner[qb_r])
-        rep_a.set_link(qa_r, rb, qb_r, base,
-                       link_age=summed_age, effective_cutoff=ec)
-        rep_b.set_link(qb_r, ra, qa_r, base,
-                       link_age=summed_age, effective_cutoff=ec)
-        rep_a.unlock_qubit(qa_r)
-        rep_b.unlock_qubit(qb_r)
-
-
-
-    def _resolve_purify(self, ev: dict):
-        """Resolve a deferred purify cascade: destroy every sacrificed pair; if a
-        survivor remains, either leave it as-is (never purified, just kept) or
-        re-register it at the purified fidelity via Eq.(4) age semantics.
-
-        Same-tick resolution: all involved qubits were locked at decision and are
-        still OCCUPIED and ours here (no CC flight window), so no staleness guards
-        are needed.
-        """
-        r1, r2 = ev["r1"], ev["r2"]
-        rep1, rep2 = self.repeaters[r1], self.repeaters[r2]
-
-        # Destroy every sacrificed pair (each frees both ends via partner pointer).
-        for q in ev["sacrificed"]:
-            self._break_link(r1, int(q))
-
-        keep = ev["keep"]
-        if keep is None:
-            return                      # no links survived
-        keep = int(keep)
-        q2_keep = int(ev["q2_keep"])
-
-        if not ev["keep_purified"]:
-            # Survivor was only kept (weaker links discarded), never purified: its
-            # existing (initial_werner, age) registration is still correct — just
-            # release the locks and let it decohere normally.
-            rep1.unlock_qubit(keep)
-            if q2_keep != NO_PARTNER:
-                rep2.unlock_qubit(q2_keep)
-            return
-
-        # Purified survivor: Eq.(4) age semantics (arXiv 2401.13168). Represent
-        # the purified fidelity as an equivalent age on a fresh p0=1 baseline,
-        # m' = ceil(-tau*ln(p_new)), plus the one tick accrued since the decision
-        # (same-tick aging). Age is then an exact fidelity proxy and purification
-        # extends remaining lifetime.
-        ec = min(rep1.cutoff, rep2.cutoff)
-        safe_ec = max(int(ec), 1)
-        p_new = float(ev["p_new"])
-        accrued = max(int(rep1.age[keep]) - int(ev["age_keep"]), 0)
-        if p_new >= 1.0:
-            m_equiv = 0
-        elif p_new <= 0.0:
-            # at/below the depolarizing floor (F=1/4, p=0): -ln(0) is undefined,
-            # so force the discard branch rather than overflow ceil() -> int.
-            m_equiv = int(ec)
-        else:
-            m_equiv = int(np.ceil(-safe_ec * np.log(p_new)))
-        new_age = m_equiv + accrued
-        if new_age >= ec:
-            # purified state already below the cutoff fidelity floor: discard
-            # rather than create a link expiry can never police
-            self._break_link(r1, keep)
-            return
-        rep1.set_link(keep, r2, q2_keep, 1.0,
-                      link_age=new_age, effective_cutoff=ec)
-        rep2.set_link(q2_keep, r1, keep, 1.0,
-                      link_age=new_age, effective_cutoff=ec)
-        rep1.unlock_qubit(keep)
-        rep2.unlock_qubit(q2_keep)
-
-                                                   
-# ▄▄▄▄▄                                     ▄▄       
+# ▄▄▄▄▄                                     ▄▄
 #  ███         ██                           ██       
 #  ███  ████▄ ▀██▀▀ ▄█▀█▄ ████▄ ████▄  ▀▀█▄ ██ ▄█▀▀▀ 
 #  ███  ██ ██  ██   ██▄█▀ ██ ▀▀ ██ ██ ▄█▀██ ██ ▀███▄ 
@@ -699,14 +589,12 @@ class RepeaterNetwork:
                              
     def reset(self):
         self.time_step = 0
-        self.pending_events.clear()
         for rep in self.repeaters:
             rep.reset()
 
     def __repr__(self) -> str:
         """Verbose summary of the state of the network (connections without idx)"""
-        lines = [f"RepeaterNetwork N={self.N} t={self.time_step} "
-                 f"pending={len(self.pending_events)}"]
+        lines = [f"RepeaterNetwork N={self.N} t={self.time_step}"]
         for rep in self.repeaters:
             lines.append(f"  {rep}")
         lk = self.get_all_links()

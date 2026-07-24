@@ -100,12 +100,13 @@ def test_node_state_free_qubit_zero_fidelity():
     assert float(ns.fidelity.max()) == 0.0
 
 
-def test_pending_increments_on_deferred_swap():
+def test_swap_applies_immediately():
     net = _chain()
     net.entangle(0, 1)
     net.entangle(1, 2)
-    net.swap(1)            # nonzero channel delay -> deferred
-    assert len(net.pending_events) >= 1
+    res = net.swap(1)      # applies immediately, no deferral queue
+    assert res["success"]
+    assert not hasattr(net, "pending_events")
 
 
 from simulator.network import build_network, _sample_matched_uniform
