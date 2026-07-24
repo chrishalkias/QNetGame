@@ -39,6 +39,8 @@ def parse_args():
     ap.add_argument("--plot", action="store_true", help="render from existing json")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
     ap.add_argument("--episodes", type=int, default=200, help="per seed")
+    ap.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
+                    help="n_ch pool for rollouts (match the ckpt's training n_ch)")
     ap.add_argument("--seeds", type=int, nargs="+", default=[0],
                     help="one independent collection per seed; bars = mean, "
                          "error bars = std across seeds")
@@ -57,10 +59,10 @@ def parse_args():
     return ap.parse_args()
 
 
-def _flip_fractions(ckpt, episodes, seed, sizes, max_steps):
+def _flip_fractions(ckpt, episodes, seed, sizes, max_steps, n_chs=(2, 3, 4)):
     """One collection -> {feature: flip fraction}."""
     d = C.collect(ckpt, episodes=episodes, seed=seed, sizes=sizes,
-                  max_steps=max_steps)
+                  n_chs=n_chs, max_steps=max_steps)
     model, states, idx, base = d["model"], d["states"], d["idx"], d["A"]
     rng = np.random.default_rng(seed)
     flip = {}
@@ -87,7 +89,7 @@ def compute(a, out_json):
         for seed in a.seeds:
             print(f"[range {lo}-{hi}, seed {seed}]", flush=True)
             flip = _flip_fractions(a.ckpt, a.episodes, seed, range(lo, hi + 1),
-                                   a.max_steps)
+                                   a.max_steps, n_chs=tuple(a.n_ch))
             for name, v in flip.items():
                 per_seed[name].append(v)
         panels.append(dict(n_lo=lo, n_hi=hi, note=note, flip=per_seed))

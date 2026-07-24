@@ -359,17 +359,17 @@ class RepeaterNetwork:
     def purify(self, r1: int, r2: int) -> Dict[str, Any]:
         """BBPSSW purification cascade over ALL links shared with r2.
 
-        Sorted-adjacent multiplexed distillation (arXiv 2401.13168): sort the
+        Sorted-adjacent multiplexed distillation (like in arXiv 2401.13168): sort the
         shared links by fidelity and fold up the list carrying a running
         survivor, purifying consecutive (closest-fidelity) links until one
         survives or none do. Beneficial-purify guard (Fig. 11 there): a pair is
-        only put through the stochastic BBPSSW when the twirled output beats the
-        better input, F_new(F1,F2) > max(F1,F2); otherwise we skip the coin flip
+        only put through the stochastic BBPSSW when the output beats the
+        better input, F_new(F1,F2) > max(F1,F2). Otherwise we skip the coin flip
         and just keep the stronger link (purification must strictly beat
-        discarding the weak link). BBPSSW failure destroys both inputs.
+        discarding the weak link as Jan said). BBPSSW failure destroys both inputs.
 
         The whole cascade is decided now against the frozen start-of-tick state
-        (all RNG drawn here); every involved qubit is locked and one event
+        (all RNG drawn here). Every involved qubit is locked and one event
         applies the outcome at end of tick (the synchronous-tick barrier).
         """
         result = {"success": False, "old_fidelity": 0.0, "new_fidelity": 0.0, "reason": ""}
@@ -397,7 +397,8 @@ class RepeaterNetwork:
         sacrificed: List[int] = []
         i = 1
         while i < len(q_sorted):
-            L = q_sorted[i]; i += 1
+            L = q_sorted[i]
+            i += 1
             pL = float(rep1.werner_param[L])
             F1 = float(werner_to_fidelity(keep_p))
             F2 = float(werner_to_fidelity(pL))

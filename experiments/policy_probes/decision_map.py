@@ -83,12 +83,15 @@ def run_compute(a, out_json):
     for n_ch in a.n_chs:
         d = C.collect(a.ckpt, episodes=a.episodes, n_chs=(n_ch,), seed=a.seed)
         X, act = d["X"], d["A"]
-        occ = np.rint(X[:, 0] * n_ch).astype(int)   # occ feature = count/n_ch
+        # feature 0 = occupied / physical capacity; collect() records only
+        # interior nodes, whose capacity is 2*n_ch (n_left + n_right ports).
+        cap = 2 * n_ch
+        occ = np.rint(X[:, 0] * cap).astype(int)
         fid = X[:, col]
         cs = np.rint(X[:, 4]).astype(bool)
         cp = np.rint(X[:, 5]).astype(bool)
         both = cs & cp
-        n_occ = n_ch + 1
+        n_occ = cap + 1
         g = lambda el, took: _jsonable(eagerness_grid(
             occ[el], fid[el], took[el], n_occ, edges, a.min_count))
         data["rows"][str(n_ch)] = {
@@ -130,7 +133,7 @@ def run_plot(data, stem):
     letters = "ABCDEFGH"
     for r, n_ch in enumerate(n_chs):
         row = data["rows"][n_ch]
-        n_occ = int(n_ch) + 1
+        n_occ = np.asarray(_np(row["swap"])).shape[1]   # occupancy tiles = grid width (0..2*n_ch)
         x_edges = np.arange(n_occ + 1) - 0.5
         for c, (key, title, cmap_name, vmin, vmax, nkey) in enumerate(cols):
             ax = axes[r, c]

@@ -93,7 +93,7 @@ def node_row(env, obs, mask, acts, i, ctx):
                 else np.zeros(len(FEATURE_NAMES), np.float64))
 
     n_pairs_cand = int(cand.sum())
-    eng = [n_ch - int(occ.sum()), int(avail.sum()), n_pairs_cand,
+    eng = [int(occ.size) - int(occ.sum()), int(avail.sum()), n_pairs_cand,
            max(0, n_pairs_cand - 2), float(F[hi]), float(F[lo]),
            float(age_frac[hi]), float(age_frac[lo]), mean_age_frac]
     ctx_row = [float(mask[i, 1]), i / (env.N - 1), env.N, n_ch,

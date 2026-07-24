@@ -66,6 +66,9 @@ def parse_args():
                         help="disable the delivery-time eval probe for best-checkpoint "
                              "selection (auto-enabled for episodes >= 5000); falls back "
                              "to rolling-mean reward selection")
+    parser.add_argument("--disable_purify", action="store_true",
+                        help="mask PURIFY in BOTH selection and the DQN target -> "
+                             "train a pure swap-scheduler")
     return parser.parse_args()
 
 
@@ -304,5 +307,6 @@ if __name__ == "__main__":
         save_path=save_path,
         topology=args.topology,
         prune_unwinnable=args.prune_unwinnable,
+        disable_actions=((2,) if args.disable_purify else ()),
         compare=args.compare,
         plot=True,)

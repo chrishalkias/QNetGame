@@ -259,8 +259,11 @@ class QRNAgent:
                                           
     @staticmethod
     def _normalize_n_ch(n_ch):
-        """Resolve n_ch (int or sequence) to a non-empty list of ints >= 2.
+        """Resolve n_ch (int or sequence) to a non-empty list of ints >= 1.
 
+        n_ch is qubits PER SIDE (left/right ports), so n_ch=1 => 2 physical
+        qubits interior (one left + one right link) and is valid for swap-only
+        schedules; purify just can never fire (needs >=2 to the same partner).
         Int -> single-element pool (backward compatible). List/tuple -> the
         pool the training loop samples from uniformly per episode."""
         pool = list(n_ch) if isinstance(n_ch, (list, tuple)) else [n_ch]
@@ -269,8 +272,8 @@ class QRNAgent:
         for c in pool:
             if isinstance(c, bool) or not isinstance(c, (int, np.integer)):
                 raise ValueError(f"n_ch values must be ints, got {c!r}")
-            if int(c) < 2:
-                raise ValueError(f"n_ch values must be >= 2, got {c}")
+            if int(c) < 1:
+                raise ValueError(f"n_ch values must be >= 1, got {c}")
         return [int(c) for c in pool]
 
     @staticmethod

@@ -18,8 +18,9 @@ def test_normalize_n_ch_rejects_bad_input():
     from rl_stack.agent import QRNAgent
     with pytest.raises(ValueError):
         QRNAgent._normalize_n_ch([])        # empty
+    assert QRNAgent._normalize_n_ch([1, 2]) == [1, 2]  # n_ch=1 valid (per-side)
     with pytest.raises(ValueError):
-        QRNAgent._normalize_n_ch([1, 2])    # n_ch < 2
+        QRNAgent._normalize_n_ch([0, 2])    # n_ch < 1
     with pytest.raises(ValueError):
         QRNAgent._normalize_n_ch([2, 2.5])  # non-int
 

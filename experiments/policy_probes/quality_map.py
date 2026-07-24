@@ -30,6 +30,8 @@ def parse_args():
     ap.add_argument("--plot", action="store_true", help="re-render from the JSON")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
     ap.add_argument("--episodes", type=int, default=300)
+    ap.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
+                    help="n_ch pool for rollouts (match the ckpt's training n_ch)")
     ap.add_argument("--p_lo", type=float, default=0.4,
                     help="lower edge of the per-episode p_gen/p_swap MEAN draw "
                          "(collect() default 0.4 = training range; lower this to "
@@ -70,7 +72,8 @@ def _np(g):
 
 def run_compute(a, out_json):
     from experiments.policy_probes import _collect as C
-    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed, p_lo=a.p_lo, p_hi=a.p_hi)
+    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed, p_lo=a.p_lo, p_hi=a.p_hi,
+                  n_chs=tuple(a.n_ch))
     X, act = d["X"], d["A"]
     p_e, p_s, urg = X[:, 6], X[:, 7], X[:, 8]
     cs = np.rint(X[:, 4]).astype(bool)

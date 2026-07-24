@@ -80,12 +80,7 @@ class QRNEnv:
 
     STEP_COST       = -0.01
     SUCCESS_REWARD  =  1.0
-    # ponytail: 0 = no penalty for failed ops. The mask already blocks invalid
-    # actions, so this term only ever fired on STOCHASTIC swap/purify failures
-    # (rng > p_swap) — punishing the agent for the env's coin-flip and training
-    # it swap-shy. Failure is already costed naturally (lost links → -PBRS +
-    # step cost). Restore a small negative only to penalize genuinely-invalid
-    # attempts if masking is ever disabled.
+    # no penalty for failed ops(legacy)
     FAILED_ACTION   =  0.0
 
     def __init__(self,
@@ -231,12 +226,14 @@ class QRNEnv:
 
 
     def _can_swap_from(self, ns) -> bool:
-        """True if ns has a VIABLE swap pair: one available LEFT link
+        """
+        True if ns has a VIABLE swap pair: one available LEFT link
         (partner < node) and one available RIGHT link (partner > node) whose
         fused link survives same-tick resolution
         (age_L + age_R + 2 < min(link_cutoff_L, link_cutoff_R)). Mirrors the
         engine's left x right decision gate; exact for homogeneous cutoffs (the
-        only regime in use), and the engine stays authoritative regardless."""
+        only regime in use), and the engine stays authoritative regardless.
+        """
         avail = np.flatnonzero(ns.occupied & (~ns.locked))
         partners = ns.partner_node[avail]
         real = partners != NO_PARTNER
@@ -345,7 +342,7 @@ class QRNEnv:
         # Phase 4: auto-entangle for next step's observation
         self._auto_entangle()
 
-        # PBRS: γΦ(s') - Φ(s)  (topology-general potential)
+        # PBRS: γΦ(s') - Φ(s)  (bonus:topology-general potential)
         phi_new = self._progress()
         shaping = self.gamma * phi_new - self._phi
         self._phi = phi_new
