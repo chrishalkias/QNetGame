@@ -61,7 +61,7 @@ def _entangle_force(net, r1, r2):
 
 
 _REP_MUT_ARRAYS = ("status", "partner_repeater", "partner_qubit", "werner_param",
-                   "initial_werner", "age", "link_cutoff", "locked",
+                   "initial_werner", "age", "link_cutoff",
                    "position")
 
 
@@ -164,7 +164,15 @@ def test_repeater_deepcopy_isolation():
     assert rep.status.any()             # original link still occupied
 
 
-                                            
+def test_no_locked_attribute():
+    """Locking machinery is dead code (nothing sets it since swap/purify apply
+    immediately) and has been removed: available == occupied."""
+    rep = Repeater(rid=1, n_left=2, n_right=2, cutoff=20)
+    assert not hasattr(rep, "locked")
+    assert np.array_equal(rep.available_indices(), rep.occupied_indices())
+
+
+
 # ▄▄▄▄▄▄▄   ▄▄                                
 # ███▀▀███▄ ██                ▀▀              
 # ███▄▄███▀ ████▄ ██ ██ ▄█▀▀▀ ██  ▄████ ▄█▀▀▀ 
@@ -876,13 +884,13 @@ class TestZeroDistanceOperations(unittest.TestCase):
             self.fail("_gen_prob / _gen_fidelity raised ZeroDivisionError at d=0.")
 
 
-class TestDoubleBookingLockingIntegrity(unittest.TestCase):
+class TestPostSwapAvailability(unittest.TestCase):
     """
-    A locked qubit (awaiting classical message) must not be eligible for
-    further swap or purify actions — it is physically inaccessible.
+    A swap applies immediately (no deferral window): the fused remote qubit
+    is occupied and available right away.
     """
 
-    def _net_with_locked_qubit(self):
+    def _net_after_swap(self):
         net = build_chain(3, n_ch=4, spacing=50.0,
                           p_gen=1.0, p_swap=1.0,
                           F0=1.0, channel_loss=0.0,
@@ -890,48 +898,27 @@ class TestDoubleBookingLockingIntegrity(unittest.TestCase):
                           rng=np.random.default_rng(0))
         net.entangle(0, 1)
         net.entangle(1, 2)
-        net.swap(1)   # fuses R0<->R2 immediately; remote qubits are NOT locked
+        net.swap(1)   # fuses R0<->R2 immediately
         return net
 
     def test_remote_qubit_available_immediately_after_swap(self):
-        # Swap applies immediately (no deferral window), so R0's fused qubit
-        # is occupied and available right away, not locked.
-        net = self._net_with_locked_qubit()
+        net = self._net_after_swap()
         avail = net.repeaters[0].available_indices()
         self.assertEqual(len(avail), 1,
                          "Fused remote qubit must be immediately available.")
 
-    def test_locked_qubit_not_swappable(self):
+    def test_endpoint_cannot_swap_single_port(self):
         # R0/R2 are chain endpoints (one port width 0), so they structurally
-        # can never satisfy the one-LEFT-plus-one-RIGHT swap requirement,
-        # independent of any locking.
-        net = self._net_with_locked_qubit()
+        # can never satisfy the one-LEFT-plus-one-RIGHT swap requirement.
+        net = self._net_after_swap()
         self.assertFalse(net.repeaters[0].can_swap(),
-                         "can_swap() must return False when only qubit is locked.")
+                         "can_swap() must return False for a single-port endpoint.")
 
-    def test_swap_mask_excludes_locked_node(self):
-        net = self._net_with_locked_qubit()
+    def test_swap_mask_excludes_single_port_endpoints(self):
+        net = self._net_after_swap()
         mask = net.action_mask_swap()
-        self.assertFalse(mask[0], "Swap mask must be False for a node with only locked qubits.")
-        self.assertFalse(mask[2], "Swap mask must be False for a node with only locked qubits.")
-
-    def test_purify_mask_excludes_locked_qubits(self):
-        net = _perfect_chain(3, cutoff=50)
-        net.entangle(0, 1)
-        net.entangle(0, 1)
-        # Lock one of the two qubits at R0.
-        qi = net.repeaters[0].occupied_indices()[0]
-        net.repeaters[0].lock_qubit(qi)
-        # Only 1 available qubit left → purify mask must be False for (0,1).
-        mask = net.action_mask_purify()
-        self.assertFalse(mask[0, 1],
-                         "Purify mask must be False when < 2 available qubits to same partner.")
-
-    def test_has_free_qubit_ignores_locked_free_slots(self):
-        # A single-port node whose only free slot is locked must report no free qubit.
-        rep = Repeater(rid=0, n_ch=1, cutoff=20, n_left=1, n_right=0)
-        rep.locked[0] = True   # lock the sole qubit (still FREE)
-        self.assertFalse(rep.has_free_qubit())
+        self.assertFalse(mask[0], "Swap mask must be False for a single-port endpoint.")
+        self.assertFalse(mask[2], "Swap mask must be False for a single-port endpoint.")
 
 
 class TestSelfSwapping(unittest.TestCase):
@@ -988,7 +975,6 @@ class TestResetBehaviour(unittest.TestCase):
         net.reset()
         for rep in net.repeaters:
             self.assertEqual(rep.num_occupied(), 0)
-            self.assertFalse(np.any(rep.locked))
 
     def test_time_step_reset_to_zero(self):
         net = _perfect_chain(3)
@@ -1142,26 +1128,16 @@ class TestRepeaterInternals(unittest.TestCase):
         self.assertEqual(rep.status[0], QUBIT_FREE)
         self.assertEqual(int(rep.partner_repeater[0]), NO_PARTNER)
         self.assertEqual(float(rep.werner_param[0]), 0.0)
-        self.assertFalse(rep.locked[0])
 
-    def test_lock_unlock_qubit(self):
-        rep = Repeater(rid=0, n_ch=2, cutoff=20)
-        rep.lock_qubit(0)
-        self.assertTrue(rep.locked[0])
-        rep.unlock_qubit(0)
-        self.assertFalse(rep.locked[0])
-
-    def test_qubits_to_returns_only_unlocked_occupied(self):
+    def test_qubits_to_returns_occupied_to_partner(self):
         rep = Repeater(rid=0, n_ch=4, cutoff=20)
-        # Manually set up two links to partner 1; lock one.
         rep.set_link(0, 1, 0, 0.9)
         rep.status[0] = QUBIT_OCCUPIED
-        rep.set_link(1, 1, 1, 0.8)
+        rep.set_link(1, 2, 1, 0.8)
         rep.status[1] = QUBIT_OCCUPIED
-        rep.lock_qubit(0)
         result = rep.qubits_to(1)
-        self.assertNotIn(0, result)
-        self.assertIn(1, result)
+        self.assertIn(0, result)
+        self.assertNotIn(1, result)
 
 
 class TestSwapDecisionGate(unittest.TestCase):
@@ -1187,10 +1163,8 @@ class TestSwapDecisionGate(unittest.TestCase):
         res = net.swap(1)
         self.assertFalse(res["success"])
         self.assertEqual(res["reason"], "no_valid_pair")
-        # nothing was consumed or locked
+        # nothing was consumed
         self.assertEqual(rep1.num_occupied(), 2)
-        self.assertEqual(net.repeaters[0].num_locked(), 0)
-        self.assertEqual(net.repeaters[2].num_locked(), 0)
 
     def test_viable_pair_still_swaps(self):
         net = self._chain3(cutoff=10)

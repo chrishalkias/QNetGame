@@ -536,7 +536,6 @@ class RepeaterNetwork:
             p_gen=float(rep.p_gen),
             p_swap=float(rep.p_swap),
             occupied=_freeze(occupied),
-            locked=_freeze(rep.locked),
             partner_node=_freeze(rep.partner_repeater),
             partner_qubit=_freeze(rep.partner_qubit),
             fidelity=_freeze(fid),

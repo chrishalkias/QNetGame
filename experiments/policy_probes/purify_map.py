@@ -53,10 +53,10 @@ COLUMNS = OBS_COLS + NBR_COLS + ENG_COLS + CTX_COLS
 
 def candidate_partner(ns):
     """Replicate QRNEnv._exec_purify partner selection EXACTLY: among partners
-    with >=2 available (occupied & unlocked) qubits, pick the one with the most
-    such qubits; ties break to the lowest partner id (np.unique returns sorted
-    ids and max() keeps the first maximal). Returns partner id or None."""
-    avail = ns.occupied & (~ns.locked)
+    with >=2 available qubits, pick the one with the most such qubits; ties
+    break to the lowest partner id (np.unique returns sorted ids and max()
+    keeps the first maximal). Returns partner id or None."""
+    avail = ns.occupied
     if int(avail.sum()) < 2:
         return None
     partners = ns.partner_node[avail]
@@ -76,8 +76,8 @@ def node_row(env, obs, mask, acts, i, ctx):
     if best_nb is None:
         return None
     n_ch = ns.n_ch
-    occ, lock = ns.occupied, ns.locked
-    avail = occ & (~lock)
+    occ = ns.occupied
+    avail = occ
     cand = avail & (ns.partner_node == best_nb)
     F = ns.fidelity[cand]
     lc = np.maximum(ns.link_cutoff[cand].astype(np.float64), 1.0)

@@ -78,7 +78,6 @@ class Repeater:
         "initial_werner",    # Werner param to be used for ageing
         "age",               # The ages of the links
         "link_cutoff",       # Effective link cutoff (min(c1, c2))
-        "locked",            # Locked qubits (invisible to the policy while an op is pending)
     )
 
     def __init__(self,
@@ -115,7 +114,6 @@ class Repeater:
         self.initial_werner = np.zeros(n_total, dtype=np.float64)
         self.age = np.zeros(n_total, dtype=np.int32)
         self.link_cutoff = np.full(n_total, cutoff, dtype=np.int32)
-        self.locked = np.zeros(n_total, dtype=np.bool_)
 
     def __deepcopy__(self, memo):
         """Fast clone: the per-qubit arrays are the only mutable state, so copy
@@ -144,7 +142,6 @@ class Repeater:
         new.initial_werner = self.initial_werner.copy()
         new.age = self.age.copy()
         new.link_cutoff = self.link_cutoff.copy()
-        new.locked = self.locked.copy()
         return new
 
                                                                                  
@@ -155,7 +152,7 @@ class Repeater:
 # ████████▀ ▀█▄██ ▄▄▄█▀ ▀█▄▄▄    ██  ▀██▀█ ██ ██ ▀████  ██   ██▄ ▀███▀ ██ ██ ▄▄▄█▀ 
                                                                                                                                                             
 
-    # --- Raw queries (include locked, used INTERNALLY) --------------------
+    # --- Queries (nothing is locked anymore, so available == occupied) ----
     def free_indices(self) -> np.ndarray:
         return np.flatnonzero(self.status == QUBIT_FREE)
 
@@ -165,29 +162,27 @@ class Repeater:
     def num_occupied(self) -> int:
         return int(np.count_nonzero(self.status == QUBIT_OCCUPIED))
 
-    # --- Network-facing queries (exclude locked) --------------------------
-
     def available_indices(self) -> np.ndarray:
-        """Available FOR SWAP = Occupied AND not locked."""
-        return np.flatnonzero((self.status == QUBIT_OCCUPIED) & (~self.locked))
+        """Available FOR SWAP = Occupied (no locking anymore)."""
+        return self.occupied_indices()
 
     def num_available(self) -> int:
-        return int(np.count_nonzero((self.status == QUBIT_OCCUPIED) & (~self.locked)))
+        return self.num_occupied()
 
     def _side_range(self, side: int) -> Tuple[int, int]:
         """[lo, hi) qubit-index range for a port."""
         return (0, self.n_left) if side == LEFT else (self.n_left, self.n_left + self.n_right)
 
     def available_on_side(self, side: int) -> np.ndarray:
-        """Available (occupied, unlocked) qubit indices on one port."""
+        """Occupied qubit indices on one port."""
         lo, hi = self._side_range(side)
         if lo == hi:
             return np.empty(0, dtype=np.intp)
-        rel = (self.status[lo:hi] == QUBIT_OCCUPIED) & (~self.locked[lo:hi])
+        rel = self.status[lo:hi] == QUBIT_OCCUPIED
         return np.flatnonzero(rel) + lo
 
     def has_free_qubit(self, side: Optional[int] = None) -> bool:
-        free = (self.status == QUBIT_FREE) & (~self.locked)
+        free = self.status == QUBIT_FREE
         if side is None:
             return bool(np.any(free))
         lo, hi = self._side_range(side)
@@ -198,15 +193,10 @@ class Repeater:
         return len(self.available_on_side(LEFT)) >= 1 and len(self.available_on_side(RIGHT)) >= 1
 
     def qubits_to(self, partner_rid: int) -> np.ndarray:
-        """Available (occupied, unlocked) qubits linked to partner_rid."""
+        """Occupied qubits linked to partner_rid."""
         isOccupied = (self.status == QUBIT_OCCUPIED)
         hasCorrectPartnerID = (self.partner_repeater == partner_rid)
-        isFree = ~self.locked
-        mask = isOccupied & hasCorrectPartnerID & isFree
-        return np.flatnonzero(mask)
-    
-    def num_locked(self) -> int:
-        return int(np.count_nonzero(self.locked))
+        return np.flatnonzero(isOccupied & hasCorrectPartnerID)
 
                                                                                       
 #  ▄▄▄▄▄▄▄                          ▄▄▄      ▄▄▄                                        
@@ -225,7 +215,7 @@ class Repeater:
         lo, hi = self._side_range(side)
         if lo == hi:
             return -1
-        rel = (self.status[lo:hi] == QUBIT_FREE) & (~self.locked[lo:hi])
+        rel = self.status[lo:hi] == QUBIT_FREE
         freeQubits = np.flatnonzero(rel)
         if len(freeQubits) == 0:
             return -1
@@ -280,17 +270,10 @@ class Repeater:
         self.initial_werner[qubit] = 0.0
         self.age[qubit] = 0
         self.link_cutoff[qubit] = self.cutoff
-        self.locked[qubit] = False
-
-    def lock_qubit(self, qubit):
-        self.locked[qubit] = True
-
-    def unlock_qubit(self, qubit):
-        self.locked[qubit] = False
 
     def age_occupied(self) -> np.ndarray:
         """
-        Age all occupied qubits (including locked). Return expired indices.
+        Age all occupied qubits. Return expired indices.
         Returns:
             unaffectedQubits: List of qubits idx that either died or are occupied
         """
@@ -337,8 +320,8 @@ class Repeater:
         resolution): the fused link inherits age_a + age_b, and both parents
         age once more before the swap resolves this same tick, so it survives its
         cutoff iff age_a + age_b + 2 < ec with ec = min(remote endpoints'
-        cutoffs). This gate is what lets _resolve_swap create the link
-        unconditionally: no born-dead link can reach resolution.
+        cutoffs). This gate is what lets ``swap()`` create the fused link
+        unconditionally: no born-dead link can reach creation.
         """
         left = self.available_on_side(LEFT)
         right = self.available_on_side(RIGHT)
@@ -390,15 +373,12 @@ class Repeater:
         self.initial_werner[:] = 0.0
         self.age[:] = 0
         self.link_cutoff[:] = self.cutoff
-        self.locked[:] = False
 
     def __repr__(self):
         """
         Representation string for the repeater
         """
-        lk = self.num_locked()
-        return (f"Repeater(rid={self.rid}, occ={self.num_occupied()}/{self.n_left + self.n_right}"
-                f"{f', locked={lk}' if lk else ''}, "
+        return (f"Repeater(rid={self.rid}, occ={self.num_occupied()}/{self.n_left + self.n_right}, "
                 f"p_gen={self.p_gen:.2f}, p_swap={self.p_swap:.2f}, "
                 f"cutoff={self.cutoff}, policy={self.swap_policy.name})")
     

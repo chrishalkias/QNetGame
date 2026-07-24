@@ -174,9 +174,9 @@ class QRNEnv:
 
         Features per node (9):
             [0] frac_occupied     — occupied / physical capacity (2*n_ch interior, n_ch ends)
-            [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
+            [1] mean_fidelity     — avg F of available qubits (0 if none)
             [2] in_endnode        — 1.0 if source OR dest (endpoints are symmetric)
-            [3] frac_available    — available (unlocked occupied) / physical capacity
+            [3] frac_available    — available / physical capacity
             [4] can_swap          — 1.0 if a viable swap pair exists: one available LEFT link (partner<node) + one available RIGHT link (partner>node) whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
             [5] can_purify        — 1.0 if ≥2 available qubits to same partner
             [6] p_gen             — per-repeater link-generation prob. (inhomogeneity)
@@ -193,7 +193,7 @@ class QRNEnv:
         for i in range(self.N):
             ns = self.net.node_state(i)
             occ = ns.occupied
-            avail = occ & (~ns.locked)
+            avail = occ
             capacity = occ.size  # physical qubit count (2*n_ch interior, n_ch ends)
             feats[i, 0] = int(occ.sum()) / capacity
             feats[i, 1] = (float(ns.fidelity[avail].mean())
@@ -234,7 +234,7 @@ class QRNEnv:
         engine's left x right decision gate; exact for homogeneous cutoffs (the
         only regime in use), and the engine stays authoritative regardless.
         """
-        avail = np.flatnonzero(ns.occupied & (~ns.locked))
+        avail = np.flatnonzero(ns.occupied)
         partners = ns.partner_node[avail]
         real = partners != NO_PARTNER
         avail, partners = avail[real], partners[real]
@@ -252,7 +252,7 @@ class QRNEnv:
     def _can_purify_from(self, ns) -> bool:
         """True if ns has ≥2 available qubits linked to the *same* partner.
         `bincount` over partner ids beats `np.unique` (no sort) for tiny arrays."""
-        avail = ns.occupied & (~ns.locked)
+        avail = ns.occupied
         if int(avail.sum()) < 2:
             return False
         partners = ns.partner_node[avail]
@@ -380,7 +380,7 @@ class QRNEnv:
         which node r shares >=2 available links (each cascade leaves one survivor
         or none)."""
         ns = self.net.node_state(r)
-        avail = ns.occupied & (~ns.locked)
+        avail = ns.occupied
         if int(avail.sum()) < 2:
             return {"success": False, "reason": "insufficient_qubits"}
         partners = ns.partner_node[avail]

@@ -16,7 +16,6 @@ def test_nodestate_is_frozen():
     ns = NodeState(
         node_id=0, n_ch=2, p_gen=0.8, p_swap=0.5,
         occupied=_freeze(np.zeros(2, bool)),
-        locked=_freeze(np.zeros(2, bool)),
         partner_node=_freeze(np.full(2, -1, np.int32)),
         partner_qubit=_freeze(np.full(2, -1, np.int32)),
         fidelity=_freeze(np.zeros(2, np.float64)),
@@ -25,6 +24,21 @@ def test_nodestate_is_frozen():
     )
     with pytest.raises(FrozenInstanceError):
         ns.node_id = 5
+
+
+def test_nodestate_has_no_locked():
+    """Locking machinery was removed (nothing sets it since swap/purify apply
+    immediately): NodeState no longer carries a locked field."""
+    ns = NodeState(
+        node_id=0, n_ch=2, p_gen=0.8, p_swap=0.5,
+        occupied=_freeze(np.zeros(2, bool)),
+        partner_node=_freeze(np.full(2, -1, np.int32)),
+        partner_qubit=_freeze(np.full(2, -1, np.int32)),
+        fidelity=_freeze(np.zeros(2, np.float64)),
+        age=_freeze(np.zeros(2, np.int32)),
+        link_cutoff=_freeze(np.full(2, 20, np.int32)),
+    )
+    assert not hasattr(ns, "locked")
 
 
 def test_freeze_returns_independent_copy():
@@ -39,7 +53,6 @@ def test_nodestate_autofreezes_arrays():
     ns = NodeState(
         node_id=0, n_ch=2, p_gen=0.8, p_swap=0.5,
         occupied=occ,
-        locked=np.zeros(2, bool),
         partner_node=np.full(2, -1, np.int32),
         partner_qubit=np.full(2, -1, np.int32),
         fidelity=np.zeros(2, np.float64),
