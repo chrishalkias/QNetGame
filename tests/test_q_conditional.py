@@ -43,13 +43,14 @@ def _synthetic_columns():
 
 
 def _rollout(policy_fn, seed):
-    """Roll one episode, returning the per-step action arrays."""
+    """Roll one episode (serialized sweep), returning the per-micro-step
+    scalar actions."""
     env = QRNEnv(max_steps=H, rng=np.random.default_rng(seed), **ENV_KW)
     obs = env.reset()
     log = []
-    for _ in range(H):
+    while not env.done:
         a = policy_fn(env, obs)
-        log.append(np.asarray(a).copy())
+        log.append(a)
         obs, _, done, _ = env.step(a)
         if done:
             break
@@ -107,13 +108,14 @@ def test_real_artifact_smoke():
     saw_both_legal = False
     saw_purify = False
     valid_actions = {NOOP, SWAP, PURIFY}
-    for _ in range(H):
+    while not env.done:
+        i = env.active_node
         mask = env.get_action_mask()
-        if bool(np.any(mask[:, PURIFY] & mask[:, SWAP])):
+        if bool(mask[i, PURIFY] and mask[i, SWAP]):
             saw_both_legal = True
         a = cond_fn(env, obs)
-        assert set(np.unique(a).tolist()).issubset(valid_actions)
-        if bool(np.any(a == PURIFY)):
+        assert a in valid_actions
+        if a == PURIFY:
             saw_purify = True
         obs, _, done, _ = env.step(a)
         if done:

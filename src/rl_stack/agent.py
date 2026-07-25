@@ -666,10 +666,8 @@ class QRNAgent:
         metrics (delivery time, delivery rate).
 
         `policy`: 'agent' (greedy, eps-free), 'swap' (swap-asap), 'rand'
-        (random), or a callable(env, obs) -> (N,) actions (an extra
-        baseline, e.g. the optimum). Each still yields a full (N,) action
-        array per micro-step (matching strategies.py, unchanged); only the
-        ACTIVE node's entry is applied that micro-step -- the array is
+        (random), or a callable policy_fn(env, obs) -> int (an extra
+        baseline, e.g. the optimum) -- the scalar action for env.active_node,
         recomputed fresh every micro-step so every policy sees the current
         state. Used only by --compare / the eval probe; never touches the
         agent's training rollout."""
@@ -684,14 +682,14 @@ class QRNAgent:
                 mask[:, disable_actions] = False
             r_node = env.active_node
             if policy == 'agent':
-                acts = self.select_actions(obs, mask, training=False)
+                a = int(self.select_actions(obs, mask, training=False)[r_node])
             elif policy == 'swap':
-                acts = strategies.swap_asap(env)
+                a = strategies.swap_asap(env)
             elif policy == 'rand':
-                acts = strategies.random_policy(env, rand_rng)
+                a = strategies.random_policy(env, rand_rng)
             else:                      # callable extra baseline
-                acts = policy(env, obs)
-            obs, r, done, info = env.step(int(acts[r_node]))
+                a = policy(env, obs)
+            obs, r, done, info = env.step(int(a))
             ret += r
             if done:
                 success = 1.0 if info.get("fidelity", 0.0) > 0 else 0.0
@@ -784,12 +782,11 @@ class QRNAgent:
                     mask = env.get_action_mask()
                     r_node = env.active_node
                     if name == "Agent":
-                        acts = self.select_actions(obs, mask, training=False)
+                        a = int(self.select_actions(obs, mask, training=False)[r_node])
                     elif name == "Random":
-                        acts = strategies.random_policy(env, action_rng)
+                        a = strategies.random_policy(env, action_rng)
                     else:
-                        acts = fn(env)
-                    a = int(acts[r_node])
+                        a = fn(env)
                     tick_row[r_node] = a
 
                     obs, reward, done, info = env.step(a)

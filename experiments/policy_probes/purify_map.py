@@ -2,10 +2,11 @@
 --------------------------------------------------------------------------------
 When does the trained agent choose PURIFY among its purify opportunities?
 
-For every interior-node decision where PURIFY is a legal action, roll out the
-GREEDY full agent and record (a) whether it purified, (b) the 9-feature obs, a
-1-hop neighbour-mean context, and hand-built engine features about the candidate
-BBPSSW pair, (c) episode/cell context. Then search for a compact predictive rule
+For every micro-step decision where PURIFY is legal at env.active_node, roll out
+the GREEDY full agent (serialized sweep) and record (a) whether it purified, (b)
+the 11-feature obs, a 1-hop neighbour-mean context, and hand-built engine
+features about the candidate BBPSSW pair, (c) episode/cell context. Then search
+for a compact predictive rule
 (base rates, univariate AUCs, logistic ceiling, shallow trees, hypothesis checks)
 and render a two-panel figure. This is the data foundation for later grafting a
 purify-selectivity rule into a heuristic.
@@ -104,21 +105,20 @@ def node_row(env, obs, mask, acts, i, ctx):
 
 def rollout(model, env, ctx, ep_id, rows, labels, chosen, episodes, cells):
     # episodes/cells are the shared accumulator lists
-    """One episode; append rows for every interior PURIFY-legal decision."""
+    """One episode (serialized sweep); append a row for every micro-step whose
+    active node has PURIFY legal."""
     obs = env.reset()
-    for _ in range(env.max_steps):
+    while not env.done:
+        i = env.active_node
         mask = env.get_action_mask()
         acts, _ = greedy(model, obs["x"], obs["edge_index"], mask, "cpu")
-        for i in range(env.N):
-            if i in (env.source, env.dest) or not mask[i, 2]:
-                continue
+        if mask[i, 2]:
             r = node_row(env, obs, mask, acts, i, ctx)
-            if r is None:
-                continue
-            row, lab, act = r
-            rows.append(row); labels.append(lab); chosen.append(act)
-            episodes.append(ep_id); cells.append(ctx["cell"])
-        obs, _, done, _ = env.step(acts)
+            if r is not None:
+                row, lab, act = r
+                rows.append(row); labels.append(lab); chosen.append(act)
+                episodes.append(ep_id); cells.append(ctx["cell"])
+        obs, _, done, _ = env.step(int(acts[i]))
         if done:
             break
 

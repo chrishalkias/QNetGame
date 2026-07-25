@@ -760,8 +760,7 @@ class TestCrossModuleWiring(unittest.TestCase):
     def test_env_step_returns_correct_shape(self):
         env = QRNEnv(n_repeaters=4, topology="chain")
         env.reset()
-        actions = np.zeros(env.N, dtype=np.int32)
-        obs, reward, done, info = env.step(actions)
+        obs, reward, done, info = env.step(NOOP)
         self.assertEqual(obs["x"].shape[0], env.N)
 
     def test_build_chain_returns_repeater_network(self):
@@ -986,8 +985,8 @@ class TestResetBehaviour(unittest.TestCase):
     def test_env_reset_reinitialises_steps(self):
         env = QRNEnv(n_repeaters=4, topology="chain")
         env.reset()
-        env.step(np.zeros(env.N, dtype=int))
-        env.step(np.zeros(env.N, dtype=int))
+        env.step(NOOP)
+        env.step(NOOP)
         env.reset()
         self.assertEqual(env.steps, 0)
         self.assertFalse(env.done)
@@ -1063,22 +1062,34 @@ class TestGetAllLinks(unittest.TestCase):
 class TestEnvWrapper(unittest.TestCase):
 
     def test_source_dest_always_noop(self):
-        # Source and destination must be forced to NOOP regardless of agent.
+        # Source and destination are structurally never active (they are
+        # never members of env._interior), so issuing SWAP at every
+        # micro-step can never make them act.
         env = QRNEnv(n_repeaters=5, topology="chain", p_gen=1.0, p_swap=1.0)
         env.reset()
-        actions = np.full(env.N, SWAP, dtype=int)
-        obs, reward, done, info = env.step(actions)
-        # The info["actions"] at source/dest must be NOOP.
-        self.assertEqual(info["actions"][env.source], NOOP)
-        self.assertEqual(info["actions"][env.dest], NOOP)
+        for _ in range(3 * env.max_steps):
+            self.assertNotEqual(env.active_node, env.source)
+            self.assertNotEqual(env.active_node, env.dest)
+            _, _, done, info = env.step(SWAP)
+            if done:
+                break
+
+    def _run_to_boundary(self, env, action=NOOP):
+        """Drive micro-steps with `action` until (and including) a tick
+        boundary; returns the last (obs, reward, done, info)."""
+        info = {"tick_boundary": False}
+        while not info["tick_boundary"]:
+            obs, reward, done, info = env.step(action)
+            if done:
+                break
+        return obs, reward, done, info
 
     def test_step_cost_on_non_terminal(self):
         env = QRNEnv(n_repeaters=5, topology="chain",
                      p_gen=0.0,         # never generate → never succeed
                      max_steps=100)
         env.reset()
-        actions = np.zeros(env.N, dtype=int)
-        _, reward, done, _ = env.step(actions)
+        _, reward, done, _ = self._run_to_boundary(env)
         if not done:
             self.assertAlmostEqual(reward, env.STEP_COST)
 
@@ -1086,15 +1097,15 @@ class TestEnvWrapper(unittest.TestCase):
         env = QRNEnv(n_repeaters=3, topology="chain",
                      p_gen=0.0, max_steps=2)
         env.reset()
-        for _ in range(2):
-            _, _, done, _ = env.step(np.zeros(env.N, dtype=int))
+        self._run_to_boundary(env)                    # tick 1
+        _, _, done, _ = self._run_to_boundary(env)     # tick 2 -> truncated
         self.assertTrue(done)
 
     def test_observation_node_features_shape(self):
         env = QRNEnv(n_repeaters=6, topology="chain")
         obs = env.reset()
-        # Expected: (N, 9) node feature matrix.
-        self.assertEqual(obs["x"].shape, (6, 9))
+        # Expected: (N, 11) node feature matrix.
+        self.assertEqual(obs["x"].shape, (6, 11))
 
     def test_action_mask_shape_and_noop_always_true(self):
         env = QRNEnv(n_repeaters=5, topology="chain")

@@ -4,10 +4,11 @@ Shared real-rollout collector for the policy-interpretability plots.
 
 Everything here is grounded in the agent's *actual* visited distribution: load a
 checkpoint (node_dim auto-inferred from the weights), roll out the GREEDY policy
-over the training distribution, and record for every interior-node decision the
-9-feature observation, the chosen action, the conv3 embedding, the Q-value margin,
-and the full per-step state (x, edge_index, mask) so features can be permuted and
-re-fed for importance analysis.
+over the training distribution under the serialized sweep (one micro-decision
+at env.active_node per env.step call), and record for every such decision the
+11-feature observation, the chosen action, the conv3 embedding, the Q-value
+margin, and the full per-step state (x, edge_index, mask) so features can be
+permuted and re-fed for importance analysis.
 --------------------------------------------------------------------------------
 """
 from __future__ import annotations
@@ -19,6 +20,12 @@ from rl_stack.env_wrapper import QRNEnv
 
 FEATURE_NAMES = ["occ", "fidelity", "is_target", "avail", "can_swap",
                  "can_purify", "p_gen", "p_swap", "urgency"]
+# columns 9 (is_active) and 10 (rel_pos) are sweep scaffolding, not
+# interpretability features: is_active is always 1.0 for a collected
+# decision (X is recorded at env.active_node), so it carries no signal for
+# permutation importance; FEATURE_NAMES stays the original 9-column subset
+# that the probes analyse, even though X itself (== obs["x"][active_node])
+# is the full 11-wide observation.
 ACTION_NAMES = ["NOOP", "SWAP", "PURIFY"]
 ACTION_COLORS = ["#d9d9d9", "#1f63d6", "#1ba31b"]   # noop (grey), swap (blue), purify (green)
 
@@ -65,21 +72,19 @@ def collect(ckpt, *, episodes=200, sizes=range(4, 13), n_chs=(2, 3, 4),
                          topology="chain",
                          rng=np.random.default_rng(int(rng.integers(2**31))))
             obs = env.reset()
-            for _ in range(max_steps):
+            while not env.done:
+                r = env.active_node
                 mask = env.get_action_mask()
                 acts, q = greedy(model, obs["x"], obs["edge_index"], mask, device)
                 hh = cap["h"]
                 si = len(states)
                 states.append({"x": obs["x"].copy(),
                                "edge_index": obs["edge_index"], "mask": mask.copy()})
-                for i in range(env.N):
-                    if i in (env.source, env.dest):
-                        continue
-                    X.append(obs["x"][i]); A.append(int(acts[i])); H.append(hh[i])
-                    top2 = np.sort(q[i])[::-1]
-                    margin.append(float(top2[0] - top2[1]))
-                    idx.append((si, i))
-                obs, _, done, _ = env.step(acts)
+                X.append(obs["x"][r]); A.append(int(acts[r])); H.append(hh[r])
+                top2 = np.sort(q[r])[::-1]
+                margin.append(float(top2[0] - top2[1]))
+                idx.append((si, r))
+                obs, _, done, _ = env.step(int(acts[r]))
                 if done:
                     break
     finally:

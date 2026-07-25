@@ -66,6 +66,5 @@ def test_student_policy_fn_respects_mask():
     fn = student_policy_fn(StudentQNetwork(node_dim=len(STUDENT_FEAT_IDX), hidden=16))
     a = fn(env, obs)
     mask = env.get_action_mask()
-    assert a.shape == (env.N,)
-    for i in range(env.N):
-        assert mask[i, a[i]]           # never selects a masked-out action
+    assert isinstance(a, int)
+    assert mask[env.active_node, a]    # never selects a masked-out action

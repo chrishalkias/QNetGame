@@ -1,9 +1,9 @@
 '''
 Heuristic strategies for baseline comparison against the RL agent.
 
-Each strategy takes a QRNEnv and returns an (N,) action array
-containing only NOOP, SWAP, or PURIFY.  All strategies respect the
-action mask (source/dest are always NOOP).
+Each strategy takes a QRNEnv and returns a SCALAR action (NOOP/SWAP/PURIFY)
+for env.active_node -- the one node deciding this micro-step under the
+serialized sweep. All strategies respect that node's action mask.
 
 Entanglement is handled automatically by the environment step.
 '''
@@ -13,44 +13,31 @@ import numpy as np
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP, PURIFY
 
 
-def swap_asap(env: QRNEnv) -> np.ndarray:
-    """Swap at every interior node that can, immediately.
+def swap_asap(env: QRNEnv) -> int:
+    """Swap at env.active_node if it can, immediately.
 
-    If a node has =>2 available qubits linked to distinct partners,
-    assign SWAP.  The network's swap function itself handles
-    contention gracefully (returns failure if qubits became
-    locked by an earlier swap in the same timestep).
+    The engine's swap function handles same-tick contention gracefully
+    (a beaten swap simply fails: its qubits are no longer available once an
+    earlier micro-step this tick has consumed them).
     """
-    mask = env.get_action_mask()
-    actions = np.full(env.N, NOOP, dtype=np.int32)
-    for i in range(env.N):
-        if mask[i, SWAP]:
-            actions[i] = SWAP
-    return actions
+    r = env.active_node
+    return SWAP if env.get_action_mask()[r, SWAP] else NOOP
 
 
-def purify_then_swap(env: QRNEnv) -> np.ndarray:
-    """Purify if possible, otherwise swap if possible, else noop."""
-    mask = env.get_action_mask()
-    actions = np.full(env.N, NOOP, dtype=np.int32)
-    for i in range(env.N):
-        if mask[i, PURIFY]:
-            actions[i] = PURIFY
-        elif mask[i, SWAP]:
-            actions[i] = SWAP
-    return actions
+def purify_then_swap(env: QRNEnv) -> int:
+    """Purify env.active_node if possible, otherwise swap if possible, else noop."""
+    r = env.active_node
+    m = env.get_action_mask()[r]
+    return PURIFY if m[PURIFY] else (SWAP if m[SWAP] else NOOP)
 
 
-def random_policy(env: QRNEnv, rng: np.random.Generator) -> np.ndarray:
-    """Uniformly random valid action per node.
+def random_policy(env: QRNEnv, rng: np.random.Generator) -> int:
+    """Uniformly random valid action for env.active_node.
 
     IMPORTANT: *rng* must be independent of env.rng, otherwise drawing
     action choices perturbs the environment's own random stream
     (link generation, swap outcomes) and invalidates the comparison.
     """
-    mask = env.get_action_mask()
-    actions = np.full(env.N, NOOP, dtype=np.int32)
-    for i in range(env.N):
-        valid = np.flatnonzero(mask[i])
-        actions[i] = rng.choice(valid) if len(valid) > 0 else NOOP
-    return actions
+    r = env.active_node
+    valid = np.flatnonzero(env.get_action_mask()[r])
+    return int(rng.choice(valid)) if len(valid) else NOOP

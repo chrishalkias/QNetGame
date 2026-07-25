@@ -35,17 +35,17 @@ def mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, n_episodes, seed=42,
                      F0=1.0, channel_loss=0.0, max_steps=H,
                      topology="chain", rng=np.random.default_rng(rng.integers(2**32)))
         obs = env.reset()
-        step = 0
-        for step in range(H):
+        info = {}
+        while not env.done and env.steps < H:
             a = policy_fn(env, obs)
             obs, _, done, info = env.step(a)
             if done:
                 break
         F = info.get("fidelity", 0.0)
-        connected = bool(done) and F > 0
+        connected = bool(info.get("terminated")) and F > 0
         if connected:
             conn_fids.append(float(F))
-        times.append(step + 1 if connected else H)
+        times.append(info["ticks"] if connected else H)
     T, T_std = float(np.mean(times)), float(np.std(times))
     if not return_stats:
         return T, T_std
@@ -72,10 +72,9 @@ def make_agent_fn(ckpt, hidden=64, disable_actions=None):
     agent.policy_net.eval()
 
     def fn(env, obs):
-        mask = env.get_action_mask()
+        mask_row = env.get_action_mask()[env.active_node].copy()
         if disable_actions:
-            mask = mask.copy()
             for a in disable_actions:
-                mask[:, a] = False
-        return agent.select_actions(obs, mask, training=False)
+                mask_row[a] = False
+        return agent.select_action(obs, mask_row, env.active_node, training=False)
     return fn

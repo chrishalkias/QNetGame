@@ -149,8 +149,8 @@ def test_compare_extra_logs_named_baseline(tmp_path):
     from rl_stack import QRNAgent
     from rl_stack.env_wrapper import NOOP
     agent = QRNAgent(rng=np.random.default_rng(0))
-    # a trivial extra baseline: always NOOP
-    noop_fn = lambda env, obs: np.full(env.N, NOOP, dtype=int)
+    # a trivial extra baseline: always NOOP for env.active_node
+    noop_fn = lambda env, obs: NOOP
     m = agent.train(episodes=10, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     curriculum=False,

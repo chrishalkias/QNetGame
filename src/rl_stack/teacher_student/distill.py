@@ -38,8 +38,9 @@ def collect_teacher_dataset(teacher, *, episodes=400, seed=0, device="cpu",
                             p_lo=0.4, p_hi=0.9, cut_lo=10, cut_hi=50,
                             max_steps=200):
     """Greedy teacher rollouts over the omni training distribution (mirrors
-    experiments/policy_probes/_collect.py). Returns a list of per-step records
-    {x:(N,9), edge_index:(2,E), mask:(N,3) bool, q:(N,3) teacher Q}."""
+    experiments/policy_probes/_collect.py), one micro-decision at
+    env.active_node per env.step call. Returns a list of per-step records
+    {x:(N,11), edge_index:(2,E), mask:(N,3) bool, q:(N,3) teacher Q}."""
     rng = np.random.default_rng(seed)
     data = []
     for _ in range(episodes):
@@ -53,12 +54,13 @@ def collect_teacher_dataset(teacher, *, episodes=400, seed=0, device="cpu",
                      topology="chain",
                      rng=np.random.default_rng(int(rng.integers(2**31))))
         obs = env.reset()
-        for _ in range(max_steps):
+        while not env.done:
             mask = env.get_action_mask()
             q = _teacher_q(teacher, obs["x"], obs["edge_index"], device)
             data.append({"x": obs["x"].copy(), "edge_index": obs["edge_index"].copy(),
                          "mask": mask.copy(), "q": q})
-            obs, _, done, _ = env.step(_masked_argmax(q, mask))
+            acts = _masked_argmax(q, mask)
+            obs, _, done, _ = env.step(int(acts[env.active_node]))
             if done:
                 break
     return data
@@ -137,12 +139,13 @@ def distill_student(teacher, dataset, *, hidden=16, epochs=30, lr=1e-3,
 
 # ------------------------- eval policy fn -------------------------
 def student_policy_fn(student, device="cpu"):
-    """fn(env, obs) -> masked-greedy actions; drops straight into mc_eval."""
+    """fn(env, obs) -> masked-greedy scalar action for env.active_node; drops
+    straight into mc_eval."""
     def fn(env, obs):
         x = torch.tensor(obs["x"][:, STUDENT_FEAT_IDX], dtype=torch.float32, device=device)
         ei = torch.tensor(obs["edge_index"], dtype=torch.long, device=device)
         with torch.no_grad():
             q = student(Data(x=x, edge_index=ei, num_nodes=x.shape[0])).cpu().numpy()
         q[~env.get_action_mask()] = -1e9
-        return q.argmax(1).astype(np.int32)
+        return int(q[env.active_node].argmax())
     return fn

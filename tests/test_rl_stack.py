@@ -1274,10 +1274,9 @@ class TestEnvRewireCorrectness(unittest.TestCase):
     """
 
     def test_swap_asap_rollout_is_valid(self):
-        # strategies.swap_asap(env) still returns a full (N,) per-node action
-        # array (unchanged, Task 5's scope); the serialized sweep applies
-        # only the ACTIVE node's entry per micro-step, recomputed fresh each
-        # micro-step so every node sees the current state.
+        # strategies.swap_asap(env) returns a SCALAR action for env.active_node
+        # (Task 5's contract); recomputed fresh each micro-step so it always
+        # sees the current state.
         import numpy as np
         from rl_stack.env_wrapper import QRNEnv
         from rl_stack.strategies import swap_asap
@@ -1290,8 +1289,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
         while True:
             mask = env.get_action_mask()
             r_node = env.active_node
-            acts = swap_asap(env)
-            a = int(acts[r_node])
+            a = swap_asap(env)
             self.assertTrue(mask[r_node, a])
             obs, r, done, info = env.step(a)
             self.assertTrue(np.isfinite(r))
@@ -1311,8 +1309,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
         env.reset()
         reached = False
         while True:
-            r_node = env.active_node
-            a = int(swap_asap(env)[r_node])
+            a = swap_asap(env)
             _, _, done, info = env.step(a)
             if done:
                 reached = info["fidelity"] > 0.0

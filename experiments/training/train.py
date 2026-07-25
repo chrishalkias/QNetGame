@@ -177,8 +177,7 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
         # Serialized sweep: one micro-decision at env.active_node per
         # env.step call; the env self-truncates at max_steps ticks.
         while True:
-            r_node = env.active_node
-            a = int(strategies.purify_then_swap(env)[r_node])
+            a = strategies.purify_then_swap(env)
             _, _, done, info = env.step(a)
             if done:
                 wins += int(bool(info["terminated"]))

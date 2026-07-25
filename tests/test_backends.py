@@ -197,12 +197,12 @@ def test_node_state_exposes_link_cutoff():
 def test_observation_has_urgency_feature():
     from rl_stack.env_wrapper import QRNEnv
     from rl_stack.agent import NODE_DIM
-    assert NODE_DIM == 9
+    assert NODE_DIM == 11
     env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
                  topology="chain", rng=np.random.default_rng(0))
     env.reset()
     x = env.get_observation()["x"]
-    assert x.shape == (env.N, 9)
+    assert x.shape == (env.N, 11)
     # urgency in [0,1); fresh links -> small; empty node -> 0
     assert (x[:, 8] >= 0).all() and (x[:, 8] <= 1).all()
 
