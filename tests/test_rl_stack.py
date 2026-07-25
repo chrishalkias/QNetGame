@@ -29,6 +29,7 @@ import math
 import random
 import unittest
 import numpy as np
+import pytest
 import torch
 from torch_geometric.data import Data, Batch
 
@@ -370,12 +371,15 @@ class TestQRNEnvReset(unittest.TestCase):
 
     def test_reset_node_feature_shape(self):
         obs = self.env.reset()
-        # 9 features per node as documented in env_wrapper.get_observation.
-        self.assertEqual(obs["x"].shape, (5, 9))
+        # 11 features per node as documented in env_wrapper.get_observation.
+        self.assertEqual(obs["x"].shape, (5, 11))
 
     def test_reset_steps_and_done_reinitialised(self):
         self.env.reset()
-        self.env.step(np.zeros(self.env.N, dtype=int))
+        # drive one full left-to-right sweep (tick) to completion
+        info = {"tick_boundary": False}
+        while not info["tick_boundary"]:
+            _, _, _, info = self.env.step(NOOP)
         self.env.reset()
         self.assertEqual(self.env.steps, 0)
         self.assertFalse(self.env.done)
@@ -399,10 +403,10 @@ class TestQRNEnvReset(unittest.TestCase):
 
 class TestObservationFeatures(unittest.TestCase):
     """
-    Verify all 9 node features:
+    Verify all 11 node features:
       [0] frac_occupied  [1] mean_fidelity  [2] in_endnode   [3] frac_available
       [4] can_swap       [5] can_purify     [6] p_gen        [7] p_swap
-      [8] link_urgency
+      [8] link_urgency   [9] is_active      [10] relative_position
     """
 
     def setUp(self):
@@ -412,7 +416,7 @@ class TestObservationFeatures(unittest.TestCase):
     def test_feature_values_in_valid_range(self):
         x = self.obs["x"]
         # Fractions, flags and per-repeater rates must all lie in [0, 1].
-        for col in range(9):
+        for col in range(11):
             self.assertTrue((x[:, col] >= 0).all() and (x[:, col] <= 1).all(),
                             f"Feature column {col} out of [0,1] range.")
 
@@ -500,54 +504,65 @@ class TestMultiPartnerPurify(unittest.TestCase):
 
 
 class TestStepFunction(unittest.TestCase):
+    """Serialized sweep: step(action:int) applies to env.active_node only."""
 
     def setUp(self):
         self.env = _perfect_env(5)
         self.env.reset()
 
+    def _run_to_boundary(self, env, action=NOOP):
+        """Drive micro-steps with `action` until (and including) a tick
+        boundary; returns the last (obs, reward, done, info)."""
+        info = {"tick_boundary": False}
+        while not info["tick_boundary"]:
+            obs, reward, done, info = env.step(action)
+            if done:
+                break
+        return obs, reward, done, info
+
     def test_step_returns_correct_tuple(self):
-        obs, reward, done, info = self.env.step(np.zeros(self.env.N, dtype=int))
+        obs, reward, done, info = self.env.step(NOOP)
         self.assertIn("x", obs)
         self.assertIsInstance(reward, float)
         self.assertIsInstance(done, bool)
         self.assertIsInstance(info, dict)
 
     def test_step_increments_step_counter(self):
-        self.env.step(np.zeros(self.env.N, dtype=int))
+        self._run_to_boundary(self.env)
         self.assertEqual(self.env.steps, 1)
 
     def test_step_cost_on_non_terminal(self):
-        # With p_gen=0 entanglement never forms → never succeed.
+        # With p_gen=0 entanglement never forms -> never succeed, Phi stays 0.
         env = QRNEnv(n_repeaters=5, p_gen=0.0, max_steps=100,
                      rng=np.random.default_rng(0))
         env.reset()
-        _, reward, done, _ = env.step(np.zeros(env.N, dtype=int))
+        _, reward, done, _ = self._run_to_boundary(env)
         if not done:
             self.assertAlmostEqual(reward, QRNEnv.STEP_COST)
 
     def test_purify_executed_before_swap(self):
         """
-        The step docstring guarantees purify runs before swap.
-        We verify indirectly: both actions in the same step must not
-        crash even if issued simultaneously.
+        Different interior nodes may issue different actions across the
+        sweep; PURIFY at one node and SWAP at another in the same tick
+        must not crash.
         """
         env = _perfect_env(4)
         env.reset()
         # Entangle manually so interior nodes have links.
         env.net.entangle(0, 1); env.net.entangle(0, 1)
         env.net.entangle(1, 2); env.net.entangle(2, 3)
-        actions = np.array([NOOP, PURIFY, SWAP, NOOP], dtype=np.int32)
         try:
-            env.step(actions)
+            env.step(PURIFY)   # active_node == 1
+            env.step(SWAP)     # active_node == 2 (tick boundary)
         except Exception as e:
-            self.fail(f"step() crashed with purify+swap in same call: {e}")
+            self.fail(f"step() crashed with purify+swap in the same tick: {e}")
 
     def test_done_on_max_steps(self):
         env = QRNEnv(n_repeaters=4, p_gen=0.0, max_steps=2,
                      rng=np.random.default_rng(0))
         env.reset()
-        env.step(np.zeros(env.N, dtype=int))
-        _, _, done, _ = env.step(np.zeros(env.N, dtype=int))
+        self._run_to_boundary(env)                    # tick 1
+        _, _, done, _ = self._run_to_boundary(env)     # tick 2 -> truncated
         self.assertTrue(done)
 
     def test_success_reward_on_e2e_link(self):
@@ -567,22 +582,111 @@ class TestStepFunction(unittest.TestCase):
         p  = fidelity_to_werner(0.95)
         env.net.repeaters[0].set_link(q0, 2, q2, p)
         env.net.repeaters[2].set_link(q2, 0, q0, p)
-        _, reward, done, info = env.step(np.zeros(3, dtype=int))
+        phi_before = env._phi
+        _, reward, done, info = env.step(NOOP)   # only interior node -> node 1
         self.assertTrue(done)
-        # Reward = fidelity * SUCCESS_REWARD + penalty + PBRS_shaping
+        # Terminal reward = fidelity * SUCCESS_REWARD - Phi(s_before); Phi(terminal)=0.
         fidelity = info["fidelity"]
-        expected = fidelity * QRNEnv.SUCCESS_REWARD + (-env._phi)
+        expected = fidelity * QRNEnv.SUCCESS_REWARD - phi_before
         self.assertAlmostEqual(reward, expected)
 
 
-                                                                
-#   ▄▄▄▄▄   ▄▄▄▄▄▄▄   ▄▄▄    ▄▄▄   ▄▄▄▄                           
-# ▄███████▄ ███▀▀███▄ ████▄  ███ ▄██▀▀██▄                    ██   
-# ███   ███ ███▄▄███▀ ███▀██▄███ ███  ███ ▄████ ▄█▀█▄ ████▄ ▀██▀▀ 
-# ███▄█▄███ ███▀▀██▄  ███  ▀████ ███▀▀███ ██ ██ ██▄█▀ ██ ██  ██   
-#  ▀█████▀  ███  ▀███ ███    ███ ███  ███ ▀████ ▀█▄▄▄ ██ ██  ██   
-#       ▀▀                                   ██                   
-#                                          ▀▀▀                    
+class TestSequentialSweep(unittest.TestCase):
+    """Task 3: one env.step() is one micro-decision for env.active_node;
+    interior nodes are visited strictly left-to-right, and the LAST interior
+    node's micro-step is the tick boundary (age_links + auto_entangle)."""
+
+    def test_observation_is_11_features_with_active_and_relpos(self):
+        env = _perfect_env(5)
+        env.reset()
+        obs = env.get_observation()
+        self.assertEqual(obs["x"].shape[1], 11)
+        active = env.active_node
+        self.assertEqual(obs["x"][active, 9], 1.0)
+        self.assertEqual(obs["x"][:, 9].sum(), 1.0)
+        self.assertAlmostEqual(float(obs["x"][4, 10]), 1.0, places=6)  # dest
+        self.assertEqual(float(obs["x"][0, 10]), 0.0)                  # source
+
+    def test_sweep_visits_interior_left_to_right_then_tick_boundary(self):
+        # info["active_node"] names the node that just acted (unlike
+        # next_active_node, it is NOT advanced before being reported).
+        env = _perfect_env(5)
+        env.reset()
+        acted = []
+        info = None
+        for _ in range(3):  # interior nodes 1, 2, 3 act in order
+            _, _, _, info = env.step(NOOP)
+            acted.append(info["active_node"])
+        self.assertEqual(acted, [1, 2, 3])
+        self.assertTrue(info["tick_boundary"])
+
+    def test_intra_tick_gamma_one_boundary_gamma_tick(self):
+        env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=30,
+                     F0=1.0, channel_loss=0.0, max_steps=50, gamma=0.9,
+                     rng=np.random.default_rng(0))
+        env.reset()
+        _, _, _, i1 = env.step(NOOP)   # node 1 -> intra-tick
+        self.assertEqual(i1["gamma_eff"], 1.0)
+        self.assertFalse(i1["tick_boundary"])
+        _, _, _, i2 = env.step(NOOP)   # node 2 -> intra-tick
+        _, _, _, i3 = env.step(NOOP)   # node 3 -> boundary
+        self.assertEqual(i3["gamma_eff"], 0.9)
+        self.assertTrue(i3["tick_boundary"])
+
+    def test_step_cost_charged_once_per_tick_at_boundary(self):
+        # p_gen=0: no links ever form, Phi stays 0 throughout -> intra-tick
+        # rewards are pure (zero) shaping; the boundary reward is exactly
+        # STEP_COST.
+        env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.0, max_steps=50,
+                     rng=np.random.default_rng(0))
+        env.reset()
+        _, r1, _, i1 = env.step(NOOP)
+        _, r2, _, i2 = env.step(NOOP)
+        _, r3, _, i3 = env.step(NOOP)
+        self.assertAlmostEqual(r1, 0.0)
+        self.assertAlmostEqual(r2, 0.0)
+        self.assertTrue(i3["tick_boundary"])
+        self.assertAlmostEqual(r3, QRNEnv.STEP_COST)
+
+    def test_delivery_terminates_mid_sweep_on_closing_node(self):
+        # 4-node chain, interior [1, 2]. Manually wire 0<->1 and 1<->3 so a
+        # SWAP at node 1 (the FIRST interior node) closes source->dest
+        # directly, mid-sweep -- node 2 never gets to act this tick.
+        env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=30,
+                     F0=1.0, channel_loss=0.0, max_steps=50,
+                     rng=np.random.default_rng(3))
+        env.reset()
+        env.net.reset()
+        from simulator.repeater import fidelity_to_werner, LEFT, RIGHT
+        q0 = env.net.repeaters[0].allocate_qubit(RIGHT)
+        q1a = env.net.repeaters[1].allocate_qubit(LEFT)
+        p = fidelity_to_werner(0.99)
+        env.net.repeaters[0].set_link(q0, 1, q1a, p)
+        env.net.repeaters[1].set_link(q1a, 0, q0, p)
+
+        q1b = env.net.repeaters[1].allocate_qubit(RIGHT)
+        q3 = env.net.repeaters[3].allocate_qubit(LEFT)
+        env.net.repeaters[1].set_link(q1b, 3, q3, p)
+        env.net.repeaters[3].set_link(q3, 1, q1b, p)
+
+        self.assertEqual(env.active_node, 1)   # first interior node, unchanged
+        phi_before = env._phi
+        _, reward, done, info = env.step(SWAP)
+        self.assertTrue(info["terminated"])
+        self.assertEqual(info["active_node"], 1)
+        self.assertTrue(done)
+        expected = info["fidelity"] * QRNEnv.SUCCESS_REWARD - phi_before
+        self.assertAlmostEqual(reward, expected)
+
+
+
+#   ▄▄▄▄▄   ▄▄▄▄▄▄▄   ▄▄▄    ▄▄▄   ▄▄▄▄
+# ▄███████▄ ███▀▀███▄ ████▄  ███ ▄██▀▀██▄                    ██
+# ███   ███ ███▄▄███▀ ███▀██▄███ ███  ███ ▄████ ▄█▀█▄ ████▄ ▀██▀▀
+# ███▄█▄███ ███▀▀██▄  ███  ▀████ ███▀▀███ ██ ██ ██▄█▀ ██ ██  ██
+#  ▀█████▀  ███  ▀███ ███    ███ ███  ███ ▀████ ▀█▄▄▄ ██ ██  ██
+#       ▀▀                                   ██
+#                                          ▀▀▀
 
 class TestSelectActions(unittest.TestCase):
     """
@@ -803,47 +907,37 @@ class TestReplayBuffer(unittest.TestCase):
 
 class TestTargetNodeActionInjection(unittest.TestCase):
     """
-    The environment must silently overwrite any non-NOOP action on source
-    or destination nodes.  If it did not, the RL agent could learn to
-    perform swaps at endpoint repeaters — a physically meaningless operation
-    that corrupts the reward signal.
+    Source and destination must never be able to act. Under the serialized
+    sweep this is now a STRUCTURAL invariant (they are never members of
+    `env._interior`, so `env.active_node` can never equal them) rather than
+    an action-array override -- verify the invariant holds across a full
+    rollout regardless of what action is issued each micro-step.
     """
 
     def setUp(self):
         self.env = _perfect_env(5)
         self.env.reset()
 
-    def test_swap_at_source_overwritten_to_noop(self):
-        actions = np.zeros(self.env.N, dtype=np.int32)
-        actions[self.env.source] = SWAP
-        _, _, _, info = self.env.step(actions)
-        self.assertEqual(info["actions"][self.env.source], NOOP,
-                         "SWAP at source must be silently overwritten to NOOP.")
+    def test_active_node_never_source_or_dest(self):
+        for _ in range(3 * self.env.max_steps):
+            self.assertNotEqual(self.env.active_node, self.env.source)
+            self.assertNotEqual(self.env.active_node, self.env.dest)
+            _, _, done, info = self.env.step(SWAP)
+            if info["next_active_node"] != -1:
+                self.assertNotEqual(info["next_active_node"], self.env.source)
+                self.assertNotEqual(info["next_active_node"], self.env.dest)
+            if done:
+                break
 
-    def test_purify_at_dest_overwritten_to_noop(self):
-        actions = np.zeros(self.env.N, dtype=np.int32)
-        actions[self.env.dest] = PURIFY
-        _, _, _, info = self.env.step(actions)
-        self.assertEqual(info["actions"][self.env.dest], NOOP,
-                         "PURIFY at dest must be silently overwritten to NOOP.")
-
-    def test_both_endpoints_overwritten_simultaneously(self):
-        actions = np.full(self.env.N, SWAP, dtype=np.int32)
-        _, _, _, info = self.env.step(actions)
-        self.assertEqual(info["actions"][self.env.source], NOOP)
-        self.assertEqual(info["actions"][self.env.dest], NOOP)
-
-    def test_interior_actions_not_overwritten(self):
-        # Interior nodes must keep their assigned actions.
-        actions = np.full(self.env.N, NOOP, dtype=np.int32)
-        interior = [i for i in range(self.env.N)
-                    if i != self.env.source and i != self.env.dest]
-        for i in interior:
-            actions[i] = SWAP
-        _, _, _, info = self.env.step(actions)
-        for i in interior:
-            self.assertEqual(info["actions"][i], SWAP,
-                             f"Interior node {i} action must not be overwritten.")
+    def test_sweep_targets_are_exactly_the_interior_nodes(self):
+        # One full left-to-right sweep must visit exactly _interior, in order
+        # (info["active_node"] names the node that just acted each call).
+        expected = list(self.env._interior)
+        seen = []
+        for _ in range(len(expected)):
+            _, _, _, info = self.env.step(NOOP)
+            seen.append(info["active_node"])
+        self.assertEqual(seen, expected)
 
 
 class TestHeterogeneousGraphBatching(unittest.TestCase):
@@ -1001,6 +1095,9 @@ class TestEnvRewireCorrectness(unittest.TestCase):
     working e2e detection), not byte-reproduction of the old numpy engine.
     """
 
+    @pytest.mark.xfail(reason="pending Task 4: strategies.swap_asap still returns a "
+                              "per-node (N,) action array, incompatible with the new "
+                              "scalar env.step(action:int) contract", strict=False)
     def test_swap_asap_rollout_is_valid(self):
         import numpy as np
         from rl_stack.env_wrapper import QRNEnv
@@ -1024,6 +1121,9 @@ class TestEnvRewireCorrectness(unittest.TestCase):
             if done:
                 break
 
+    @pytest.mark.xfail(reason="pending Task 4: strategies.swap_asap still returns a "
+                              "per-node (N,) action array, incompatible with the new "
+                              "scalar env.step(action:int) contract", strict=False)
     def test_e2e_detection_terminates(self):
         import numpy as np
         from rl_stack.env_wrapper import QRNEnv
@@ -1042,24 +1142,28 @@ class TestEnvRewireCorrectness(unittest.TestCase):
 
 
 def test_step_reports_terminated_vs_truncated():
-    # max_steps=1, impossible delivery (p_gen=0) -> must truncate, not terminate
+    # max_steps=1, impossible delivery (p_gen=0) -> must truncate, not terminate.
+    # n_repeaters=4 -> 2 interior nodes; drive the full sweep to the tick boundary.
     env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=0.0, p_swap=1.0, cutoff=20,
                  max_steps=1, topology="chain", rng=np.random.default_rng(0))
     env.reset()
-    _, _, done, info = env.step(np.zeros(env.N, dtype=int))
+    info = {"tick_boundary": False}
+    while not info["tick_boundary"]:
+        _, _, done, info = env.step(NOOP)
     assert done is True
     assert info["truncated"] is True
     assert info["terminated"] is False
 
 
 def test_step_win_is_terminated_not_truncated():
-    # easy 2-node chain: delivers fast -> terminated True, truncated False
+    # easy 2-node chain: delivers fast -> terminated True, truncated False.
+    # N=2 has no interior nodes (the reset() empty-_interior edge case).
     env = QRNEnv(n_repeaters=2, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
                  max_steps=50, topology="chain", rng=np.random.default_rng(0))
     env.reset()
     saw_win = False
     for _ in range(50):
-        _, _, done, info = env.step(np.zeros(env.N, dtype=int))
+        _, _, done, info = env.step(NOOP)
         if done:
             saw_win = info["terminated"]
             assert info["terminated"] != info["truncated"]
