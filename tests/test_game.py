@@ -225,11 +225,18 @@ def test_train_records_ticks_not_env_steps_on_mid_sweep_delivery(monkeypatch):
     call_count = {"n": 0}
 
     def forced_step(self, action):
+        # Capture steps BEFORE calling through: for N=3 there is only one
+        # interior node, so its micro-step is ALSO the tick boundary and
+        # orig_step may increment self.steps internally as part of resolving
+        # it -- reading self.steps after the call would then race against
+        # that increment (flaky). The pre-call value is always 0 here, which
+        # is what "env.steps has NOT advanced yet" means.
+        steps_before = self.steps
         obs, reward, done, info = orig_step(self, action)
         if call_count["n"] == 0:
             call_count["n"] += 1
             info = dict(info)
-            info["ticks"] = self.steps + 1   # env.steps has NOT advanced yet
+            info["ticks"] = steps_before + 1   # env.steps had NOT advanced yet
             info["terminated"] = True
             info["fidelity"] = 0.9
             return obs, reward, True, info
