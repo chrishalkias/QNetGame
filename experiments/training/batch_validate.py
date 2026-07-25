@@ -154,13 +154,15 @@ def _pilot_swap_asap(
             rng=np.random.default_rng(rng.integers(2**32)),
         )
         obs = env.reset()
-        for step in range(max_steps):
+        info = {}
+        while not env.done and env.steps < max_steps:
             actions = swap_asap(env)
             obs, _, done, info = env.step(actions)
             if done:
                 break
         fid = info.get("fidelity", 0.0)
-        times.append(step + 1 if done and fid > 0 else max_steps)
+        delivered = bool(info.get("terminated")) and fid > 0
+        times.append(info["ticks"] if delivered else max_steps)
     return times
 
 
@@ -210,19 +212,22 @@ def run_comparison(
                 rng=np.random.default_rng(rng.integers(2**32)),
             )
             obs = env.reset()
+            info = {}
 
-            for step in range(cfg.max_steps):
+            while not env.done and env.steps < cfg.max_steps:
                 if use_agent:
-                    mask = env.get_action_mask()
-                    actions = agent.select_actions(obs, mask, training=False)
+                    mask_row = env.get_action_mask()[env.active_node]
+                    action = agent.select_action(obs, mask_row, env.active_node,
+                                                 training=False)
                 else:
-                    actions = baseline_fn(env)
-                obs, _, done, info = env.step(actions)
+                    action = baseline_fn(env)
+                obs, _, done, info = env.step(action)
                 if done:
                     break
 
             fid = info.get("fidelity", 0.0)
-            delivery = step + 1 if done and fid > 0 else cfg.max_steps
+            delivered = bool(info.get("terminated")) and fid > 0
+            delivery = info["ticks"] if delivered else cfg.max_steps
             result[label].append(delivery)
             if fid > 0:
                 successes[f"{label}_succ"] += 1

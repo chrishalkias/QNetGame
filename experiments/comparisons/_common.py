@@ -51,14 +51,14 @@ def eval_stats(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=42,
                      F0=1.0, channel_loss=0.0, max_steps=H,
                      topology="chain", rng=np.random.default_rng(int(rng.integers(2**32))))
         obs = env.reset()
-        step, done, info = 0, False, {}
-        for step in range(H):
+        info = {}
+        while not env.done and env.steps < H:
             obs, _, done, info = env.step(policy_fn(env, obs))
             if done:
                 break
         F = info.get("fidelity", 0.0)
-        connected = bool(done) and F > 0
-        times.append(step + 1 if connected else H)
+        connected = bool(info.get("terminated")) and F > 0
+        times.append(info["ticks"] if connected else H)
         if connected:
             conn_fids.append(float(F))
     _se = lambda x: float(np.std(x) / math.sqrt(len(x))) if len(x) else 0.0
@@ -83,14 +83,14 @@ def eval_T_and_F(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=42):
                      F0=1.0, channel_loss=0.0, max_steps=H,
                      topology="chain", rng=np.random.default_rng(int(rng.integers(2**32))))
         obs = env.reset()
-        step, done, info = 0, False, {}
-        for step in range(H):
+        info = {}
+        while not env.done and env.steps < H:
             obs, _, done, info = env.step(policy_fn(env, obs))
             if done:
                 break
         F = info.get("fidelity", 0.0)
-        delivered = bool(done) and F > 0
-        times.append(step + 1 if delivered else H)
+        delivered = bool(info.get("terminated")) and F > 0
+        times.append(info["ticks"] if delivered else H)
         if delivered:
             fids.append(float(F))
     T = np.asarray(times, float)
@@ -110,12 +110,10 @@ def action_fractions(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, mc_eps, seed=
                      F0=1.0, channel_loss=0.0, max_steps=H,
                      topology="chain", rng=np.random.default_rng(int(rng.integers(2**32))))
         obs = env.reset()
-        for _ in range(H):
-            acts = policy_fn(env, obs)
-            for i in range(env.N):
-                if i not in (env.source, env.dest):
-                    counts[int(acts[i])] += 1
-            obs, _, done, _ = env.step(acts)
+        while not env.done and env.steps < H:
+            a = int(policy_fn(env, obs))
+            counts[a] += 1
+            obs, _, done, _ = env.step(a)
             if done:
                 break
     return (counts / max(counts.sum(), 1)).tolist()   # [f_noop, f_swap, f_purify]

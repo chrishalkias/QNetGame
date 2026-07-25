@@ -56,13 +56,13 @@ class WinnabilityCache:
                 channel_loss=self.channel_loss, F0=self.F0, topology="chain",
                 rng=np.random.default_rng(self.rng.integers(2**32)))
             env.reset()
-            for _ in range(self.probe_steps):
+            info = {}
+            while not env.done and env.steps < self.probe_steps:
                 _, _, done, info = env.step(strategies.purify_then_swap(env))
-                if info.get("terminated"):   # delivered (a win, not a timeout)
-                    deliveries += 1
-                    break
                 if done:
                     break
+            if info.get("terminated"):   # delivered (a win, not a timeout)
+                deliveries += 1
             if deliveries >= self.min_deliveries:
                 break
         result = deliveries >= self.min_deliveries

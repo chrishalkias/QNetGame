@@ -63,14 +63,14 @@ def _rollout(fn, N, n_ch, p_gen, p_swap, cutoff, ep_seed, H, pg_std, ps_std):
                  F0=1.0, channel_loss=0.0, max_steps=H,
                  topology="chain", rng=np.random.default_rng(ep_seed))
     obs = env.reset()
-    step, done, info = 0, False, {}
-    for step in range(H):
+    info = {}
+    while not env.done and env.steps < H:
         obs, _, done, info = env.step(fn(env, obs))
         if done:
             break
     F = float(info.get("fidelity", 0.0))
-    delivered = bool(done) and F > 0
-    return (step + 1 if delivered else H), (F if delivered else None), int(delivered)
+    delivered = bool(info.get("terminated")) and F > 0
+    return (info["ticks"] if delivered else H), (F if delivered else None), int(delivered)
 
 
 def run_eval(a):

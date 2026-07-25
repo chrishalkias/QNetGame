@@ -20,6 +20,16 @@ def test_results_are_cached_per_bin():
     assert wc.pilot_calls == calls
 
 
+def test_ticks_not_microsteps_large_n_not_wrongly_pruned():
+    # Regression for the tick/micro-step mixup: probe_steps must be read as
+    # TICKS (env.steps), not micro-decisions. At N=10 (8 interior nodes) a
+    # micro-step-counting pilot only covers probe_steps/8 ticks, which can
+    # wrongly mark a winnable cell unwinnable. seed=5 with these params is a
+    # verified divergence point (pre-fix: unwinnable; post-fix: winnable).
+    wc = WinnabilityCache(n_pilots=5, probe_steps=1000, seed=5)
+    assert wc.winnable(p_gen=0.4, p_swap=0.5, cutoff=25, n_repeaters=10, n_ch=2)
+
+
 def test_oracle_is_purify_then_swap(monkeypatch):
     calls = {"n": 0}
     real = strategies.purify_then_swap
