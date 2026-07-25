@@ -47,7 +47,7 @@ from matplotlib.colors import to_rgba
                 #                    ██                      
                 #                    ▀▀       
                               
-NODE_DIM = 9   # must match env_wrapper get_observation feature count
+NODE_DIM = 11  # must match env_wrapper get_observation feature count
 
 def _obs_to_data(obs: Dict[str, np.ndarray], device="cpu") -> Data:
     x = torch.tensor(obs["x"], dtype=torch.float32, device=device)
@@ -118,13 +118,19 @@ _ACTION_HATCH = {NOOP: "", SWAP: "///", PURIFY: "..."}
                       
 
 class QRNAgent:
-    """                                                       
+    """
     Double-DQN agent with per-node Q-values on a GNN backbone.
 
-    The agent selects one of {noop, swap, purify} for every node.
-    Training uses shared global reward broadcast to each node.
-    The successor action mask is stored in the buffer and applied
-    during target Q-value computation to ensure physical validity.
+    The env runs a SERIALIZED per-node sweep (one micro-decision at
+    env.active_node per env.step call), so training is per-decision: each
+    replay transition is ONE node's (state, action, reward, next-state)
+    at its active node, with its own gamma_eff (1.0 intra-tick, self.gamma
+    at the tick boundary) and terminated flag. train_step gathers exactly
+    one Q-value per transition, at the batched-graph global index of that
+    transition's active node (`Batch.ptr[b] + ai_b`).
+    The successor action mask (for the ACTIVE node at the next micro-step)
+    is stored in the buffer and applied during target Q-value computation
+    to ensure physical validity.
     """
 
     def __init__(self, node_dim = NODE_DIM, hidden = 64,
@@ -178,7 +184,22 @@ class QRNAgent:
             q[~mask_t] = -float("inf")
 
         return q.argmax(dim=1).cpu().numpy().astype(np.int32)
-    
+
+    def select_action(self, obs: Dict[str, np.ndarray], mask_row: np.ndarray,
+                      active_node: int, training: bool = True) -> int:
+        """ε-greedy scalar action for ONE node: env.active_node, the sole
+        node deciding at this micro-step. `mask_row` is that node's (3,)
+        action mask."""
+        if training and self.rng.random() < self.epsilon:
+            valid = np.flatnonzero(mask_row)
+            return int(self.rng.choice(valid)) if len(valid) else NOOP
+
+        data = _obs_to_data(obs, self.device)
+        with torch.no_grad():
+            q = self.policy_net(data)[active_node].clone()
+            q[~torch.tensor(mask_row, dtype=torch.bool, device=self.device)] = -float("inf")
+        return int(q.argmax().item())
+
 
                                                   
         #  ▄▄▄▄▄▄▄                      ▄▄▄▄▄▄▄             
@@ -191,7 +212,12 @@ class QRNAgent:
 
 
     def train_step(self) -> Optional[float]:
-        """Sample batch, compute masked Double-DQN loss, backprop."""
+        """Sample batch, compute masked Double-DQN loss AT THE ACTIVE NODE of
+        each transition, backprop. One Q-value per transition (not one per
+        node per graph): gathered at the batched-graph global index
+        `Batch.ptr[b] + ai_b`. Per-transition gamma_eff (1.0 intra-tick,
+        self.gamma at the tick boundary) and terminated flag drive the
+        target, not fixed per-graph scalars."""
         if self.memory.size() < self.batch_size:
             return None
 
@@ -202,39 +228,41 @@ class QRNAgent:
         next_states = Batch.from_data_list(
             [_as_data(t, "s_") for t in batch]).to(self.device)
 
-        # Per-graph scalars → broadcast to every node
-        rewards_pg = torch.tensor(
-            [t["r"] for t in batch], dtype=torch.float32, device=self.device)
-        dones_pg = torch.tensor(
-            [float(t["d"]) for t in batch], dtype=torch.float32, device=self.device)
-
-        node_to_graph = states.batch
-        rewards = rewards_pg[node_to_graph]
-        dones   = dones_pg[node_to_graph]
-
-        # Per-node actions / next masks: concatenate in NumPy, then ONE tensor
-        # call each (vs a torch.tensor per transition + torch.cat).
         actions = torch.tensor(
-            np.concatenate([t["a"] for t in batch]),
-            dtype=torch.long, device=self.device)
-        next_masks = torch.tensor(
-            np.concatenate([t["m_"] for t in batch]),
-            dtype=torch.bool, device=self.device)
+            [t["a"] for t in batch], dtype=torch.long, device=self.device)
+        rewards = torch.tensor(
+            [t["r"] for t in batch], dtype=torch.float32, device=self.device)
+        gammas = torch.tensor(
+            [t["g"] for t in batch], dtype=torch.float32, device=self.device)
+        dones = torch.tensor(
+            [float(t["d"]) for t in batch], dtype=torch.float32, device=self.device)
+        next_mask_rows = torch.tensor(
+            np.stack([t["m_"] for t in batch]), dtype=torch.bool, device=self.device)
 
-        # -- Current Q(s, a) --
-        q_all    = self.policy_net(states)
-        current_q = q_all.gather(1, actions.unsqueeze(1)).squeeze(1)
+        # Batched-graph global index of each transition's active node:
+        # graph b's nodes start at ptr[b], so its active node is ptr[b] + ai_b.
+        ptr = states.ptr[:-1]
+        act_idx = ptr + torch.tensor(
+            [t["ai"] for t in batch], dtype=torch.long, device=self.device)
 
-        # -- Target Q (Double DQN with masked next actions) --
+        # -- Current Q(s, a) at the active node --
+        q_all     = self.policy_net(states)
+        current_q = q_all[act_idx].gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        # -- Target Q (Double DQN with masked next actions), per-transition γ --
         with torch.no_grad():
-            next_q_policy = self.policy_net(next_states)
-            next_q_policy[~next_masks] = -float("inf")   # took alot time finding this bug...
+            nptr = next_states.ptr[:-1]
+            next_idx = nptr + torch.tensor(
+                [t["nai"] for t in batch], dtype=torch.long, device=self.device)
+
+            next_q_policy = self.policy_net(next_states)[next_idx].clone()
+            next_q_policy[~next_mask_rows] = -float("inf")   # took alot time finding this bug...
             best_actions = next_q_policy.argmax(dim=1)
 
-            next_q_target = self.target_net(next_states)
+            next_q_target = self.target_net(next_states)[next_idx]
             next_q = next_q_target.gather(1, best_actions.unsqueeze(1)).squeeze(1)
 
-            target_q = rewards + self.gamma * next_q * (1.0 - dones)
+            target_q = rewards + gammas * next_q * (1.0 - dones)
 
         loss = self.loss_fn(current_q, target_q)
 
@@ -489,21 +517,31 @@ class QRNAgent:
                 score = 0.0
                 ep_loss = []
 
-                for _ in range(max_steps):
-                    mask    = env.get_action_mask()
+                # Serialized per-node sweep: one micro-decision at
+                # env.active_node per env.step call. `max_steps` (ticks) is
+                # enforced inside the env itself (truncation), so the loop
+                # just runs to `done`.
+                while True:
+                    r_node = env.active_node
+                    mask_row = env.get_action_mask()[r_node]
                     if disable_actions:
-                        mask[:, disable_actions] = False
-                    actions = self.select_actions(obs=obs, mask=mask, training=True)
+                        mask_row = mask_row.copy()
+                        for d in disable_actions:
+                            mask_row[d] = False
+                    a = self.select_action(obs, mask_row, r_node, training=True)
 
-                    next_obs, reward, done, info = env.step(actions)
-                    next_mask = env.get_action_mask()
+                    next_obs, reward, done, info = env.step(a)
+                    nai = (info["next_active_node"]
+                           if info["next_active_node"] >= 0 else r_node)
+                    next_mask = env.get_action_mask()[nai].copy()
                     if disable_actions:
-                        next_mask[:, disable_actions] = False
+                        for d in disable_actions:
+                            next_mask[d] = False
 
                     # store terminated (not done): timeouts (truncated) must
                     # bootstrap V(s') in the DQN target, only true wins zero it.
-                    self.memory.add(obs, actions, reward,
-                                    next_obs, info["terminated"], next_mask)
+                    self.memory.add(obs, a, r_node, reward, next_obs, nai,
+                                    next_mask, info["terminated"], info["gamma_eff"])
 
                     loss = self.train_step()
                     if loss is not None:
@@ -619,25 +657,32 @@ class QRNAgent:
             json.dump(metrics, f, default=float)   # default=float coerces np types
 
     def _cmp_rollout(self, args, seed, policy, max_steps, disable_actions=()):
-        """One episode on a freshly SEEDED network (so all policies are paired on
-        the same net). Returns (return, steps, success): `steps` = episode length
-        (max_steps if undelivered), `success` = 1.0 if the e2e link was
-        delivered. Return mixes speed/fidelity/action-economy; steps+success are
-        the pure task metrics (delivery time, delivery rate).
+        """One episode on a freshly SEEDED network (so all policies are paired
+        on the same net), driven one micro-step at a time (the serialized
+        sweep; env self-truncates at `max_steps` ticks). Returns
+        (return, steps, success): `steps` = ticks elapsed (env.steps),
+        `success` = 1.0 if the e2e link was delivered. Return mixes
+        speed/fidelity/action-economy; steps+success are the pure task
+        metrics (delivery time, delivery rate).
 
-        `policy`: 'agent' (greedy, eps-free), 'swap' (swap-asap), 'rand' (random),
-        or a callable(env, obs) -> actions (an extra baseline, e.g. the optimum).
-        Used only by --compare; never touches the agent's training rollout."""
+        `policy`: 'agent' (greedy, eps-free), 'swap' (swap-asap), 'rand'
+        (random), or a callable(env, obs) -> (N,) actions (an extra
+        baseline, e.g. the optimum). Each still yields a full (N,) action
+        array per micro-step (matching strategies.py, unchanged); only the
+        ACTIVE node's entry is applied that micro-step -- the array is
+        recomputed fresh every micro-step so every policy sees the current
+        state. Used only by --compare / the eval probe; never touches the
+        agent's training rollout."""
         env = QRNEnv(**args, rng=np.random.default_rng(seed))
         obs = env.reset()
         rand_rng = np.random.default_rng((seed ^ 0x9E3779B9) & 0xFFFFFFFF)
         ret = 0.0
-        steps = max_steps
         success = 0.0
-        for t in range(max_steps):
+        while True:
             mask = env.get_action_mask()
             if disable_actions:
                 mask[:, disable_actions] = False
+            r_node = env.active_node
             if policy == 'agent':
                 acts = self.select_actions(obs, mask, training=False)
             elif policy == 'swap':
@@ -646,13 +691,12 @@ class QRNAgent:
                 acts = strategies.random_policy(env, rand_rng)
             else:                      # callable extra baseline
                 acts = policy(env, obs)
-            obs, r, done, info = env.step(acts)
+            obs, r, done, info = env.step(int(acts[r_node]))
             ret += r
             if done:
-                steps = t + 1
                 success = 1.0 if info.get("fidelity", 0.0) > 0 else 0.0
                 break
-        return float(ret), int(steps), float(success)
+        return float(ret), int(env.steps), float(success)
 
 
         # ▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ 
@@ -730,28 +774,37 @@ class QRNAgent:
                 done = False
                 fid  = 0.0
                 ep_actions = []
+                # Sweep is serialized (one node decides per micro-step); a
+                # tick_row accumulates one action per node, one row per tick,
+                # to keep the (N,) per-tick timeline shape _plot_timeline_grid
+                # expects, matching the pre-Task-4 simultaneous-tick model.
+                tick_row = np.zeros(env.N, dtype=np.int32)
 
-                for step in range(max_steps):
+                while True:
                     mask = env.get_action_mask()
+                    r_node = env.active_node
                     if name == "Agent":
                         acts = self.select_actions(obs, mask, training=False)
                     elif name == "Random":
                         acts = strategies.random_policy(env, action_rng)
                     else:
                         acts = fn(env)
+                    a = int(acts[r_node])
+                    tick_row[r_node] = a
 
-                    if plot_actions:
-                        ep_actions.append(acts.copy())
-
-                    obs, reward, done, info = env.step(acts)
+                    obs, reward, done, info = env.step(a)
                     fid = info.get("fidelity", 0.0)
+
+                    if plot_actions and (info["tick_boundary"] or done):
+                        ep_actions.append(tick_row.copy())
+                        tick_row = np.zeros(env.N, dtype=np.int32)
 
                     if done:
                         break
 
                 succeeded = done and fid > 0
                 if succeeded:
-                    results[name]["steps"].append(step + 1)
+                    results[name]["steps"].append(env.steps)
                     results[name]["fidelities"].append(fid)
                 results[name]["total"] += 1
 

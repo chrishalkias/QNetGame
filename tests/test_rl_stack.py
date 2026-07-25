@@ -77,17 +77,135 @@ def _dummy_mask(n_nodes, force_noop_only=False):
     return mask
 
 
+def _dummy_mask_row(force_noop_only=False):
+    """(3,) bool row for ONE node's next-state mask; NOOP always True."""
+    m = np.zeros(N_ACTIONS, dtype=bool)
+    m[NOOP] = True
+    if not force_noop_only:
+        m[SWAP] = True
+        m[PURIFY] = True
+    return m
+
+
 def _fill_buffer(buf, n_transitions=100, n_nodes=5):
-    """Push n_transitions into buf with random data."""
+    """Push n_transitions of per-decision transitions into buf with random data."""
     for _ in range(n_transitions):
         obs  = _dummy_obs(n_nodes)
         nobs = _dummy_obs(n_nodes)
-        mask = _dummy_mask(n_nodes)
-        acts = np.random.randint(0, N_ACTIONS, size=n_nodes).astype(np.int32)
-        buf.add(obs, acts, float(np.random.randn()), nobs, False, mask)
+        ai   = int(np.random.randint(0, n_nodes))
+        nai  = int(np.random.randint(0, n_nodes))
+        a    = int(np.random.randint(0, N_ACTIONS))
+        buf.add(obs, a, ai, float(np.random.randn()), nobs, nai,
+                _dummy_mask_row(), False, 1.0)
 
 
-                                                                        
+# -- Task 4: per-decision DQN contract (buffer.add / train_step active-node
+#    gather / terminated-vs-truncated bootstrapping) --------------------------
+
+def test_buffer_stores_per_decision_fields():
+    buf = ReplayBuffer(10)
+    s  = _dummy_obs(4)
+    s2 = _dummy_obs(4)
+    buf.add(s, 1, 2, 0.5, s2, 3, np.array([True, False, True]), False, 1.0)
+    e = buf.buffer[0]
+    assert e["ai"] == 2 and e["nai"] == 3 and e["g"] == 1.0 and e["d"] is False
+    assert e["a"] == 1 and e["r"] == 0.5
+
+
+def test_train_step_gathers_active_node_and_uses_gamma_eff():
+    """train_step must gather Q at the batched-graph ACTIVE node index
+    (ptr[b] + ai), not node 0, and must use each transition's own gamma_eff
+    (not a fixed agent.gamma) in the target."""
+    torch.manual_seed(0)
+    agent = QRNAgent(node_dim=8, hidden=16, batch_size=2)
+    n = 4
+    obs1, nobs1 = _dummy_obs(n), _dummy_obs(n)
+    obs2, nobs2 = _dummy_obs(n), _dummy_obs(n)
+    ai1, nai1 = 2, 3            # active node != 0 -> catches a node-0 bug
+    ai2, nai2 = 1, 0
+    agent.memory.add(obs1, SWAP, ai1, 0.3, nobs1, nai1, _dummy_mask_row(), False, 1.0)
+    agent.memory.add(obs2, PURIFY, ai2, -0.2, nobs2, nai2, _dummy_mask_row(), False, 0.995)
+
+    fixed_batch = list(agent.memory.buffer)
+    agent.memory.sample = lambda n: fixed_batch  # pin the batch for hand-checking
+
+    # -- hand-replicate the expected loss on the CURRENT (pre-update) weights --
+    states = Batch.from_data_list([_obs_to_data(t["s"]) for t in fixed_batch]).to(agent.device)
+    next_states = Batch.from_data_list([_obs_to_data(t["s_"]) for t in fixed_batch]).to(agent.device)
+    ptr = states.ptr[:-1]
+    actions = torch.tensor([t["a"] for t in fixed_batch], dtype=torch.long)
+    with torch.no_grad():
+        q_all = agent.policy_net(states)
+        correct_idx = ptr + torch.tensor([t["ai"] for t in fixed_batch])
+        current_q = q_all[correct_idx].gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        nptr = next_states.ptr[:-1]
+        nidx = nptr + torch.tensor([t["nai"] for t in fixed_batch])
+        next_masks = torch.tensor(np.stack([t["m_"] for t in fixed_batch]), dtype=torch.bool)
+        nqp = agent.policy_net(next_states)[nidx].clone()
+        nqp[~next_masks] = -float("inf")
+        best = nqp.argmax(1)
+        nq = agent.target_net(next_states)[nidx].gather(1, best.unsqueeze(1)).squeeze(1)
+
+        rewards = torch.tensor([t["r"] for t in fixed_batch], dtype=torch.float32)
+        gammas  = torch.tensor([t["g"] for t in fixed_batch], dtype=torch.float32)
+        dones   = torch.tensor([float(t["d"]) for t in fixed_batch])
+        target_q = rewards + gammas * nq * (1.0 - dones)
+        expected_loss = torch.nn.SmoothL1Loss()(current_q, target_q).item()
+
+        # regression guard: gathering at node 0 (ignoring "ai") would give a
+        # DIFFERENT current_q with overwhelming probability on a random net.
+        wrong_q = q_all[ptr].gather(1, actions.unsqueeze(1)).squeeze(1)
+        assert not torch.allclose(wrong_q, current_q)
+
+    loss = agent.train_step()
+    assert loss is not None
+    assert math.isclose(loss, expected_loss, rel_tol=1e-4, abs_tol=1e-6)
+
+
+def test_target_uses_terminated_not_truncated():
+    """A truncation (timeout) transition stores terminated=False (d=False)
+    even though the episode ended, with gamma_eff=agent.gamma (the tick-
+    boundary rate) -- the target must still bootstrap next_q, unlike a real
+    terminal delivery which stores d=True and zeroes the bootstrap term."""
+    torch.manual_seed(0)
+    agent = QRNAgent(node_dim=8, hidden=16, batch_size=1)
+    n = 3
+    obs, nobs = _dummy_obs(n), _dummy_obs(n)
+    agent.memory.add(obs, SWAP, 1, -0.01, nobs, 1, _dummy_mask_row(),
+                     False, agent.gamma)
+    batch = list(agent.memory.buffer)
+    agent.memory.sample = lambda n: batch
+
+    states = Batch.from_data_list([_obs_to_data(t["s"]) for t in batch]).to(agent.device)
+    next_states = Batch.from_data_list([_obs_to_data(t["s_"]) for t in batch]).to(agent.device)
+    ptr = states.ptr[:-1]
+    act_idx = ptr + torch.tensor([t["ai"] for t in batch])
+    actions = torch.tensor([t["a"] for t in batch], dtype=torch.long)
+    with torch.no_grad():
+        current_q = agent.policy_net(states)[act_idx].gather(1, actions.unsqueeze(1)).squeeze(1)
+        nptr = next_states.ptr[:-1]
+        nidx = nptr + torch.tensor([t["nai"] for t in batch])
+        next_masks = torch.tensor(np.stack([t["m_"] for t in batch]), dtype=torch.bool)
+        nqp = agent.policy_net(next_states)[nidx].clone()
+        nqp[~next_masks] = -float("inf")
+        best = nqp.argmax(1)
+        nq = agent.target_net(next_states)[nidx].gather(1, best.unsqueeze(1)).squeeze(1)
+        rewards = torch.tensor([t["r"] for t in batch], dtype=torch.float32)
+        gammas  = torch.tensor([t["g"] for t in batch], dtype=torch.float32)
+        dones   = torch.tensor([float(t["d"]) for t in batch])
+        target_q = rewards + gammas * nq * (1.0 - dones)
+        expected_loss = torch.nn.SmoothL1Loss()(current_q, target_q).item()
+        # the bootstrap term must be nonzero: truncation must NOT zero it
+        # the way a real terminated=True transition would.
+        assert not torch.allclose(target_q, rewards, atol=1e-6)
+
+    loss = agent.train_step()
+    assert loss is not None
+    assert math.isclose(loss, expected_loss, rel_tol=1e-4, abs_tol=1e-6)
+
+
+
 #   ▄▄▄▄               ▄▄                                                 
 # ▄██▀▀██▄             ██    ▀▀  ██                ██                     
 # ███  ███ ████▄ ▄████ ████▄ ██ ▀██▀▀ ▄█▀█▄ ▄████ ▀██▀▀ ██ ██ ████▄ ▄█▀█▄ 
@@ -125,23 +243,26 @@ class TestDoubleDQNUpdateRule(unittest.TestCase):
 
     def test_target_uses_policy_argmax(self):
         """
-        Manually replicate one Double-DQN step and verify the agent
-        produces the same best_actions as policy_net argmax on masked Q.
+        Manually replicate one Double-DQN step (at each transition's ACTIVE
+        node) and verify the agent produces the same best_actions as
+        policy_net argmax on masked Q.
         """
         agent = self.agent
         batch = agent.memory.sample(4)
 
         next_states = Batch.from_data_list(
             [_obs_to_data(t["s_"]) for t in batch]).to(agent.device)
-        next_masks = torch.cat(
-            [torch.tensor(t["m_"], dtype=torch.bool) for t in batch])
+        nptr = next_states.ptr[:-1]
+        nidx = nptr + torch.tensor([t["nai"] for t in batch], device=agent.device)
+        next_masks = torch.tensor(
+            np.stack([t["m_"] for t in batch]), dtype=torch.bool, device=agent.device)
 
         with torch.no_grad():
-            q_policy = agent.policy_net(next_states).clone()
+            q_policy = agent.policy_net(next_states)[nidx].clone()
             q_policy[~next_masks] = -float("inf")   # mask invalid
             best_actions_manual = q_policy.argmax(dim=1)
 
-            q_policy2 = agent.policy_net(next_states).clone()
+            q_policy2 = agent.policy_net(next_states)[nidx].clone()
             q_policy2[~next_masks] = -float("inf")
             best_actions_code = q_policy2.argmax(dim=1)
 
@@ -150,39 +271,39 @@ class TestDoubleDQNUpdateRule(unittest.TestCase):
 
     def test_done_mask_zeros_future_reward(self):
         """
-        When done=True the target must equal the immediate reward only
+        When terminated=True the target must equal the immediate reward only
         (no future bootstrap).  Verifies (1 - done) zeroes out γ*Q_target.
         """
         agent = self.agent
         n = 4
         obs  = _dummy_obs(n)
         nobs = _dummy_obs(n)
-        mask = _dummy_mask(n)
-        acts = np.zeros(n, dtype=np.int32)
+        m_   = _dummy_mask_row()
 
         # Push a terminal transition with reward = 1.0.
         agent.memory.clear()
         for _ in range(agent.batch_size):
-            agent.memory.add(obs, acts, 1.0, nobs, True, mask)
+            agent.memory.add(obs, NOOP, 1, 1.0, nobs, 1, m_, True, 1.0)
 
-        # The computed target should be close to 1.0 (r + γ*Q*(1-1) = r).
+        # The computed target should be close to 1.0 (r + g*Q*(1-1) = r).
         batch = agent.memory.sample(agent.batch_size)
         next_states = Batch.from_data_list(
             [_obs_to_data(t["s_"]) for t in batch]).to(agent.device)
-        dones_pg = torch.ones(agent.batch_size, device=agent.device)
-        node_to_graph = next_states.batch
-        dones = dones_pg[node_to_graph]
+        dones = torch.tensor([float(t["d"]) for t in batch], device=agent.device)
+        gammas = torch.tensor([t["g"] for t in batch], device=agent.device)
+        rewards = torch.tensor([t["r"] for t in batch], device=agent.device)
 
-        next_masks = torch.cat(
-            [torch.tensor(t["m_"], dtype=torch.bool) for t in batch])
+        nptr = next_states.ptr[:-1]
+        nidx = nptr + torch.tensor([t["nai"] for t in batch], device=agent.device)
+        next_masks = torch.tensor(
+            np.stack([t["m_"] for t in batch]), dtype=torch.bool, device=agent.device)
         with torch.no_grad():
-            nqp = agent.policy_net(next_states).clone()
+            nqp = agent.policy_net(next_states)[nidx].clone()
             nqp[~next_masks] = -float("inf")
             best = nqp.argmax(dim=1)
-            nqt  = agent.target_net(next_states)
+            nqt  = agent.target_net(next_states)[nidx]
             nq   = nqt.gather(1, best.unsqueeze(1)).squeeze(1)
-            rewards = torch.ones_like(dones)
-            target_q = rewards + agent.gamma * nq * (1.0 - dones)
+            target_q = rewards + gammas * nq * (1.0 - dones)
 
         # All targets should equal 1.0 (future reward zeroed by done flag).
         self.assertTrue(torch.allclose(target_q,
@@ -252,23 +373,24 @@ class TestActionMaskingInTargetComputation(unittest.TestCase):
         _fill_buffer(agent.memory, 10, 4)
         batch = agent.memory.sample(4)
 
-        # Build a mask that only allows NOOP (column 0).
-        noop_only_mask = np.zeros((4, N_ACTIONS), dtype=bool)
-        noop_only_mask[:, NOOP] = True
+        # Restrict every transition's next-state mask row to NOOP only.
+        noop_only_row = _dummy_mask_row(force_noop_only=True)
         for t in batch:
-            t["m_"] = noop_only_mask
+            t["m_"] = noop_only_row
 
         next_states = Batch.from_data_list(
             [_obs_to_data(t["s_"]) for t in batch]).to(agent.device)
-        next_masks = torch.cat(
-            [torch.tensor(t["m_"], dtype=torch.bool) for t in batch])
+        nptr = next_states.ptr[:-1]
+        nidx = nptr + torch.tensor([t["nai"] for t in batch], device=agent.device)
+        next_masks = torch.tensor(
+            np.stack([t["m_"] for t in batch]), dtype=torch.bool, device=agent.device)
 
         with torch.no_grad():
-            q_policy = agent.policy_net(next_states).clone()
+            q_policy = agent.policy_net(next_states)[nidx].clone()
             q_policy[~next_masks] = -float("inf")
             best = q_policy.argmax(dim=1)
 
-        # Every node must pick NOOP when it's the only valid action.
+        # Every active node must pick NOOP when it's the only valid action.
         self.assertTrue((best == NOOP).all(),
                         "Masked argmax must always select NOOP when it's the only valid action.")
 
@@ -276,11 +398,9 @@ class TestActionMaskingInTargetComputation(unittest.TestCase):
         """A training step with partially masked batches must not produce NaN loss."""
         agent = QRNAgent(node_dim=8, hidden=16, batch_size=8)
         _fill_buffer(agent.memory, 20, 5)
-        # Restrict half the buffer to NOOP-only masks.
+        # Restrict half the buffer to NOOP-only next-state masks.
         for entry in agent.memory.buffer[:10]:
-            m = np.zeros((5, N_ACTIONS), dtype=bool)
-            m[:, NOOP] = True
-            entry["m_"] = m
+            entry["m_"] = _dummy_mask_row(force_noop_only=True)
         loss = agent.train_step()
         self.assertIsNotNone(loss)
         self.assertFalse(math.isnan(loss), "Loss must not be NaN with -inf masked Q-values.")
@@ -453,7 +573,7 @@ class TestObservationFeatures(unittest.TestCase):
 
     def test_frac_available_leq_frac_occupied(self):
         x = self.obs["x"]
-        # Available ≤ occupied (locked qubits reduce availability).
+        # Available <= occupied (qubits consumed/unavailable mid-op reduce availability).
         self.assertTrue((x[:, 3] <= x[:, 0] + 1e-6).all(),
                         "frac_available must never exceed frac_occupied.")
 
@@ -756,6 +876,53 @@ class TestSelectActions(unittest.TestCase):
         np.testing.assert_array_equal(a1, a2)
 
 
+class TestSelectAction(unittest.TestCase):
+    """select_action (scalar) is the per-micro-step counterpart of
+    select_actions: it picks ONE action for env.active_node against that
+    node's (3,) mask_row, and must never violate the mask either greedily
+    or under exploration."""
+
+    def setUp(self):
+        torch.manual_seed(42)
+        np.random.seed(42)
+        self.agent = QRNAgent(node_dim=8, hidden=16)
+        self.obs   = _dummy_obs(6)
+
+    def test_greedy_respects_mask_row(self):
+        self.agent.epsilon = 0.0
+        row = _dummy_mask_row()
+        a = self.agent.select_action(self.obs, row, active_node=2, training=False)
+        self.assertTrue(row[a])
+
+    def test_exploration_respects_mask_row(self):
+        self.agent.epsilon = 1.0
+        row = _dummy_mask_row()
+        for _ in range(20):
+            a = self.agent.select_action(self.obs, row, active_node=3, training=True)
+            self.assertTrue(row[a])
+
+    def test_noop_only_row_forces_noop(self):
+        row = _dummy_mask_row(force_noop_only=True)
+        for eps in [0.0, 1.0]:
+            self.agent.epsilon = eps
+            a = self.agent.select_action(self.obs, row, active_node=1,
+                                         training=(eps > 0))
+            self.assertEqual(a, NOOP)
+
+    def test_returns_python_int(self):
+        self.agent.epsilon = 0.0
+        row = _dummy_mask_row()
+        a = self.agent.select_action(self.obs, row, active_node=0, training=False)
+        self.assertIsInstance(a, int)
+
+    def test_greedy_consistent_across_calls(self):
+        self.agent.epsilon = 0.0
+        row = _dummy_mask_row()
+        a1 = self.agent.select_action(self.obs, row, active_node=4, training=False)
+        a2 = self.agent.select_action(self.obs, row, active_node=4, training=False)
+        self.assertEqual(a1, a2)
+
+
 class TestTrainStepTensorShapes(unittest.TestCase):
 
     def setUp(self):
@@ -764,16 +931,19 @@ class TestTrainStepTensorShapes(unittest.TestCase):
         _fill_buffer(self.agent.memory, 30, 5)
 
     def test_current_q_shape(self):
-        """current_q must be a 1-D tensor of length total_nodes_in_batch."""
+        """current_q must be a 1-D tensor of length batch_size: ONE Q per
+        transition, gathered at its active node (not one per node)."""
         batch = self.agent.memory.sample(self.agent.batch_size)
         states = Batch.from_data_list(
             [_obs_to_data(t["s"]) for t in batch]).to(self.agent.device)
-        actions = torch.cat(
-            [torch.tensor(t["a"], dtype=torch.long) for t in batch]).to(self.agent.device)
+        ptr = states.ptr[:-1]
+        act_idx = ptr + torch.tensor(
+            [t["ai"] for t in batch], device=self.agent.device)
+        actions = torch.tensor(
+            [t["a"] for t in batch], dtype=torch.long, device=self.agent.device)
         q_all = self.agent.policy_net(states)
-        current_q = q_all.gather(1, actions.unsqueeze(1)).squeeze(1)
-        total_nodes = sum(t["s"]["x"].shape[0] for t in batch)
-        self.assertEqual(current_q.shape, (total_nodes,))
+        current_q = q_all[act_idx].gather(1, actions.unsqueeze(1)).squeeze(1)
+        self.assertEqual(current_q.shape, (self.agent.batch_size,))
 
     def test_target_q_same_shape_as_current_q(self):
         batch = self.agent.memory.sample(self.agent.batch_size)
@@ -781,25 +951,32 @@ class TestTrainStepTensorShapes(unittest.TestCase):
             [_obs_to_data(t["s"]) for t in batch]).to(self.agent.device)
         next_states = Batch.from_data_list(
             [_obs_to_data(t["s_"]) for t in batch]).to(self.agent.device)
-        actions = torch.cat(
-            [torch.tensor(t["a"], dtype=torch.long) for t in batch]).to(self.agent.device)
-        next_masks = torch.cat(
-            [torch.tensor(t["m_"], dtype=torch.bool) for t in batch]).to(self.agent.device)
-        rewards_pg = torch.tensor([t["r"] for t in batch], dtype=torch.float32)
-        dones_pg   = torch.zeros(self.agent.batch_size)
-        rewards = rewards_pg[states.batch]
-        dones   = dones_pg[states.batch]
+        ptr = states.ptr[:-1]
+        act_idx = ptr + torch.tensor(
+            [t["ai"] for t in batch], device=self.agent.device)
+        actions = torch.tensor(
+            [t["a"] for t in batch], dtype=torch.long, device=self.agent.device)
+        nptr = next_states.ptr[:-1]
+        nidx = nptr + torch.tensor(
+            [t["nai"] for t in batch], device=self.agent.device)
+        next_masks = torch.tensor(
+            np.stack([t["m_"] for t in batch]), dtype=torch.bool, device=self.agent.device)
+        rewards = torch.tensor(
+            [t["r"] for t in batch], dtype=torch.float32, device=self.agent.device)
+        gammas = torch.tensor(
+            [t["g"] for t in batch], dtype=torch.float32, device=self.agent.device)
+        dones = torch.zeros(self.agent.batch_size, device=self.agent.device)
 
         q_all     = self.agent.policy_net(states)
-        current_q = q_all.gather(1, actions.unsqueeze(1)).squeeze(1)
+        current_q = q_all[act_idx].gather(1, actions.unsqueeze(1)).squeeze(1)
 
         with torch.no_grad():
-            nqp = self.agent.policy_net(next_states).clone()
+            nqp = self.agent.policy_net(next_states)[nidx].clone()
             nqp[~next_masks] = -float("inf")
             best   = nqp.argmax(dim=1)
-            nqt    = self.agent.target_net(next_states)
+            nqt    = self.agent.target_net(next_states)[nidx]
             nq     = nqt.gather(1, best.unsqueeze(1)).squeeze(1)
-            target = rewards + self.agent.gamma * nq * (1.0 - dones)
+            target = rewards + gammas * nq * (1.0 - dones)
 
         self.assertEqual(current_q.shape, target.shape,
                          "current_q and target_q must have identical shape for loss.")
@@ -833,12 +1010,10 @@ class TestReplayBuffer(unittest.TestCase):
         buf = ReplayBuffer(max_size=5)
         for i in range(5):
             obs = _dummy_obs(3)
-            buf.add(obs, np.zeros(3, dtype=np.int32), float(i),
-                    obs, False, _dummy_mask(3))
+            buf.add(obs, NOOP, 0, float(i), obs, 0, _dummy_mask_row(), False, 1.0)
         # Now push one more; it must overwrite position 0.
         obs = _dummy_obs(3)
-        buf.add(obs, np.zeros(3, dtype=np.int32), 999.0,
-                obs, False, _dummy_mask(3))
+        buf.add(obs, NOOP, 0, 999.0, obs, 0, _dummy_mask_row(), False, 1.0)
         self.assertEqual(buf.pos, 1)   # pointer advanced past 0
         self.assertEqual(buf.buffer[0]["r"], 999.0)
 
@@ -858,7 +1033,7 @@ class TestReplayBuffer(unittest.TestCase):
         buf = ReplayBuffer(max_size=50)
         _fill_buffer(buf, 10, 4)
         for entry in buf.sample(5):
-            for key in ("s", "a", "r", "s_", "d", "m_"):
+            for key in ("s", "a", "ai", "r", "s_", "nai", "m_", "d", "g"):
                 self.assertIn(key, entry, f"Key '{key}' missing from transition.")
 
     def test_transition_shapes_preserved(self):
@@ -866,13 +1041,13 @@ class TestReplayBuffer(unittest.TestCase):
         buf = ReplayBuffer(max_size=50)
         obs  = _dummy_obs(n)
         nobs = _dummy_obs(n)
-        mask = _dummy_mask(n)
-        acts = np.random.randint(0, N_ACTIONS, n).astype(np.int32)
-        buf.add(obs, acts, 0.5, nobs, False, mask)
+        buf.add(obs, SWAP, 2, 0.5, nobs, 3, _dummy_mask_row(), False, 1.0)
         entry = buf.sample(1)[0]
         self.assertEqual(entry["s"]["x"].shape, (n, 8))
-        self.assertEqual(entry["a"].shape, (n,))
-        self.assertEqual(entry["m_"].shape, (n, N_ACTIONS))
+        self.assertIsInstance(entry["a"], int)
+        self.assertEqual(entry["ai"], 2)
+        self.assertEqual(entry["nai"], 3)
+        self.assertEqual(entry["m_"].shape, (N_ACTIONS,))
 
     def test_clear_empties_buffer(self):
         buf = ReplayBuffer(max_size=50)
@@ -884,7 +1059,7 @@ class TestReplayBuffer(unittest.TestCase):
     def test_done_flag_stored_correctly(self):
         buf = ReplayBuffer(max_size=10)
         obs = _dummy_obs(3)
-        buf.add(obs, np.zeros(3, dtype=np.int32), 1.0, obs, True, _dummy_mask(3))
+        buf.add(obs, NOOP, 0, 1.0, obs, 0, _dummy_mask_row(), True, 1.0)
         entry = buf.sample(1)[0]
         self.assertTrue(entry["d"])
 
@@ -955,9 +1130,10 @@ class TestHeterogeneousGraphBatching(unittest.TestCase):
     def _push_transition(self, n_nodes):
         obs  = _dummy_obs(n_nodes)
         nobs = _dummy_obs(n_nodes)
-        mask = _dummy_mask(n_nodes)
-        acts = np.zeros(n_nodes, dtype=np.int32)
-        self.agent.memory.add(obs, acts, -0.01, nobs, False, mask)
+        ai   = int(np.random.randint(0, n_nodes))
+        nai  = int(np.random.randint(0, n_nodes))
+        self.agent.memory.add(obs, NOOP, ai, -0.01, nobs, nai,
+                              _dummy_mask_row(), False, 1.0)
 
     def test_mixed_graph_sizes_train_step_runs(self):
         # Push 2 transitions of size 4 and 2 of size 7.
@@ -978,27 +1154,29 @@ class TestHeterogeneousGraphBatching(unittest.TestCase):
         batch = Batch.from_data_list(graphs)
         self.assertEqual(batch.x.shape[0], sum(sizes))
 
-    def test_actions_tensor_length_matches_nodes(self):
+    def test_active_node_offset_matches_transition_count(self):
+        """act_idx (ptr + ai) must have exactly ONE entry per TRANSITION in
+        the batch, not one per node -- the key departure from the old
+        per-graph-broadcast model. Also checks the offset arithmetic itself
+        for mixed graph sizes (graph 1's nodes start at graph 0's size)."""
         sizes = [4, 7]
-        transitions = []
-        for n in sizes:
-            obs  = _dummy_obs(n)
-            nobs = _dummy_obs(n)
-            mask = _dummy_mask(n)
-            acts = np.zeros(n, dtype=np.int32)
-            transitions.append({"s": obs, "a": acts, "r": -0.01,
-                                 "s_": nobs, "d": False, "m_": mask})
-        actions = torch.cat([
-            torch.tensor(t["a"], dtype=torch.long) for t in transitions])
-        self.assertEqual(actions.shape[0], sum(sizes))
+        transitions = [{"s": _dummy_obs(n)} for n in sizes]
+        ai_vals = [1, 2]
+        states = Batch.from_data_list(
+            [_obs_to_data(t["s"]) for t in transitions])
+        ptr = states.ptr[:-1]
+        act_idx = ptr + torch.tensor(ai_vals)
+        self.assertEqual(act_idx.shape[0], len(transitions))
+        expected = torch.tensor([0 + ai_vals[0], sizes[0] + ai_vals[1]])
+        self.assertTrue(torch.equal(act_idx, expected))
 
 
 class TestAllActionsMaskedFallback(unittest.TestCase):
     """
-    If a node has no available qubits (e.g. all free or all locked) then
-    only NOOP should appear in its mask.  The Q-network must still produce
-    a valid argmax (NOOP) without raising an empty-sequence error — a common
-    failure mode when -inf is applied to all actions before argmax.
+    If a node has no available qubits (e.g. all free or all consumed by an
+    in-flight op) then only NOOP should appear in its mask.  The Q-network
+    must still produce a valid argmax (NOOP) without raising an empty-sequence
+    error, a common failure mode when -inf is applied to all actions before argmax.
     """
 
     def setUp(self):
@@ -1095,10 +1273,11 @@ class TestEnvRewireCorrectness(unittest.TestCase):
     working e2e detection), not byte-reproduction of the old numpy engine.
     """
 
-    @pytest.mark.xfail(reason="pending Task 4: strategies.swap_asap still returns a "
-                              "per-node (N,) action array, incompatible with the new "
-                              "scalar env.step(action:int) contract", strict=False)
     def test_swap_asap_rollout_is_valid(self):
+        # strategies.swap_asap(env) still returns a full (N,) per-node action
+        # array (unchanged, Task 5's scope); the serialized sweep applies
+        # only the ACTIVE node's entry per micro-step, recomputed fresh each
+        # micro-step so every node sees the current state.
         import numpy as np
         from rl_stack.env_wrapper import QRNEnv
         from rl_stack.strategies import swap_asap
@@ -1106,24 +1285,22 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                      cutoff=20, max_steps=40, topology="chain",
                      rng=np.random.default_rng(2024))
         obs = env.reset()
-        self.assertEqual(obs["x"].shape, (env.N, 9))
+        self.assertEqual(obs["x"].shape, (env.N, 11))
         self.assertEqual(obs["edge_index"].shape[0], 2)
-        for _ in range(40):
+        while True:
             mask = env.get_action_mask()
-            a = swap_asap(env)
-            for i in range(env.N):
-                self.assertTrue(mask[i, a[i]])
+            r_node = env.active_node
+            acts = swap_asap(env)
+            a = int(acts[r_node])
+            self.assertTrue(mask[r_node, a])
             obs, r, done, info = env.step(a)
             self.assertTrue(np.isfinite(r))
-            self.assertEqual(obs["x"].shape, (env.N, 9))
+            self.assertEqual(obs["x"].shape, (env.N, 11))
             self.assertTrue(np.all(obs["x"] >= -1e-6))
             self.assertTrue(np.all(obs["x"] <= 1.0 + 1e-6))
             if done:
                 break
 
-    @pytest.mark.xfail(reason="pending Task 4: strategies.swap_asap still returns a "
-                              "per-node (N,) action array, incompatible with the new "
-                              "scalar env.step(action:int) contract", strict=False)
     def test_e2e_detection_terminates(self):
         import numpy as np
         from rl_stack.env_wrapper import QRNEnv
@@ -1133,10 +1310,12 @@ class TestEnvRewireCorrectness(unittest.TestCase):
                      rng=np.random.default_rng(7))
         env.reset()
         reached = False
-        for _ in range(80):
-            _, _, done, info = env.step(swap_asap(env))
-            if done and info["fidelity"] > 0.0:
-                reached = True
+        while True:
+            r_node = env.active_node
+            a = int(swap_asap(env)[r_node])
+            _, _, done, info = env.step(a)
+            if done:
+                reached = info["fidelity"] > 0.0
                 break
         self.assertTrue(reached)
 
