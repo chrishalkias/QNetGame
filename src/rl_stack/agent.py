@@ -47,7 +47,7 @@ from matplotlib.colors import to_rgba
                 #                    ██                      
                 #                    ▀▀       
                               
-NODE_DIM = 11  # must match env_wrapper get_observation feature count
+NODE_DIM = 8  # must match env_wrapper get_observation feature count
 
 def _obs_to_data(obs: Dict[str, np.ndarray], device="cpu") -> Data:
     x = torch.tensor(obs["x"], dtype=torch.float32, device=device)

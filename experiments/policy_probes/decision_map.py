@@ -1,14 +1,14 @@
 """
 --------------------------------------------------------------------------------
-Empirical action-eagerness maps over (occupancy, fidelity), tiled, paper figure.
+Empirical action-eagerness maps over (occupancy, urgency), tiled, paper figure.
 
 2x3 panel grid over the agent's real greedy rollouts, one row per --n_chs value:
-  col 1 = P(PURIFY | can_purify=1) per (occupied count, fidelity) tile
+  col 1 = P(PURIFY | can_purify=1) per (occupied count, urgency) tile
   col 2 = P(SWAP   | can_swap=1)
   col 3 = swap-vs-purify preference where BOTH are available:
           P(SWAP|both) - P(PURIFY|both) in [-1,1] (NOOP absorbs the rest)
 Rollouts run at a single n_ch per row so the occupancy axis is the exact number
-of occupied qubits (n_ch+1 discrete tiles); fidelity is binned. Tiles are
+of occupied qubits (n_ch+1 discrete tiles); the y-axis feature is binned. Tiles are
 outlined, colour-coded, greyed where under-sampled. Purely empirical.
 
 Dual-mode so the figure re-renders without recomputing:
@@ -22,8 +22,7 @@ import numpy as np
 
 # y-axis node feature -> (obs column, default lower edge, axis label)
 YFEATS = {
-    "fidelity": (1, 0.5, "mean fidelity of available qubits"),
-    "urgency":  (8, 0.0, "mean link urgency"),
+    "urgency":  (5, 0.0, "mean link urgency"),
 }
 
 
@@ -37,11 +36,10 @@ def parse_args():
                     help="one panel row per memory size (occupancy axis = "
                          "occupied count 0..n_ch)")
     ap.add_argument("--fid_bins", type=int, default=20)
-    ap.add_argument("--yfeat", choices=list(YFEATS), default="fidelity",
-                    help="y-axis feature: fidelity (X[:,1]) or urgency (X[:,8])")
+    ap.add_argument("--yfeat", choices=list(YFEATS), default="urgency",
+                    help="y-axis feature: urgency (X[:,5])")
     ap.add_argument("--fid_lo", type=float, default=None,
-                    help="lower edge of the y-axis (default: 0.5 for fidelity "
-                         "= Werner separability, 0.0 for urgency)")
+                    help="lower edge of the y-axis (default: 0.0 for urgency)")
     ap.add_argument("--min_count", type=int, default=5,
                     help="tiles with fewer eligible decisions are greyed out")
     ap.add_argument("--seed", type=int, default=0)
@@ -50,7 +48,7 @@ def parse_args():
 
 
 def eagerness_grid(occ_count, fid, took, n_occ, edges, min_count):
-    """Per (occupied-count, fidelity-bin) tile: mean of `took` over eligible
+    """Per (occupied-count, y-bin) tile: mean of `took` over eligible
     decisions (NaN = under-sampled). `took` may be a bool or signed float."""
     fid_bins = len(edges) - 1
     frac = np.full((fid_bins, n_occ), np.nan)
@@ -88,8 +86,8 @@ def run_compute(a, out_json):
         cap = 2 * n_ch
         occ = np.rint(X[:, 0] * cap).astype(int)
         fid = X[:, col]
-        cs = np.rint(X[:, 4]).astype(bool)
-        cp = np.rint(X[:, 5]).astype(bool)
+        cs = np.rint(X[:, 1]).astype(bool)
+        cp = np.rint(X[:, 2]).astype(bool)
         both = cs & cp
         n_occ = cap + 1
         g = lambda el, took: _jsonable(eagerness_grid(
@@ -153,7 +151,7 @@ def run_plot(data, stem):
                     fontsize=13, fontweight="bold")
             if r == len(n_chs) - 1:
                 ax.set_xlabel("occupied qubits")
-        axes[r, 0].set_ylabel(data.get("ylabel", "mean fidelity of available qubits"))
+        axes[r, 0].set_ylabel(data.get("ylabel", "mean link urgency"))
     fig.savefig(f"{stem}.pdf", bbox_inches="tight")
     print(f"saved -> {stem}.pdf (usetex={usetex})")
 
@@ -162,7 +160,7 @@ def main():
     a = parse_args()
     out = a.save_dir or os.path.join(os.path.dirname(a.ckpt), "diagnostics")
     os.makedirs(out, exist_ok=True)
-    stem = "decision_map" if a.yfeat == "fidelity" else f"decision_map_{a.yfeat}"
+    stem = "decision_map" if a.yfeat == "urgency" else f"decision_map_{a.yfeat}"
     out_json = os.path.join(out, f"{stem}.json")
     data = json.load(open(out_json)) if a.plot else run_compute(a, out_json)
     run_plot(data, os.path.join(out, stem))

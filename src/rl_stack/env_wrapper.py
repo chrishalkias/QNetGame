@@ -193,52 +193,44 @@ class QRNEnv:
     def get_observation(self) -> Dict[str, np.ndarray]:
         """Build size-agnostic node features + topology.
 
-        Features per node (11):
-            [0] frac_occupied     occupied / physical capacity (2*n_ch interior, n_ch ends)
-            [1] mean_fidelity     avg F of available qubits (0 if none)
-            [2] in_endnode        1.0 if source OR dest (endpoints are symmetric)
-            [3] frac_available    available / physical capacity
-            [4] can_swap          1.0 if a viable swap pair exists: one available LEFT link (partner<node) + one available RIGHT link (partner>node) whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
-            [5] can_purify        1.0 if >=2 available qubits to same partner
-            [6] p_gen             per-repeater link-generation prob. (inhomogeneity)
-            [7] p_swap            per-repeater BSM success prob. (inhomogeneity)
-            [8] link_urgency      mean(age/link_cutoff) over occupied qubits (0 if none)
-            [9] is_active         1.0 at env.active_node, the node deciding this micro-step (exactly one node; all 0 if N<3 has no interior nodes)
-            [10] relative_position  i / (N-1): 0.0 at source, 1.0 at dest
+        Features per node (8):
+            [0] frac_occupied      occupied / physical capacity (2*n_ch interior, n_ch ends)
+            [1] can_swap           1.0 if a viable swap pair exists: one available LEFT link (partner<node) + one available RIGHT link (partner>node) whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
+            [2] can_purify         1.0 if >=2 available qubits to same partner
+            [3] p_gen              per-repeater link-generation prob. (inhomogeneity)
+            [4] p_swap             per-repeater BSM success prob. (inhomogeneity)
+            [5] link_urgency       mean(age/link_cutoff) over occupied qubits (0 if none)
+            [6] relative_position  i / (N-1): 0.0 at source, 1.0 at dest
+            [7] is_active          1.0 at env.active_node, the node deciding this micro-step (exactly one node; all 0 if N<3 has no interior nodes)
 
-        Features [4] and [5] are forced to 0 for source / dest. Features [6]/[7]
+        Features [1] and [2] are forced to 0 for source / dest. Features [3]/[4]
         are constant across nodes when the network is homogeneous (std=0); they
         carry node-quality signal only under per-repeater inhomogeneity.
-        Feature [8] is 0 for nodes with no occupied qubits; ~1 means links are
+        Feature [5] is 0 for nodes with no occupied qubits; ~1 means links are
         about to expire.
         """
-        feats = np.zeros((self.N, 11), dtype=np.float32)
+        feats = np.zeros((self.N, 8), dtype=np.float32)
         for i in range(self.N):
             ns = self.net.node_state(i)
             occ = ns.occupied
-            avail = occ
             capacity = occ.size  # physical qubit count (2*n_ch interior, n_ch ends)
             feats[i, 0] = int(occ.sum()) / capacity
-            feats[i, 1] = (float(ns.fidelity[avail].mean())
-                           if bool(avail.any()) else 0.0)
-            feats[i, 2] = 1.0 if self.is_target(i) else 0.0
-            feats[i, 3] = int(avail.sum()) / capacity
             if self.is_target(i):
-                feats[i, 4] = 0.0
-                feats[i, 5] = 0.0
+                feats[i, 1] = 0.0
+                feats[i, 2] = 0.0
             else:
-                feats[i, 4] = 1.0 if self._can_swap_from(ns) else 0.0
-                feats[i, 5] = 1.0 if self._can_purify_from(ns) else 0.0
-            feats[i, 6] = ns.p_gen
-            feats[i, 7] = ns.p_swap
+                feats[i, 1] = 1.0 if self._can_swap_from(ns) else 0.0
+                feats[i, 2] = 1.0 if self._can_purify_from(ns) else 0.0
+            feats[i, 3] = ns.p_gen
+            feats[i, 4] = ns.p_swap
             if bool(occ.any()):
                 lc = np.maximum(ns.link_cutoff[occ], 1)
-                feats[i, 8] = float(np.clip(np.mean(ns.age[occ] / lc), 0.0, 1.0))
+                feats[i, 5] = float(np.clip(np.mean(ns.age[occ] / lc), 0.0, 1.0))
             else:
-                feats[i, 8] = 0.0
+                feats[i, 5] = 0.0
+        feats[:, 6] = np.arange(self.N, dtype=np.float32) / (self.N - 1)
         if self._active != -1:
-            feats[self._active, 9] = 1.0
-        feats[:, 10] = np.arange(self.N, dtype=np.float32) / (self.N - 1)
+            feats[self._active, 7] = 1.0
         src, dst = np.nonzero(self._topo.adjacency)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}

@@ -26,10 +26,9 @@ import numpy as np
 from experiments.policy_probes import _collect as C
 
 LABELS = {
-    "occ": "Occupancy", "fidelity": "Fidelity", "is_target": "Target",
-    "avail": "Availability", "can_swap": "Can swap", "can_purify": "Can purify",
+    "occ": "Occupancy", "can_swap": "Can swap", "can_purify": "Can purify",
     "p_gen": r"$p_{\mathrm{gen}}$", "p_swap": r"$p_{\mathrm{swap}}$",
-    "urgency": "Urgency",
+    "urgency": "Urgency", "relative_position": "Relative position",
 }
 
 

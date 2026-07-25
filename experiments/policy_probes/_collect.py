@@ -6,7 +6,7 @@ Everything here is grounded in the agent's *actual* visited distribution: load a
 checkpoint (node_dim auto-inferred from the weights), roll out the GREEDY policy
 over the training distribution under the serialized sweep (one micro-decision
 at env.active_node per env.step call), and record for every such decision the
-11-feature observation, the chosen action, the conv3 embedding, the Q-value
+8-feature observation, the chosen action, the conv3 embedding, the Q-value
 margin, and the full per-step state (x, edge_index, mask) so features can be
 permuted and re-fed for importance analysis.
 --------------------------------------------------------------------------------
@@ -18,14 +18,14 @@ from rl_stack.model import load_qnet
 from rl_stack.agent import _obs_to_data
 from rl_stack.env_wrapper import QRNEnv
 
-FEATURE_NAMES = ["occ", "fidelity", "is_target", "avail", "can_swap",
-                 "can_purify", "p_gen", "p_swap", "urgency"]
-# columns 9 (is_active) and 10 (rel_pos) are sweep scaffolding, not
-# interpretability features: is_active is always 1.0 for a collected
-# decision (X is recorded at env.active_node), so it carries no signal for
-# permutation importance; FEATURE_NAMES stays the original 9-column subset
-# that the probes analyse, even though X itself (== obs["x"][active_node])
-# is the full 11-wide observation.
+FEATURE_NAMES = ["occ", "can_swap", "can_purify", "p_gen", "p_swap",
+                 "urgency", "relative_position"]
+# column 7 (is_active) is the only sweep scaffolding left, not an
+# interpretability feature: it is always 1.0 for a collected decision (X is
+# recorded at env.active_node), so it carries no signal for permutation
+# importance; FEATURE_NAMES stays the 7-column subset that the probes
+# analyse, even though X itself (== obs["x"][active_node]) is the full
+# 8-wide observation.
 ACTION_NAMES = ["NOOP", "SWAP", "PURIFY"]
 ACTION_COLORS = ["#d9d9d9", "#1f63d6", "#1ba31b"]   # noop (grey), swap (blue), purify (green)
 

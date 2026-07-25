@@ -197,18 +197,18 @@ def test_node_state_exposes_link_cutoff():
 def test_observation_has_urgency_feature():
     from rl_stack.env_wrapper import QRNEnv
     from rl_stack.agent import NODE_DIM
-    assert NODE_DIM == 11
+    assert NODE_DIM == 8
     env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
                  topology="chain", rng=np.random.default_rng(0))
     env.reset()
     x = env.get_observation()["x"]
-    assert x.shape == (env.N, 11)
+    assert x.shape == (env.N, 8)
     # urgency in [0,1); fresh links -> small; empty node -> 0
-    assert (x[:, 8] >= 0).all() and (x[:, 8] <= 1).all()
+    assert (x[:, 5] >= 0).all() and (x[:, 5] <= 1).all()
 
 
 def test_urgency_feature_formula():
-    """feat[8] must equal mean(age[occ]/link_cutoff[occ]) from NodeState (within 1e-6).
+    """feat[5] must equal mean(age[occ]/link_cutoff[occ]) from NodeState (within 1e-6).
 
     Uses channel_loss=0.0 so effective p_gen stays at 1.0 regardless of spacing,
     then explicitly entangles (0,1) to guarantee node 0 has occupied qubits.
@@ -230,8 +230,8 @@ def test_urgency_feature_formula():
     assert occ.any(), "node 0 must still have occupied qubits after 5 aging steps"
     lc = np.maximum(ns.link_cutoff[occ], 1)
     expected = float(np.mean(ns.age[occ] / lc))
-    obs_urgency = float(env.get_observation()["x"][0, 8])
+    obs_urgency = float(env.get_observation()["x"][0, 5])
     assert abs(obs_urgency - expected) < 1e-6, (
-        f"urgency feat[8]={obs_urgency:.8f} != independently computed {expected:.8f} "
+        f"urgency feat[5]={obs_urgency:.8f} != independently computed {expected:.8f} "
         f"(age={ns.age[occ].tolist()}, lc={lc.tolist()})"
     )

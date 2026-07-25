@@ -9,8 +9,8 @@ Bottom row: the SAME three panels, each split into a 2x2 block conditioned on li
 urgency u in {0.0, 0.2, 0.4, 0.6} (reading order TL, TR, BL, BR), so the p_e/p_s
 maps are resolved by how close the node's links are to the cutoff.
 
-p_e = per-repeater generation prob (feature 6), p_s = per-repeater BSM prob
-(feature 7); their per-node spread comes from the inhomogeneity std, so the grid
+p_e = per-repeater generation prob (feature 3), p_s = per-repeater BSM prob
+(feature 4); their per-node spread comes from the inhomogeneity std, so the grid
 fills beyond the [0.4,0.9] episode-mean range. Tiles greyed where under-sampled.
 
   compute: PYTHONPATH=src:. python experiments/policy_probes/quality_map.py --ckpt <path>
@@ -75,9 +75,9 @@ def run_compute(a, out_json):
     d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed, p_lo=a.p_lo, p_hi=a.p_hi,
                   n_chs=tuple(a.n_ch))
     X, act = d["X"], d["A"]
-    p_e, p_s, urg = X[:, 6], X[:, 7], X[:, 8]
-    cs = np.rint(X[:, 4]).astype(bool)
-    cp = np.rint(X[:, 5]).astype(bool)
+    p_e, p_s, urg = X[:, 3], X[:, 4], X[:, 5]
+    cs = np.rint(X[:, 1]).astype(bool)
+    cp = np.rint(X[:, 2]).astype(bool)
     both = cs & cp
     edges = np.arange(0.0, 1.0 + 1e-9, a.bin)
 

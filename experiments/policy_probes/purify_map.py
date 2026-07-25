@@ -4,7 +4,7 @@ When does the trained agent choose PURIFY among its purify opportunities?
 
 For every micro-step decision where PURIFY is legal at env.active_node, roll out
 the GREEDY full agent (serialized sweep) and record (a) whether it purified, (b)
-the 11-feature obs, a 1-hop neighbour-mean context, and hand-built engine
+the 8-feature obs, a 1-hop neighbour-mean context, and hand-built engine
 features about the candidate BBPSSW pair, (c) episode/cell context. Then search
 for a compact predictive rule
 (base rates, univariate AUCs, logistic ceiling, shallow trees, hypothesis checks)
@@ -99,10 +99,10 @@ def node_row(env, obs, mask, acts, i, ctx):
            float(age_frac[hi]), float(age_frac[lo]), mean_age_frac]
     ctx_row = [float(mask[i, 1]), i / (env.N - 1), env.N, n_ch,
                ctx["p_gen"], ctx["p_swap"], ctx["cutoff"], env.steps / env.max_steps]
-    # obs/nbr contribute only the 9 interpretability features (FEATURE_NAMES);
-    # cols 9-10 (is_active, relative_position) are sweep scaffolding and are
-    # excluded here so the row width matches COLUMNS (relative_position is still
-    # captured via the ctx block's i/(N-1)). is_active is constant 1.0 anyway.
+    # obs/nbr contribute only the 7 interpretability features (FEATURE_NAMES,
+    # which now includes relative_position); col 7 (is_active) is the only
+    # sweep scaffolding left and is excluded here so the row width matches
+    # COLUMNS. is_active is constant 1.0 anyway.
     nf = len(FEATURE_NAMES)
     row = list(obs["x"][i][:nf]) + list(nbr_mean[:nf]) + eng + ctx_row
     return row, int(acts[i] == 2), int(acts[i])
