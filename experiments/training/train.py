@@ -52,6 +52,10 @@ def parse_args():
     parser.add_argument("--cutoff_hi", type=int, default=None)
     parser.add_argument("--gamma", type=float, default=0.995,
                         help="DQN discount AND env PBRS gamma (kept matched)")
+    parser.add_argument("--eps_schedule", choices=["linear", "cosine"],
+                        default="linear",
+                        help="ε annealing shape over first 90%% of episodes "
+                             "(linear = Mnih/SB3 standard; cosine = legacy)")
 
     parser.add_argument("--channel_loss", type=float, default=0.00)
     parser.add_argument("--F0", type=float, default=1.0)
@@ -303,6 +307,7 @@ if __name__ == "__main__":
         channel_loss=args.channel_loss,
         F0=args.F0,
         env_seed=args.seed,
+        eps_schedule=args.eps_schedule,
         eval_fn=eval_fn,
         eval_every=eval_every,
         eval_patience=0,      # checkpoint selection only, no early termination

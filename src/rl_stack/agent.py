@@ -345,7 +345,7 @@ class QRNAgent:
         Rolling reward is only comparable once difficulty AND exploration are
         fixed: the curriculum must have opened the FULL size range
         (`curriculum_frac*episodes`) AND epsilon must have reached its floor
-        (`eps_floor_frac*episodes`, matching the cosine schedule). Before that,
+        (`eps_floor_frac*episodes`, matching the ε schedule). Before that,
         the easy early phase (small chains deliver fast, high reward) would win
         and freeze the checkpoint at ~ep 300. Returns the later of the two gates;
         `curriculum=False` drops the curriculum gate but still waits for epsilon."""
@@ -383,6 +383,7 @@ class QRNAgent:
               best_window = 200,
               eps_init = 1.0,
               eps_fin = 0.05,
+              eps_schedule = 'linear',
               lr_decay = None,
               eval_fn = None,
               eval_every = 0,
@@ -451,6 +452,8 @@ class QRNAgent:
             "cutoff": cutoff, "max_steps": max_steps, "episodes": episodes,
             "disable_actions": list(disable_actions),
         }
+        assert eps_schedule in ('linear', 'cosine'), \
+            f"eps_schedule must be 'linear' or 'cosine', got {eps_schedule!r}"
         # eps_init/eps_fin now come from the signature (fine-tuning wants a LOW
         # eps_init so a warm-started policy isn't scrambled). lr_decay enables an
         # exponential LR schedule (default None = constant LR, unchanged).
@@ -554,12 +557,18 @@ class QRNAgent:
                     if done:
                         break
 
-                # Cosine annealing ε
-                if ep < 0.9* episodes:
+                # ε annealing over the first 90% of episodes, then floor. Both
+                # schedules hit eps_fin at 0.9·episodes so _ckpt_window_start's
+                # eps_floor_frac=0.9 gate holds for either. 'linear' is the DQN
+                # standard (Mnih 2015 / SB3); 'cosine' kept for reproducibility.
+                if ep >= 0.9 * episodes:
+                    self.epsilon = eps_fin
+                elif eps_schedule == 'cosine':
                     self.epsilon = eps_fin + 0.5 * (eps_init - eps_fin) * (
                         1 + math.cos(math.pi * ep / max(episodes, 1)))
-                else:
-                    self.epsilon = eps_fin
+                else:  # 'linear'
+                    frac = ep / (0.9 * max(episodes, 1))
+                    self.epsilon = eps_init + (eps_fin - eps_init) * frac
                 if sched is not None and ep_loss:   # only after a real optimizer step
                     sched.step()
 
