@@ -436,7 +436,8 @@ class QRNAgent:
         #TODO: Add wandb logging
         compare_extra = dict(compare_extra or {})
         cmp_names = ['agent', 'swap', 'rand', *compare_extra.keys()]
-        metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": []}
+        metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": [],
+                   "opt_steps": []}   # cumulative optimizer steps at each episode end
         for nm in cmp_names:
             metrics[f"cmp_{nm}"] = []
             metrics[f"cmp_{nm}_steps"] = []
@@ -482,6 +483,7 @@ class QRNAgent:
                   else None)
 
         try:
+            opt_steps_total = 0   # running count of real optimizer steps (train_step != None)
             for ep in range(episodes):
                 # -- Curriculum: linearly widen max chain size --
                 pool = self._curriculum_pool(
@@ -567,6 +569,12 @@ class QRNAgent:
                 metrics["steps"].append(info["ticks"])
                 metrics["success"].append(
                     1.0 if info.get("fidelity", 0) > 0 else 0.0)
+                # under the serialized sweep, optimizer steps per episode vary with
+                # chain length / episode duration, so track the cumulative count as
+                # the honest x-axis for learning-progress plots (len(ep_loss) counts
+                # only train_step calls that actually stepped the optimizer).
+                opt_steps_total += len(ep_loss)
+                metrics["opt_steps"].append(opt_steps_total)
 
                 # -- Per-episode paired comparison (--compare): run the GREEDY
                 # agent, swap-asap and random on ONE freshly seeded network so
@@ -875,24 +883,29 @@ class QRNAgent:
         fig.suptitle("Training Metrics" + (f"\n{caption}" if caption else ""),
                      fontsize=11, y=0.99)
 
-        ep = range(len(metrics["reward"]))
-        axes[0].fill_between(ep, metrics["reward"], alpha=0.15, color="royalblue")
-        axes[0].plot(_running_avg(metrics["reward"], w_metric), color="royalblue", lw=1.2)
+        # x-axis = cumulative optimizer steps (the honest learning-progress axis
+        # now that updates-per-episode vary under the serialized sweep). Falls back
+        # to the episode index for old metrics.json that predate opt_steps.
+        xs = metrics.get("opt_steps") or list(range(len(metrics["reward"])))
+        xlabel = "Optimizer steps" if metrics.get("opt_steps") else "Episode"
+
+        axes[0].fill_between(xs, metrics["reward"], alpha=0.15, color="royalblue")
+        axes[0].plot(xs, _running_avg(metrics["reward"], w_metric), color="royalblue", lw=1.2)
         axes[0].set_ylabel("Episode Return")
         axes[0].axhline(0, color="grey", ls=":", lw=0.5)
 
         nonzero = [v for v in metrics["loss"] if v > 0]
         if nonzero:
-            axes[1].plot(metrics["loss"], alpha=0.2, color="red")
-            axes[1].plot(_running_avg(metrics["loss"], w_metric), color="red", lw=1.2)
+            axes[1].plot(xs, metrics["loss"], alpha=0.2, color="red")
+            axes[1].plot(xs, _running_avg(metrics["loss"], w_metric), color="red", lw=1.2)
             axes[1].set_ylabel("Loss")
             axes[1].set_yscale("log")
 
-        axes[2].fill_between(ep, metrics["steps"], alpha=0.15, color="seagreen")
-        axes[2].plot(_running_avg(metrics["steps"], w_steps), color="seagreen",
+        axes[2].fill_between(xs, metrics["steps"], alpha=0.15, color="seagreen")
+        axes[2].plot(xs, _running_avg(metrics["steps"], w_steps), color="seagreen",
                      lw=1.4)
         axes[2].set_ylabel("Avg Steps to Termination")
-        axes[2].set_xlabel("Episode")
+        axes[2].set_xlabel(xlabel)
 
         plt.tight_layout()
         fname = os.path.join(save_path, "training_metrics.png") if save_path else "training_metrics.png"
@@ -912,7 +925,11 @@ class QRNAgent:
                       ("agent", "royalblue", "Agent (greedy)"))
             series = tuple(s for s in _known if metrics.get(f"cmp_{s[0]}"))
             n = len(metrics["cmp_agent"])
-            cep = range(n)
+            # x-axis = cumulative optimizer steps (aligned per episode), fall back
+            # to episode index if opt_steps is absent or length-mismatched.
+            _opt = metrics.get("opt_steps")
+            cep = _opt if (_opt and len(_opt) == n) else list(range(n))
+            _cxlabel = "Optimizer steps" if (_opt and len(_opt) == n) else "Episode"
             # Wide smoothing: per-episode (p_gen,p_swap) randomisation injects huge
             # raw variance, so a small window can't reveal the trend. No raw fog —
             # at thousands of episodes it just buries the means. `window` (e.g. via
@@ -953,7 +970,7 @@ class QRNAgent:
                 _title += f"\n{caption}"
             axes2[0].set_title(_title, fontsize=10)
             axes2[0].legend(loc="best", fontsize=9)
-            axes2[-1].set_xlabel("Episode")
+            axes2[-1].set_xlabel(_cxlabel)
             plt.tight_layout()
             fname2 = (os.path.join(save_path, "training_compare.png")
                       if save_path else "training_compare.png")
