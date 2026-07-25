@@ -564,7 +564,7 @@ class QRNAgent:
                 metrics["reward"].append(score)
                 metrics["loss"].append(
                     np.mean(ep_loss) if ep_loss else 0.0)
-                metrics["steps"].append(env.steps)
+                metrics["steps"].append(info["ticks"])
                 metrics["success"].append(
                     1.0 if info.get("fidelity", 0) > 0 else 0.0)
 
@@ -660,7 +660,7 @@ class QRNAgent:
         """One episode on a freshly SEEDED network (so all policies are paired
         on the same net), driven one micro-step at a time (the serialized
         sweep; env self-truncates at `max_steps` ticks). Returns
-        (return, steps, success): `steps` = ticks elapsed (env.steps),
+        (return, steps, success): `steps` = ticks elapsed (info["ticks"]),
         `success` = 1.0 if the e2e link was delivered. Return mixes
         speed/fidelity/action-economy; steps+success are the pure task
         metrics (delivery time, delivery rate).
@@ -696,7 +696,7 @@ class QRNAgent:
             if done:
                 success = 1.0 if info.get("fidelity", 0.0) > 0 else 0.0
                 break
-        return float(ret), int(env.steps), float(success)
+        return float(ret), int(info["ticks"]), float(success)
 
 
         # ▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ 
@@ -804,7 +804,7 @@ class QRNAgent:
 
                 succeeded = done and fid > 0
                 if succeeded:
-                    results[name]["steps"].append(env.steps)
+                    results[name]["steps"].append(info["ticks"])
                     results[name]["fidelities"].append(fid)
                 results[name]["total"] += 1
 

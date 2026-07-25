@@ -210,6 +210,44 @@ def test_disable_actions_trains(tmp_path):
     assert os.path.isfile(os.path.join(sd, "policy.pth"))
 
 
+def test_train_records_ticks_not_env_steps_on_mid_sweep_delivery(monkeypatch):
+    """A mid-sweep delivery closes the episode with info["ticks"] = env.steps
+    + 1 (the tick boundary hasn't been crossed yet). Force this on the very
+    first micro-step of the one episode trained and confirm train() logs the
+    larger info["ticks"] value, not the smaller (here: unchanged) env.steps
+    -- guards the fix in agent.py that reads info["ticks"] instead of
+    env.steps at the three delivery-time recording sites."""
+    import numpy as np
+    from rl_stack import QRNAgent
+    from rl_stack.env_wrapper import QRNEnv
+
+    orig_step = QRNEnv.step
+    call_count = {"n": 0}
+
+    def forced_step(self, action):
+        obs, reward, done, info = orig_step(self, action)
+        if call_count["n"] == 0:
+            call_count["n"] += 1
+            info = dict(info)
+            info["ticks"] = self.steps + 1   # env.steps has NOT advanced yet
+            info["terminated"] = True
+            info["fidelity"] = 0.9
+            return obs, reward, True, info
+        return obs, reward, done, info
+
+    monkeypatch.setattr(QRNEnv, "step", forced_step)
+
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    metrics = agent.train(episodes=1, max_steps=6, n_range=[3], n_ch=2,
+                           p_gen=0.9, p_swap=0.9, cutoff=5, F0=0.95,
+                           channel_loss=0.0, curriculum=False, topology="chain",
+                           save_path=None, save_best=False, plot=False)
+
+    assert metrics["steps"][0] == 1   # info["ticks"]: correct mid-sweep count
+    # env.steps itself never advanced past the tick boundary this episode,
+    # so recording it directly would have (wrongly) logged 0.
+
+
 def _repro_agent(seed):
     """A fully seed-determined agent: torch net init + agent RNG + replay
     sampler all pinned to `seed`."""
