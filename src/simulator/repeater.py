@@ -153,9 +153,6 @@ class Repeater:
                                                                                                                                                             
 
     # --- Queries (nothing is locked anymore, so available == occupied) ----
-    def free_indices(self) -> np.ndarray:
-        return np.flatnonzero(self.status == QUBIT_FREE)
-
     def occupied_indices(self) -> np.ndarray:
         return np.flatnonzero(self.status == QUBIT_OCCUPIED)
 
@@ -165,9 +162,6 @@ class Repeater:
     def available_indices(self) -> np.ndarray:
         """Available FOR SWAP = Occupied (no locking anymore)."""
         return self.occupied_indices()
-
-    def num_available(self) -> int:
-        return self.num_occupied()
 
     def _side_range(self, side: int) -> Tuple[int, int]:
         """[lo, hi) qubit-index range for a port."""

@@ -96,8 +96,6 @@ class QRNEnv:
 
     STEP_COST       = -0.01
     SUCCESS_REWARD  =  1.0
-    # no penalty for failed ops(legacy)
-    FAILED_ACTION   =  0.0
 
     def __init__(self,
                  n_repeaters = 5,
@@ -479,7 +477,3 @@ class QRNEnv:
         self._auto_entangle()
         self._phi = self._progress()
         return self.get_observation()
-
-    @staticmethod
-    def action_label(action: int, node: int) -> str:
-        return f"{['W','S','P'][action]}({node})"

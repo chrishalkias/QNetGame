@@ -913,12 +913,6 @@ class TestPostSwapAvailability(unittest.TestCase):
         self.assertFalse(net.repeaters[0].can_swap(),
                          "can_swap() must return False for a single-port endpoint.")
 
-    def test_swap_mask_excludes_single_port_endpoints(self):
-        net = self._net_after_swap()
-        mask = net.action_mask_swap()
-        self.assertFalse(mask[0], "Swap mask must be False for a single-port endpoint.")
-        self.assertFalse(mask[2], "Swap mask must be False for a single-port endpoint.")
-
 
 class TestSelfSwapping(unittest.TestCase):
     """
@@ -990,39 +984,6 @@ class TestResetBehaviour(unittest.TestCase):
         env.reset()
         self.assertEqual(env.steps, 0)
         self.assertFalse(env.done)
-
-
-class TestActionMasks(unittest.TestCase):
-
-    def test_entangle_mask_only_adjacent_pairs(self):
-        net = _perfect_chain(4)
-        mask = net.action_mask_entangle()
-        # Adjacent pairs must be True (when qubits are free).
-        self.assertTrue(mask[0, 1])
-        self.assertTrue(mask[2, 3])
-        # Non-adjacent must be False.
-        self.assertFalse(mask[0, 2])
-        self.assertFalse(mask[0, 3])
-
-    def test_swap_mask_false_for_empty_repeaters(self):
-        net = _perfect_chain(4)
-        mask = net.action_mask_swap()
-        # No entanglement yet → no node can swap.
-        self.assertFalse(np.any(mask))
-
-    def test_purify_mask_false_with_single_link(self):
-        net = _perfect_chain(3)
-        net.entangle(0, 1)
-        mask = net.action_mask_purify()
-        # Only one link between R0–R1 → cannot purify.
-        self.assertFalse(mask[0, 1])
-
-    def test_purify_mask_true_with_two_links(self):
-        net = _perfect_chain(3, n_ch=4)
-        net.entangle(0, 1)
-        net.entangle(0, 1)
-        mask = net.action_mask_purify()
-        self.assertTrue(mask[0, 1])
 
 
 class TestGetAllLinks(unittest.TestCase):

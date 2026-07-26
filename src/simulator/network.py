@@ -544,40 +544,6 @@ class RepeaterNetwork:
         )
 
 
-                                                                             
-#   ▄▄▄▄                                 ▄▄▄      ▄▄▄                          
-# ▄██▀▀██▄        ██   ▀▀                ████▄  ▄████             ▄▄           
-# ███  ███ ▄████ ▀██▀▀ ██  ▄███▄ ████▄   ███▀████▀███  ▀▀█▄ ▄█▀▀▀ ██ ▄█▀ ▄█▀▀▀ 
-# ███▀▀███ ██     ██   ██  ██ ██ ██ ██   ███  ▀▀  ███ ▄█▀██ ▀███▄ ████   ▀███▄ 
-# ███  ███ ▀████  ██   ██▄ ▀███▀ ██ ██   ███      ███ ▀█▄██ ▄▄▄█▀ ██ ▀█▄ ▄▄▄█▀ 
-                                                                             
-                                                                             
-    def action_mask_entangle(self) -> np.ndarray:
-        """Entangle mask. Can only ask for entanglement in repeaters with free qubits"""
-        mask = self.adj.copy().astype(bool)
-        for i, rep in enumerate(self.repeaters):
-            if not rep.has_free_qubit():
-                mask[i, :] = False; mask[:, i] = False
-        return mask
-
-    def action_mask_swap(self) -> np.ndarray:
-        """
-        Swap mask: Can only swap if at least 2 qubits are connected 
-        (outsourced to `Repeater.can_swap()`)
-        """
-        return np.array([rep.can_swap() for rep in self.repeaters], dtype=bool)
-
-    def action_mask_purify(self) -> np.ndarray:
-        mask = np.zeros((self.N, self.N), dtype=bool)
-        for rep in self.repeaters:
-            occ = rep.available_indices()
-            if len(occ) < 2: continue
-            partners = rep.partner_repeater[occ]
-            unique, counts = np.unique(partners, return_counts=True)
-            for pr, cnt in zip(unique, counts):
-                if pr != NO_PARTNER and cnt >= 2:
-                    mask[rep.rid, int(pr)] = True
-        return mask
                              
 # ▄▄▄      ▄▄▄                 
 # ████▄  ▄████ ▀▀              
