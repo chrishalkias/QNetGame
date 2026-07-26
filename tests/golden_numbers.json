@@ -1,0 +1,26 @@
+{
+  "N6_nch2_pg0.6_ps0.8_cut7_H120_eps200": {
+    "swap_asap": 5.56,
+    "purify_swap": 8.455
+  },
+  "N6_nch2_pg0.6_ps0.8_cut20_H120_eps200": {
+    "swap_asap": 4.855,
+    "purify_swap": 7.665
+  },
+  "N10_nch2_pg0.6_ps0.8_cut10_H200_eps150": {
+    "swap_asap": 12.046666666666667,
+    "purify_swap": 11.026666666666667
+  },
+  "N10_nch3_pg0.6_ps0.8_cut20_H200_eps150": {
+    "swap_asap": 7.286666666666667,
+    "purify_swap": 9.286666666666667
+  },
+  "N12_nch2_pg0.4_ps0.8_cut15_H300_eps100": {
+    "swap_asap": 43.26,
+    "purify_swap": 25.4
+  },
+  "N4_nch1_pg0.9_ps0.9_cut30_H100_eps200": {
+    "swap_asap": 1.665,
+    "purify_swap": 1.665
+  }
+}
