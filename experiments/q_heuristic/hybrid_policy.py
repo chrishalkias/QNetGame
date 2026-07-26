@@ -33,7 +33,7 @@ from __future__ import annotations
 import numpy as np
 
 from rl_stack.env_wrapper import NOOP, SWAP, PURIFY
-from rl_stack import policies as strategies
+from rl_stack import policies
 
 
 def make_hybrid_fn(q, seed):
@@ -65,7 +65,7 @@ def make_hybrid_fn(q, seed):
 def purify_then_swap_fn(env, obs=None):
     """purify_then_swap baseline wrapped to the mc_eval policy_fn(env, obs)
     signature (the repo heuristic takes only env)."""
-    return strategies.purify_then_swap(env)
+    return policies.purify_then_swap(env)
 
 
 def make_conditional_fn(coef_path, seed, p_gen, p_swap, cutoff):

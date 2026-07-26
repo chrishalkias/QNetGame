@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 
 from rl_stack.env_wrapper import QRNEnv
-from rl_stack import policies as strategies
+from rl_stack import policies
 
 
 def mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, n_episodes, seed=42,
@@ -58,7 +58,7 @@ def mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, n_episodes, seed=42,
 
 
 def swap_asap_fn(env, obs):
-    return strategies.swap_asap(env)
+    return policies.swap_asap(env)
 
 
 def make_agent_fn(ckpt, hidden=64, disable_actions=None):

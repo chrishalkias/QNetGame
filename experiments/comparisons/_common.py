@@ -17,11 +17,11 @@ import numpy as np
 def build_policies(ckpt, hidden=64):
     """{name: policy_fn(env, obs)} for agent / swap-ASAP / purify-then-swap."""
     from experiments import mc_eval as ob
-    from rl_stack import policies as strategies
+    from rl_stack import policies
     return {
         "agent":       ob.make_agent_fn(ckpt, hidden=hidden),
-        "swap_asap":   lambda env, obs: strategies.swap_asap(env),
-        "purify_swap": lambda env, obs: strategies.purify_then_swap(env),
+        "swap_asap":   lambda env, obs: policies.swap_asap(env),
+        "purify_swap": lambda env, obs: policies.purify_then_swap(env),
     }
 
 

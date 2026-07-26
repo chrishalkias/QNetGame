@@ -70,16 +70,16 @@ def parse_args():
 def run_eval(args):
     from experiments import mc_eval as ob
     from experiments.comparisons._common import eval_stats
-    from rl_stack import policies as strategies
+    from rl_stack import policies
 
     wanted = ["agent"] if args.agent_only else args.policies
     policies = {}
     if "agent" in wanted:
         policies["agent"] = ob.make_agent_fn(args.ckpt, hidden=args.hidden)
     if "swap_asap" in wanted:
-        policies["swap_asap"] = lambda env, obs: strategies.swap_asap(env)
+        policies["swap_asap"] = lambda env, obs: policies.swap_asap(env)
     if "purify_swap" in wanted:
-        policies["purify_swap"] = lambda env, obs: strategies.purify_then_swap(env)
+        policies["purify_swap"] = lambda env, obs: policies.purify_then_swap(env)
     from experiments.comparisons import _common as C
     C.write_meta(args)
     Ns = list(range(args.n_lo, args.n_hi + 1))

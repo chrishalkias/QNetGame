@@ -70,9 +70,9 @@ def run_eval(a):
 def run_augment(a):
     """Backfill baseline columns (no checkpoint, no agent re-eval). Resumable:
     skips cells that already have the column."""
-    from rl_stack import policies as strategies
-    fns = {"swap_asap":   lambda env, obs: strategies.swap_asap(env),
-           "purify_swap": lambda env, obs: strategies.purify_then_swap(env)}
+    from rl_stack import policies
+    fns = {"swap_asap":   lambda env, obs: policies.swap_asap(env),
+           "purify_swap": lambda env, obs: policies.purify_then_swap(env)}
     rows = C.load_json(a.out)
     for name, fn in fns.items():
         todo = [r for r in rows if r.get(f"T_{name}") is None]

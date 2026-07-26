@@ -1393,7 +1393,7 @@ def test_delivered_link_reports_both_fidelity_and_age():
     is the direct readout of how much memory time the delivery cost, and it is
     what a cutoff-leak check compares against link_cutoff.
     """
-    from rl_stack import policies as strategies
+    from rl_stack import policies
     from simulator.repeater import QUBIT_OCCUPIED
 
     env = QRNEnv(n_repeaters=4, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=1000,
@@ -1402,7 +1402,7 @@ def test_delivered_link_reports_both_fidelity_and_age():
     env.reset()
     info = {}
     while not env.done:
-        _, _, done, info = env.step(strategies.swap_asap(env))
+        _, _, done, info = env.step(policies.swap_asap(env))
         if done:
             break
 

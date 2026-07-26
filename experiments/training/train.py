@@ -164,7 +164,7 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
     within max_steps. Post cutoff-fix, every delivery is entangled by
     construction, so plain delivery rate is the right calibration signal."""
     from rl_stack.env_wrapper import QRNEnv
-    from rl_stack import policies as strategies
+    from rl_stack import policies
     wins = 0
     for k in range(n_episodes):
         env = QRNEnv(
@@ -179,7 +179,7 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
         # Serialized sweep: one micro-decision at env.active_node per
         # env.step call; the env self-truncates at max_steps ticks.
         while True:
-            a = strategies.purify_then_swap(env)
+            a = policies.purify_then_swap(env)
             _, _, done, info = env.step(a)
             if done:
                 wins += int(bool(info["terminated"]))

@@ -1,6 +1,6 @@
 import numpy as np
 from rl_stack.policies import WinnabilityCache
-from rl_stack import policies as strategies
+from rl_stack import policies
 
 
 def test_easy_cell_winnable_hard_cell_not():
@@ -32,11 +32,11 @@ def test_ticks_not_microsteps_large_n_not_wrongly_pruned():
 
 def test_oracle_is_purify_then_swap(monkeypatch):
     calls = {"n": 0}
-    real = strategies.purify_then_swap
+    real = policies.purify_then_swap
     def spy(env):
         calls["n"] += 1
         return real(env)
-    monkeypatch.setattr(strategies, "purify_then_swap", spy)
+    monkeypatch.setattr(policies, "purify_then_swap", spy)
     wc = WinnabilityCache(n_pilots=1, probe_steps=30, seed=0)
     wc.winnable(1.0, 1.0, 20, 3, 2)
     assert calls["n"] > 0

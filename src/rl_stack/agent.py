@@ -28,7 +28,7 @@ from torch_geometric.data import Data, Batch
 from rl_stack.model import QNetwork
 from rl_stack.buffer import ReplayBuffer
 from rl_stack.env_wrapper import QRNEnv, N_ACTIONS, NOOP, SWAP, PURIFY, ACTION_NAMES
-from rl_stack import policies as strategies
+from rl_stack import policies
 
 import matplotlib
 matplotlib.use("Agg")
@@ -699,9 +699,9 @@ class QRNAgent:
             if policy == 'agent':
                 a = int(self.select_actions(obs, mask, training=False)[r_node])
             elif policy == 'swap':
-                a = strategies.swap_asap(env)
+                a = policies.swap_asap(env)
             elif policy == 'rand':
-                a = strategies.random_policy(env, rand_rng)
+                a = policies.random_policy(env, rand_rng)
             else:                      # callable extra baseline
                 a = policy(env, obs)
             obs, r, done, info = env.step(int(a))
@@ -747,8 +747,8 @@ class QRNAgent:
 
         strat_fns = {
             "Agent":        None,
-            "SwapASAP":     strategies.swap_asap,
-            "PurifySwap":   strategies.purify_then_swap,
+            "SwapASAP":     policies.swap_asap,
+            "PurifySwap":   policies.purify_then_swap,
             "Random":       None,
         }
         results   = {k: {"steps": [], "fidelities": [], "total": 0}
@@ -797,7 +797,7 @@ class QRNAgent:
                     if name == "Agent":
                         a = int(self.select_actions(obs, mask, training=False)[r_node])
                     elif name == "Random":
-                        a = strategies.random_policy(env, action_rng)
+                        a = policies.random_policy(env, action_rng)
                     else:
                         a = fn(env)
                     tick_row[r_node] = a
