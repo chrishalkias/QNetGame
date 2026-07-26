@@ -164,7 +164,7 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
     within max_steps. Post cutoff-fix, every delivery is entangled by
     construction, so plain delivery rate is the right calibration signal."""
     from rl_stack.env_wrapper import QRNEnv
-    from rl_stack import strategies
+    from rl_stack import policies as strategies
     wins = 0
     for k in range(n_episodes):
         env = QRNEnv(

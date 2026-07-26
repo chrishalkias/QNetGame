@@ -1312,12 +1312,12 @@ class TestEnvRewireCorrectness(unittest.TestCase):
     """
 
     def test_swap_asap_rollout_is_valid(self):
-        # strategies.swap_asap(env) returns a SCALAR action for env.active_node
+        # policies.swap_asap(env) returns a SCALAR action for env.active_node
         # (Task 5's contract); recomputed fresh each micro-step so it always
         # sees the current state.
         import numpy as np
         from rl_stack.env_wrapper import QRNEnv
-        from rl_stack.strategies import swap_asap
+        from rl_stack.policies import swap_asap
         env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7,
                      cutoff=20, max_steps=40,
                      rng=np.random.default_rng(2024))
@@ -1340,7 +1340,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
     def test_e2e_detection_terminates(self):
         import numpy as np
         from rl_stack.env_wrapper import QRNEnv
-        from rl_stack.strategies import swap_asap
+        from rl_stack.policies import swap_asap
         env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0,
                      cutoff=50, max_steps=80,
                      rng=np.random.default_rng(7))
@@ -1393,7 +1393,7 @@ def test_delivered_link_reports_both_fidelity_and_age():
     is the direct readout of how much memory time the delivery cost, and it is
     what a cutoff-leak check compares against link_cutoff.
     """
-    from rl_stack import strategies
+    from rl_stack import policies as strategies
     from simulator.repeater import QUBIT_OCCUPIED
 
     env = QRNEnv(n_repeaters=4, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=1000,

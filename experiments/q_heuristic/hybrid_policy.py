@@ -16,7 +16,7 @@ free parameter.
   - q measured from the trained agents is ~0.215 (omni_v3_20k_s1) and
     ~0.369 (omni_v3_20k_s3).
 
-RNG discipline (mirrors rl_stack.strategies.random_policy): the hybrid's own
+RNG discipline (mirrors rl_stack.policies.random_policy): the hybrid's own
 rng is a fresh np.random.default_rng(seed), INDEPENDENT of env.rng. Consuming
 draws from it therefore never perturbs the environment's stream (link
 generation, swap coin flips). That independence is exactly what makes the
@@ -33,7 +33,7 @@ from __future__ import annotations
 import numpy as np
 
 from rl_stack.env_wrapper import NOOP, SWAP, PURIFY
-from rl_stack import strategies
+from rl_stack import policies as strategies
 
 
 def make_hybrid_fn(q, seed):

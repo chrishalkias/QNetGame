@@ -28,7 +28,7 @@ from torch_geometric.data import Data, Batch
 from rl_stack.model import QNetwork
 from rl_stack.buffer import ReplayBuffer
 from rl_stack.env_wrapper import QRNEnv, N_ACTIONS, NOOP, SWAP, PURIFY, ACTION_NAMES
-from rl_stack import strategies
+from rl_stack import policies as strategies
 
 import matplotlib
 matplotlib.use("Agg")
@@ -460,7 +460,7 @@ class QRNAgent:
                  if lr_decay is not None else None)
         n_ch_pool = self._normalize_n_ch(n_ch)
         if prune_unwinnable:
-            from rl_stack.winnability import WinnabilityCache
+            from rl_stack.policies import WinnabilityCache
             self._wc = WinnabilityCache(
                 probe_steps=max(3 * max_steps, 200),
                 channel_loss=channel_loss, F0=F0)

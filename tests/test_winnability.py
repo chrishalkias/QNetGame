@@ -1,6 +1,6 @@
 import numpy as np
-from rl_stack.winnability import WinnabilityCache
-from rl_stack import strategies
+from rl_stack.policies import WinnabilityCache
+from rl_stack import policies as strategies
 
 
 def test_easy_cell_winnable_hard_cell_not():

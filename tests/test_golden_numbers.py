@@ -103,11 +103,9 @@ def _rollout_key(cfg):
 
 def _measure_cells():
     from experiments.mc_eval import mc_eval
-    # Task A7 merges strategies.py and winnability.py into rl_stack.policies;
-    # this import becomes `from rl_stack import policies` at that point.
-    from rl_stack import strategies
-    fns = {"swap_asap":   lambda env, obs: strategies.swap_asap(env),
-           "purify_swap": lambda env, obs: strategies.purify_then_swap(env)}
+    from rl_stack import policies
+    fns = {"swap_asap":   lambda env, obs: policies.swap_asap(env),
+           "purify_swap": lambda env, obs: policies.purify_then_swap(env)}
     out = {}
     for cell in CELLS:
         N, n_ch, pg, ps, cut, H, eps, pg_std, ps_std = cell
@@ -132,7 +130,7 @@ def _feed(digest, obs):
 
 def _measure_rollouts():
     from rl_stack.env_wrapper import QRNEnv
-    from rl_stack import strategies
+    from rl_stack import policies
     out = {}
     for cfg in ROLLOUTS:
         N, n_ch, pg, ps, cut, H, eps, seed = cfg
@@ -147,7 +145,7 @@ def _measure_rollouts():
             _feed(digest, obs)
             total = 0.0
             while not env.done and env.steps < H:
-                obs, reward, done, _ = env.step(strategies.swap_asap(env))
+                obs, reward, done, _ = env.step(policies.swap_asap(env))
                 total += float(reward)
                 _feed(digest, obs)
                 if done:

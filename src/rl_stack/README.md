@@ -19,9 +19,8 @@ topologies and is evaluated zero-shot on larger or differently parameterised net
 | `model.py` | Neural network | 3-layer GraphSAGE Q-network producing per-node action values |
 | `buffer.py` | Experience storage | Fixed-size ring buffer for (s, a, r, s', done, mask') transitions |
 | `agent.py` | Training and evaluation | Double-DQN agent: action selection, loss computation, training loop, validation |
-| `strategies.py` | Baselines | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking |
+| `policies.py` | Baselines + training helper | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking, plus the purify-then-swap winnability oracle (2026-07-12; was swap-asap) used to prune unsolvable episode cells |
 | `potential.py` | Reward shaping | PBRS potential (`path_progress`, chain closed form), pure, no torch |
-| `winnability.py` | Training helper | Purify-then-swap winnability oracle (2026-07-12; was swap-asap) used to prune unsolvable episode cells |
 | `__init__.py` | Re-exports | Public API surface with guarded torch imports |
 
 
@@ -410,9 +409,9 @@ The strategies compared are:
 | Strategy | Source | Behaviour |
 |---|---|---|
 | Agent | `select_actions(training=False)` | Greedy Q-value policy |
-| SwapASAP | `strategies.swap_asap` | Swap at every node that can, every step |
-| PurifySwap | `strategies.purify_then_swap` | Purify if possible, else swap if possible |
-| Random | `strategies.random_policy` | Uniform random valid action per node |
+| SwapASAP | `policies.swap_asap` | Swap at every node that can, every step |
+| PurifySwap | `policies.purify_then_swap` | Purify if possible, else swap if possible |
+| Random | `policies.random_policy` | Uniform random valid action per node |
 
 > `BeliefPropagationPolicy` and `fidelity_gated_swap` were deliberately removed 2026-07-09
 > (out of scope for the paper; recoverable from git history).
@@ -443,7 +442,7 @@ solid = NOOP, `///` = SWAP, `...` = PURIFY. A black patch marks the terminal ste
 `validation_actions.png`.
 
 
-## 6. File: `strategies.py` - Baseline Policies
+## 6. File: `policies.py` - Baseline Policies and the Winnability Oracle
 
 Three heuristic strategies are provided for benchmarking. All respect the action mask
 (source/destination are NOOP) and return an `(N,)` int32 action array.

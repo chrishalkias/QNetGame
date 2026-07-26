@@ -70,7 +70,7 @@ def parse_args():
 def run_eval(args):
     from experiments import mc_eval as ob
     from experiments.comparisons._common import eval_stats
-    from rl_stack import strategies
+    from rl_stack import policies as strategies
 
     wanted = ["agent"] if args.agent_only else args.policies
     policies = {}

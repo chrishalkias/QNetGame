@@ -44,7 +44,7 @@ import pandas as pd
 # -- project imports ----------------------------------------------
 from rl_stack.agent import QRNAgent, _obs_to_data
 from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP
-from rl_stack.strategies import swap_asap, purify_then_swap
+from rl_stack.policies import swap_asap, purify_then_swap
 
 # baseline the agent is compared against (pilots always use swap-ASAP so the
 # adaptive cutoff/max_steps stay identical across baselines)

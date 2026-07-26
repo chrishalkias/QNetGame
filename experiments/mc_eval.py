@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 
 from rl_stack.env_wrapper import QRNEnv
-from rl_stack import strategies
+from rl_stack import policies as strategies
 
 
 def mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, n_episodes, seed=42,
