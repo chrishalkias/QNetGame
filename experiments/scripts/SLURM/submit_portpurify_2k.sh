@@ -38,7 +38,7 @@ python -u experiments/training/train.py \
     --p_gen_std 0.0 --p_swap_std 0.0 \
     --cutoff_lo 10 --cutoff_hi 50 \
     --prune_unwinnable \
-    --topology chain --channel_loss 0.0 --F0 1.0 \
+    --channel_loss 0.0 --F0 1.0 \
     --save_base_dir checkpoints
 
 echo "done $(date)"

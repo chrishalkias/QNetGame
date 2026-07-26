@@ -78,7 +78,6 @@ class QRNEnv:
         "rng",        # RNG: per-episode physics + action sampling
         "max_steps",  # truncation horizon (steps before time-limit)
         "gamma",      # PBRS discount (threaded to equal the DQN gamma)
-        "topology",   # topology tag (always 'chain')
         "net",        # RepeaterNetwork physics engine
         "N",          # number of repeaters
         "source",     # source node id (0)
@@ -109,20 +108,15 @@ class QRNEnv:
                  channel_loss = 0.02,
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
-                 topology = 'chain',
                  gamma = 0.99):
-
-        if topology != 'chain':
-            raise ValueError(f'Topology {topology} not supported')
 
         self.rng = rng if rng is not None else np.random.default_rng()
         self.max_steps = max_steps
         self.gamma = gamma
         self._phi = 0.0
-        self.topology = topology
 
         self.net = build_network(
-            topology=topology, n_repeaters=n_repeaters, n_ch=n_ch,
+            n_repeaters=n_repeaters, n_ch=n_ch,
             spacing=spacing, p_gen=p_gen, p_swap=p_swap,
             p_gen_std=p_gen_std, p_swap_std=p_swap_std, cutoff=cutoff,
             F0=F0, channel_loss=channel_loss,

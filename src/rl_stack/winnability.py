@@ -53,7 +53,7 @@ class WinnabilityCache:
                 n_repeaters=int(n_repeaters), n_ch=int(n_ch),
                 p_gen=float(p_gen), p_swap=float(p_swap), cutoff=int(cutoff),
                 max_steps=self.probe_steps,
-                channel_loss=self.channel_loss, F0=self.F0, topology="chain",
+                channel_loss=self.channel_loss, F0=self.F0,
                 rng=np.random.default_rng(self.rng.integers(2**32)))
             env.reset()
             info = {}

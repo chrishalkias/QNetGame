@@ -32,7 +32,6 @@ def parse_args():
     parser.add_argument("--p_swap_std", type=float, default=0.0,
                         help="per-repeater spread of p_swap (0 = homogeneous)")
     parser.add_argument("--cutoff", type=int, default=100)
-    parser.add_argument("--topology", type=str, default='chain')
 
     # CC variables
     parser.add_argument("--F0", type=float, default=1.0)
@@ -65,5 +64,4 @@ if __name__ == "__main__":
         channel_loss=args.channel_loss,
         plot_actions=args.plot_actions,
         save_dir=args.path,
-        topology=args.topology,
     )

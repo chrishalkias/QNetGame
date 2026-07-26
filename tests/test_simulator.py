@@ -743,22 +743,22 @@ class TestCrossModuleWiring(unittest.TestCase):
         self.assertEqual(net.adj.shape, (n, n))
 
     def test_env_wraps_network(self):
-        env = QRNEnv(n_repeaters=4, topology="chain")
+        env = QRNEnv(n_repeaters=4)
         self.assertIsInstance(env.net, RepeaterNetwork)
 
     def test_env_net_repeater_count(self):
-        env = QRNEnv(n_repeaters=5, topology="chain")
+        env = QRNEnv(n_repeaters=5)
         self.assertEqual(env.net.N, 5)
         self.assertEqual(len(env.net.repeaters), 5)
 
     def test_env_reset_returns_observation(self):
-        env = QRNEnv(n_repeaters=4, topology="chain")
+        env = QRNEnv(n_repeaters=4)
         obs = env.reset()
         self.assertIn("x", obs)
         self.assertIn("edge_index", obs)
 
     def test_env_step_returns_correct_shape(self):
-        env = QRNEnv(n_repeaters=4, topology="chain")
+        env = QRNEnv(n_repeaters=4)
         env.reset()
         obs, reward, done, info = env.step(NOOP)
         self.assertEqual(obs["x"].shape[0], env.N)
@@ -977,7 +977,7 @@ class TestResetBehaviour(unittest.TestCase):
         self.assertEqual(net.time_step, 0)
 
     def test_env_reset_reinitialises_steps(self):
-        env = QRNEnv(n_repeaters=4, topology="chain")
+        env = QRNEnv(n_repeaters=4)
         env.reset()
         env.step(NOOP)
         env.step(NOOP)
@@ -1026,7 +1026,7 @@ class TestEnvWrapper(unittest.TestCase):
         # Source and destination are structurally never active (they are
         # never members of env._interior), so issuing SWAP at every
         # micro-step can never make them act.
-        env = QRNEnv(n_repeaters=5, topology="chain", p_gen=1.0, p_swap=1.0)
+        env = QRNEnv(n_repeaters=5, p_gen=1.0, p_swap=1.0)
         env.reset()
         for _ in range(3 * env.max_steps):
             self.assertNotEqual(env.active_node, env.source)
@@ -1046,7 +1046,7 @@ class TestEnvWrapper(unittest.TestCase):
         return obs, reward, done, info
 
     def test_step_cost_on_non_terminal(self):
-        env = QRNEnv(n_repeaters=5, topology="chain",
+        env = QRNEnv(n_repeaters=5,
                      p_gen=0.0,         # never generate → never succeed
                      max_steps=100)
         env.reset()
@@ -1055,7 +1055,7 @@ class TestEnvWrapper(unittest.TestCase):
             self.assertAlmostEqual(reward, env.STEP_COST)
 
     def test_done_flag_on_max_steps(self):
-        env = QRNEnv(n_repeaters=3, topology="chain",
+        env = QRNEnv(n_repeaters=3,
                      p_gen=0.0, max_steps=2)
         env.reset()
         self._run_to_boundary(env)                    # tick 1
@@ -1063,13 +1063,13 @@ class TestEnvWrapper(unittest.TestCase):
         self.assertTrue(done)
 
     def test_observation_node_features_shape(self):
-        env = QRNEnv(n_repeaters=6, topology="chain")
+        env = QRNEnv(n_repeaters=6)
         obs = env.reset()
         # Expected: (N, 8) node feature matrix.
         self.assertEqual(obs["x"].shape, (6, 8))
 
     def test_action_mask_shape_and_noop_always_true(self):
-        env = QRNEnv(n_repeaters=5, topology="chain")
+        env = QRNEnv(n_repeaters=5)
         env.reset()
         mask = env.get_action_mask()
         self.assertEqual(mask.shape, (5, 3))
@@ -1118,7 +1118,7 @@ class TestSwapDecisionGate(unittest.TestCase):
     (age_a + age_b + 1 < ec under immediate apply)."""
 
     def _chain3(self, cutoff=10):
-        net = build_network(topology='chain', n_repeaters=3, n_ch=2,
+        net = build_network(n_repeaters=3, n_ch=2,
                             p_gen=1.0, p_swap=1.0, cutoff=cutoff,
                             F0=1.0, channel_loss=0.0,                            rng=np.random.default_rng(0))
         assert net.entangle(0, 1)["success"]
@@ -1234,7 +1234,7 @@ class TestSwapDecisionGate(unittest.TestCase):
     def test_selection_skips_doomed_picks_viable(self):
         # node 1 has TWO pairs: one doomed (old links), one viable (fresh);
         # FARTHEST would tie, so the viability filter must decide
-        net = build_network(topology='chain', n_repeaters=3, n_ch=4,
+        net = build_network(n_repeaters=3, n_ch=4,
                             p_gen=1.0, p_swap=1.0, cutoff=10,
                             F0=1.0, channel_loss=0.0,                            rng=np.random.default_rng(0))
         assert net.entangle(0, 1)["success"]

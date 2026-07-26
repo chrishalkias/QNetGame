@@ -14,7 +14,6 @@ python3 -u experiments/training/validation.py \
     --p_gen 0.5 \
     --p_swap 0.85 \
     --cutoff 15 \
-    --topology chain \
     --path checkpoints/legacy/cluster/smoke_netsquid_001/ \
     --dict policy.pth \
     --verbose 0 \

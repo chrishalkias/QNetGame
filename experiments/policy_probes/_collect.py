@@ -69,7 +69,6 @@ def collect(ckpt, *, episodes=200, sizes=range(4, 13), n_chs=(2, 3, 4),
                          cutoff=int(rng.integers(cut_lo, cut_hi + 1)),
                          p_gen_std=0.15, p_swap_std=0.15, F0=1.0,
                          channel_loss=0.0, max_steps=max_steps,
-                         topology="chain",
                          rng=np.random.default_rng(int(rng.integers(2**31))))
             obs = env.reset()
             while not env.done:

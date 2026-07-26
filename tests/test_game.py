@@ -92,7 +92,7 @@ def _tiny_train(tmp_path, name, save_best, episodes=120):
     agent.train(episodes=episodes, max_steps=6, n_range=[3], n_ch=2,
                 p_gen=0.9, p_swap=0.9, cutoff=5, F0=0.95, channel_loss=0.0,
                 curriculum=False,
-                topology="chain", save_path=sd,
+                save_path=sd,
                 save_best=save_best, best_window=20, plot=False)
     return sd
 
@@ -120,7 +120,7 @@ def _es_train(tmp_path, name, eval_fn, episodes, patience):
     agent = QRNAgent(rng=np.random.default_rng(0))
     metrics = agent.train(
         episodes=episodes, max_steps=6, n_range=[3], n_ch=2, p_gen=0.9, p_swap=0.9,
-        cutoff=5, F0=0.95, channel_loss=0.0,        curriculum=False, topology="chain", save_path=sd,
+        cutoff=5, F0=0.95, channel_loss=0.0,        curriculum=False, save_path=sd,
         eval_fn=eval_fn, eval_every=10, eval_patience=patience, eval_mode='min',
         plot=False)
     return sd, metrics
@@ -133,7 +133,7 @@ def test_compare_logs_paired_baseline_returns(tmp_path):
     m = agent.train(episodes=12, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     curriculum=False,
-                    topology="chain", save_path=None,
+                    save_path=None,
                     save_best=False, plot=False, compare=True)
     for k in ("cmp_agent", "cmp_swap", "cmp_rand",
               "cmp_agent_steps", "cmp_swap_steps", "cmp_rand_steps",
@@ -154,7 +154,7 @@ def test_compare_extra_logs_named_baseline(tmp_path):
     m = agent.train(episodes=10, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     curriculum=False,
-                    topology="chain", save_path=None,
+                    save_path=None,
                     save_best=False, plot=False, compare=True,
                     compare_extra={"optimal": noop_fn})
     for k in ("cmp_optimal", "cmp_optimal_steps", "cmp_optimal_succ"):
@@ -168,7 +168,7 @@ def test_no_compare_leaves_cmp_metrics_empty(tmp_path):
     m = agent.train(episodes=8, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     curriculum=False,
-                    topology="chain", save_path=None,
+                    save_path=None,
                     save_best=False, plot=False)
     assert m["cmp_agent"] == [] and m["cmp_swap"] == [] and m["cmp_rand"] == []
     assert m["cmp_agent_steps"] == [] and m["cmp_agent_succ"] == []
@@ -205,7 +205,7 @@ def test_disable_actions_trains(tmp_path):
     sd = str(tmp_path / "da")
     agent = QRNAgent(rng=np.random.default_rng(0))
     agent.train(episodes=40, max_steps=6, n_range=[3], n_ch=2, p_gen=0.9, p_swap=0.9,
-                cutoff=5, F0=0.95, channel_loss=0.0,                curriculum=False, topology="chain", save_path=sd,
+                cutoff=5, F0=0.95, channel_loss=0.0,                curriculum=False, save_path=sd,
                 disable_actions=(PURIFY,), save_best=False, plot=False)
     assert os.path.isfile(os.path.join(sd, "policy.pth"))
 
@@ -247,7 +247,7 @@ def test_train_records_ticks_not_env_steps_on_mid_sweep_delivery(monkeypatch):
     agent = QRNAgent(rng=np.random.default_rng(0))
     metrics = agent.train(episodes=1, max_steps=6, n_range=[3], n_ch=2,
                            p_gen=0.9, p_swap=0.9, cutoff=5, F0=0.95,
-                           channel_loss=0.0, curriculum=False, topology="chain",
+                           channel_loss=0.0, curriculum=False,
                            save_path=None, save_best=False, plot=False)
 
     assert metrics["steps"][0] == 1   # info["ticks"]: correct mid-sweep count
@@ -271,7 +271,7 @@ def _repro_run(seed):
     agent = _repro_agent(seed)
     m = agent.train(episodes=12, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=0.7, p_swap=0.7, cutoff=5, F0=0.95, channel_loss=0.0,
-                    curriculum=False, topology="chain",
+                    curriculum=False,
                     save_path=None, save_best=False, plot=False, env_seed=seed)
     return m["reward"], m["steps"]
 
@@ -320,7 +320,7 @@ def _probe_args(**kw):
     base = dict(p_gen=[1.0], p_swap=[1.0], n_lo=3, n_hi=4, n_ch=[2],
                 cutoff=50, cutoff_lo=None, cutoff_hi=None,
                 p_gen_std=0.0, p_swap_std=0.0, F0=1.0, channel_loss=0.0,
-                max_steps=40, topology="chain", seed=0)
+                max_steps=40, seed=0)
     base.update(kw)
     return argparse.Namespace(**base)
 

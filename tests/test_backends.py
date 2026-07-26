@@ -75,14 +75,20 @@ from simulator.network import build_network, _sample_matched_uniform
 
 
 def test_build_network_builds_chain():
-    net = build_network("chain", n_repeaters=4, rng=np.random.default_rng(1))
+    net = build_network(n_repeaters=4, rng=np.random.default_rng(1))
     assert isinstance(net, RepeaterNetwork)
     assert net.N == 4
 
 
-def test_build_network_rejects_unknown_topology():
-    with pytest.raises(ValueError):
-        build_network("quantum_magic")
+def test_build_network_rejects_a_topology_argument():
+    # `topology` is gone: chain is the only geometry, so there is nothing left
+    # to validate. This replaces the old ValueError guard, and pins the new
+    # failure mode: a stale caller must fail LOUDLY with a TypeError naming
+    # build_network, never bind its string silently to another parameter.
+    with pytest.raises(TypeError):
+        build_network(topology="chain", n_repeaters=4)
+    with pytest.raises(TypeError):
+        build_network("chain", n_repeaters=4)
 
 
 def test_sample_matched_uniform_std_zero_is_constant_and_drawless():
@@ -117,7 +123,7 @@ def test_sample_matched_uniform_clips_to_valid_band():
 
 
 def test_build_network_std_makes_per_repeater_params_differ():
-    net = build_network("chain", n_repeaters=6,
+    net = build_network(n_repeaters=6,
                         p_gen=0.7, p_swap=0.7, p_swap_std=0.18,
                         rng=np.random.default_rng(3))
     ps = np.array([rep.p_swap for rep in net.repeaters])
@@ -126,7 +132,7 @@ def test_build_network_std_makes_per_repeater_params_differ():
 
 
 def test_build_network_std_zero_is_homogeneous():
-    net = build_network("chain", n_repeaters=6,
+    net = build_network(n_repeaters=6,
                         p_gen=0.7, p_swap=0.65,
                         rng=np.random.default_rng(4))
     assert all(rep.p_gen == 0.7 for rep in net.repeaters)
@@ -149,7 +155,7 @@ def test_observation_has_urgency_feature():
     from rl_stack.agent import NODE_DIM
     assert NODE_DIM == 8
     env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
-                 topology="chain", rng=np.random.default_rng(0))
+                 rng=np.random.default_rng(0))
     env.reset()
     x = env.get_observation()["x"]
     assert x.shape == (env.N, 8)
@@ -166,7 +172,7 @@ def test_urgency_feature_formula():
     """
     from rl_stack.env_wrapper import QRNEnv
     env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=0.5, cutoff=20,
-                 channel_loss=0.0, topology="chain", rng=np.random.default_rng(42))
+                 channel_loss=0.0, rng=np.random.default_rng(42))
     env.reset()
     # Explicitly entangle node 0 with node 1 to guarantee occupancy at node 0
     env.net.entangle(0, 1)

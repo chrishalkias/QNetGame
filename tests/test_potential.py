@@ -96,7 +96,7 @@ def test_env_chain_progress_matches_potential():
     from rl_stack.potential import bfs_hops, path_progress
     env = QRNEnv(n_repeaters=6, n_ch=2, p_gen=1.0, p_swap=0.9, cutoff=20,
                  F0=1.0, channel_loss=0.0, max_steps=60,
-                 topology="chain", rng=np.random.default_rng(1))
+                 rng=np.random.default_rng(1))
     env.reset()
     adj = env.net.adj
     d_src, d_dst = bfs_hops(adj, env.source), bfs_hops(adj, env.dest)

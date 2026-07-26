@@ -37,7 +37,6 @@ def parse_args():
     parser.add_argument("--curriculum", action='store_false')
     parser.add_argument("--n_ch", type=int, nargs="+", default=[4],
                         help="n_ch pool, e.g. --n_ch 2 3 4 (per-episode draw)")
-    parser.add_argument("--topology", type=str, default='chain')
     parser.add_argument("--p_gen", type=float, nargs="+", default=[0.60],
                         help="MEAN p_gen; pass two values for a (lo,hi) per-episode range")
     parser.add_argument("--p_swap", type=float, nargs="+", default=[0.85],
@@ -148,7 +147,6 @@ def build_eval_probe(args, hard_cells, probe_seed=12345, n_episodes=40):
                 "F0": args.F0,
                 "channel_loss": args.channel_loss,
                 "max_steps": max_steps,
-                "topology": args.topology,
             }
             for k in range(n_episodes):
                 # greedy rollout (select_actions training=False ignores epsilon);
@@ -175,7 +173,7 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
             p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std,
             cutoff=cell["cutoff"], F0=args.F0,
             channel_loss=args.channel_loss,
-            max_steps=args.max_steps, topology=args.topology,
+            max_steps=args.max_steps,
             rng=np.random.default_rng(seed + k))
         env.reset()
         # Serialized sweep: one micro-decision at env.active_node per
@@ -313,7 +311,6 @@ if __name__ == "__main__":
         eval_patience=0,      # checkpoint selection only, no early termination
         eval_mode='min',
         save_path=save_path,
-        topology=args.topology,
         prune_unwinnable=args.prune_unwinnable,
         disable_actions=((2,) if args.disable_purify else ()),
         compare=args.compare,

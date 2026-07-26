@@ -14,7 +14,6 @@ python -u experiments/training/train.py \
     --max_steps 20 \
     --n_lo 5 \
     --n_hi 10 \
-    --topology chain \
     --p_gen 0.60 \
     --p_swap 0.85 \
     --cutoff 9 \

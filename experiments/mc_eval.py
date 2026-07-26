@@ -33,7 +33,7 @@ def mc_eval(policy_fn, N, n_ch, p_gen, p_swap, cutoff, H, n_episodes, seed=42,
         env = QRNEnv(N, n_ch=n_ch, p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
                      p_gen_std=p_gen_std, p_swap_std=p_swap_std,
                      F0=1.0, channel_loss=0.0, max_steps=H,
-                     topology="chain", rng=np.random.default_rng(rng.integers(2**32)))
+                     rng=np.random.default_rng(rng.integers(2**32)))
         obs = env.reset()
         info = {}
         while not env.done and env.steps < H:

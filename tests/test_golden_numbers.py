@@ -142,7 +142,6 @@ def _measure_rollouts():
         for _ in range(eps):
             env = QRNEnv(N, n_ch=n_ch, p_gen=pg, p_swap=ps, cutoff=cut,
                          F0=1.0, channel_loss=0.0, max_steps=H,
-                         topology="chain",
                          rng=np.random.default_rng(rng.integers(2**32)))
             obs = env.reset()
             _feed(digest, obs)

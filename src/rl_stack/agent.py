@@ -375,7 +375,6 @@ class QRNAgent:
               channel_loss = 0.02,
               curriculum = True,
               curriculum_frac = 0.5,
-              topology = 'chain',
               prune_unwinnable = False,
               env_seed = None,
               save_path = None,
@@ -512,7 +511,6 @@ class QRNAgent:
                     'F0' : F0,
                     'channel_loss' : channel_loss,
                     'max_steps' : max_steps,
-                    'topology' : topology,
                     }
 
                 env_rng = (np.random.default_rng(env_ss.spawn(1)[0])
@@ -735,7 +733,6 @@ class QRNAgent:
                  F0=0.95,
                  channel_loss=0.02,
                  plot_actions=True,
-                 topology = 'chain',
                  save_dir="."
                 ):
         """
@@ -770,7 +767,6 @@ class QRNAgent:
             'F0' : F0,
             'channel_loss' : channel_loss,
             'max_steps' : max_steps,
-            'topology' : topology,
             }
 
         action_rng = np.random.default_rng()

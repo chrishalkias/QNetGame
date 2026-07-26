@@ -79,7 +79,6 @@ def _sample_matched_uniform(mean, std, size, rng, lo=0.05, hi=1.0):
 
 
 def build_network(
-    topology: str = "chain",
     *,
     n_repeaters: int = 5,
     n_ch: int = 4,
@@ -93,18 +92,17 @@ def build_network(
     channel_loss: float = 0.02,
     rng=None,
 ) -> RepeaterNetwork:
-    """Build a RepeaterNetwork for the given topology.
+    """Build a linear repeater chain.
+
+    Chain is the only geometry this project models (the grid/GEANT builders
+    were removed in f0bb963): nodes sit on a line at `spacing` km, node i is
+    adjacent to i-1 and i+1, source = 0, dest = N-1.
 
     Inhomogeneity: `p_gen`/`p_swap` are the per-network MEANS; `p_gen_std`/
     `p_swap_std` spread per-repeater values via `_sample_matched_uniform`
     (std=0 -> homogeneous, no rng draw).
     """
     rng = rng if rng is not None else np.random.default_rng()
-    # ponytail: chain is the only topology this project models; the `topology`
-    # arg is kept as a validated constant so the ~40 call sites that pass
-    # topology="chain" (and the --topology CLI flag) don't all need editing.
-    if topology != "chain":
-        raise ValueError(f"Unknown topology {topology!r}")
     net = build_chain(
         n_repeaters, n_ch=n_ch, spacing=spacing,
         p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,

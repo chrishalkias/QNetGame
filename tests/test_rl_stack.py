@@ -545,7 +545,7 @@ class TestObservationFeatures(unittest.TestCase):
         # inhomogeneous network (std>0) must produce genuinely varying values.
         env = QRNEnv(n_repeaters=6, n_ch=4, p_gen=0.7, p_swap=0.7,
                      p_gen_std=0.18, p_swap_std=0.18, cutoff=20, max_steps=40,
-                     topology="chain", rng=np.random.default_rng(99))
+                     rng=np.random.default_rng(99))
         x = env.reset()["x"]
         for i in range(env.N):
             rep = env.net.node(i)
@@ -591,7 +591,7 @@ class TestMultiPartnerPurify(unittest.TestCase):
 
     def test_purify_touches_both_partners(self):
         env = QRNEnv(n_repeaters=3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=1000,
-                     F0=1.0, channel_loss=0.0, max_steps=50, topology="chain",
+                     F0=1.0, channel_loss=0.0, max_steps=50,
                      rng=np.random.default_rng(0))
         env.reset()
         # Two links on each side of the interior node R1.
@@ -1319,7 +1319,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
         from rl_stack.env_wrapper import QRNEnv
         from rl_stack.strategies import swap_asap
         env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.9, p_swap=0.7,
-                     cutoff=20, max_steps=40, topology="chain",
+                     cutoff=20, max_steps=40,
                      rng=np.random.default_rng(2024))
         obs = env.reset()
         self.assertEqual(obs["x"].shape, (env.N, 8))
@@ -1342,7 +1342,7 @@ class TestEnvRewireCorrectness(unittest.TestCase):
         from rl_stack.env_wrapper import QRNEnv
         from rl_stack.strategies import swap_asap
         env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0,
-                     cutoff=50, max_steps=80, topology="chain",
+                     cutoff=50, max_steps=80,
                      rng=np.random.default_rng(7))
         env.reset()
         reached = False
@@ -1359,7 +1359,7 @@ def test_step_reports_terminated_vs_truncated():
     # max_steps=1, impossible delivery (p_gen=0) -> must truncate, not terminate.
     # n_repeaters=4 -> 2 interior nodes; drive the full sweep to the tick boundary.
     env = QRNEnv(n_repeaters=4, n_ch=4, p_gen=0.0, p_swap=1.0, cutoff=20,
-                 max_steps=1, topology="chain", rng=np.random.default_rng(0))
+                 max_steps=1, rng=np.random.default_rng(0))
     env.reset()
     info = {"tick_boundary": False}
     while not info["tick_boundary"]:
@@ -1373,7 +1373,7 @@ def test_step_win_is_terminated_not_truncated():
     # easy 2-node chain: delivers fast -> terminated True, truncated False.
     # N=2 has no interior nodes (the reset() empty-_interior edge case).
     env = QRNEnv(n_repeaters=2, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
-                 max_steps=50, topology="chain", rng=np.random.default_rng(0))
+                 max_steps=50, rng=np.random.default_rng(0))
     env.reset()
     saw_win = False
     for _ in range(50):

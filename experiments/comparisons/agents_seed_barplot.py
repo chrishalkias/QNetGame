@@ -61,7 +61,7 @@ def _rollout(fn, N, n_ch, p_gen, p_swap, cutoff, ep_seed, H, pg_std, ps_std):
     env = QRNEnv(N, n_ch=n_ch, p_gen=p_gen, p_swap=p_swap, cutoff=cutoff,
                  p_gen_std=pg_std, p_swap_std=ps_std,
                  F0=1.0, channel_loss=0.0, max_steps=H,
-                 topology="chain", rng=np.random.default_rng(ep_seed))
+                 rng=np.random.default_rng(ep_seed))
     obs = env.reset()
     info = {}
     while not env.done and env.steps < H:
