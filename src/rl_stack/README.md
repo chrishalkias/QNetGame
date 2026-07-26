@@ -20,7 +20,7 @@ topologies and is evaluated zero-shot on larger or differently parameterised net
 | `buffer.py` | Experience storage | Fixed-size ring buffer for (s, a, r, s', done, mask') transitions |
 | `agent.py` | Training and evaluation | Double-DQN agent: action selection, loss computation, training loop, validation |
 | `strategies.py` | Baselines | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking |
-| `potential.py` | Reward shaping | PBRS potential (`bfs_hops`, `path_progress`), pure, no torch |
+| `potential.py` | Reward shaping | PBRS potential (`path_progress`, chain closed form), pure, no torch |
 | `winnability.py` | Training helper | Purify-then-swap winnability oracle (2026-07-12; was swap-asap) used to prune unsolvable episode cells |
 | `__init__.py` | Re-exports | Public API surface with guarded torch imports |
 
@@ -89,8 +89,8 @@ pair for the current episode.
 ### 2.2 Target selection: `_pick_targets()`
 
 Chain-only: source and destination are always fixed to the first and last node (indices `0`
-and `N-1`). Also caches the BFS hop distances (`_d_src`, `_d_dst`, `_d_total`) the PBRS
-potential reads every step (§5.5).
+and `N-1`). The PBRS potential needs no cached hop distances: on a chain the shortcut a
+link `(a, b)` offers is just `|a - b| / (N - 1)`.
 
 
 ### 2.3 Observation: `get_observation()`

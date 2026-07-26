@@ -85,9 +85,6 @@ class QRNEnv:
         "steps",      # steps elapsed in the current episode
         "done",       # episode terminated or truncated
         "_phi",       # last PBRS potential Φ(s)
-        "_d_src",     # BFS hop distances from source
-        "_d_dst",     # BFS hop distances from dest
-        "_d_total",   # source→dest hop distance (path length)
         "_interior",  # fixed left-to-right sweep order (source/dest excluded)
         "_active",    # current active interior node (-1 if _interior is empty)
     )
@@ -140,13 +137,8 @@ class QRNEnv:
 #                     ▀▀▀
 
     def _pick_targets(self):
-        # Chain endpoints are the two ends; also cache BFS hop distances that
-        # the PBRS potential (_progress) reads every step.
+        """Chain endpoints are the two ends."""
         self.source, self.dest = 0, self.N - 1
-        adj = self.net.adj
-        self._d_src = potential.bfs_hops(adj, self.source)
-        self._d_dst = potential.bfs_hops(adj, self.dest)
-        self._d_total = float(self._d_src[self.dest])
 
     def _entangled_edges(self):
         """Undirected (a, b) edges of the current entanglement graph."""
@@ -160,9 +152,8 @@ class QRNEnv:
         return edges
 
     def _progress(self) -> float:
-        """Topology-general PBRS potential in [0, 1]."""
-        return potential.path_progress(
-            self._d_src, self._d_dst, self._d_total, self._entangled_edges())
+        """PBRS potential Phi in [0, 1] (see rl_stack.potential)."""
+        return potential.path_progress(self._entangled_edges(), self.N)
 
     def is_target(self, node: int) -> bool:
         return node == self.source or node == self.dest
