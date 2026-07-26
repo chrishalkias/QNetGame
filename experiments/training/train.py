@@ -60,8 +60,12 @@ def parse_args():
     parser.add_argument("--F0", type=float, default=1.0)
     
     parser.add_argument("--compare", action="store_true",
-                        help="log per-episode greedy-agent vs swap-asap vs random "
+                        help="log sampled greedy-agent vs swap-asap vs random "
                              "returns on a shared seeded net (+ training_compare.png)")
+    parser.add_argument("--compare_every", type=int, default=10,
+                        help="run the paired comparison rollouts every K episodes "
+                             "(each sample costs 3 extra greedy rollouts; K=1 "
+                             "reproduces the old every-episode behaviour)")
     parser.add_argument("--save_base_dir", type=str, default="checkpoints")
     parser.add_argument("--prune_unwinnable", action="store_true",
                         help="skip cells swap-asap can't deliver (winnability oracle)")
@@ -149,7 +153,7 @@ def build_eval_probe(args, hard_cells, probe_seed=12345, n_episodes=40):
                 "max_steps": max_steps,
             }
             for k in range(n_episodes):
-                # greedy rollout (select_actions training=False ignores epsilon);
+                # greedy rollout (select_action training=False ignores epsilon);
                 # deterministic per (cell, k); steps censored at max_steps.
                 _, steps, _ = agent._cmp_rollout(
                     env_args, probe_seed + 1000 * k, "agent", max_steps)
@@ -314,4 +318,5 @@ if __name__ == "__main__":
         prune_unwinnable=args.prune_unwinnable,
         disable_actions=((2,) if args.disable_purify else ()),
         compare=args.compare,
+        compare_every=args.compare_every,
         plot=True,)

@@ -794,11 +794,16 @@ class TestSequentialSweep(unittest.TestCase):
 #       ▀▀                                   ██
 #                                          ▀▀▀
 
-class TestSelectActions(unittest.TestCase):
+class TestSelectActionEveryNode(unittest.TestCase):
     """
-    select_actions must NEVER choose an action where mask[node, action] == False,
-    regardless of whether it is in exploration or exploitation mode.
+    select_action must NEVER choose an action where mask[node, action] == False,
+    regardless of whether it is in exploration or exploitation mode, and that
+    must hold at EVERY node of the graph (any node can be env.active_node).
     Violating this allows the RL agent to learn unphysical transitions.
+
+    (These cases were written against the batched `select_actions`, deleted
+    2026-07-26; they now drive the same graph through the single-node entry
+    point one active node at a time.)
     """
 
     def setUp(self):
@@ -806,6 +811,10 @@ class TestSelectActions(unittest.TestCase):
         np.random.seed(42)
         self.agent = QRNAgent(node_dim=8, hidden=16)
         self.obs   = _dummy_obs(6)
+
+    def _actions_for_every_node(self, mask, training):
+        return [self.agent.select_action(self.obs, mask[i], i, training=training)
+                for i in range(mask.shape[0])]
 
     def _assert_mask_respected(self, actions, mask):
         for i, a in enumerate(actions):
@@ -816,14 +825,14 @@ class TestSelectActions(unittest.TestCase):
         # Exploitation (ε=0): greedy action must satisfy the mask.
         self.agent.epsilon = 0.0
         mask = _dummy_mask(6)
-        actions = self.agent.select_actions(self.obs, mask, training=False)
+        actions = self._actions_for_every_node(mask, training=False)
         self._assert_mask_respected(actions, mask)
 
     def test_exploration_respects_mask(self):
         # Exploration (ε=1): random action must still satisfy the mask.
         self.agent.epsilon = 1.0
         mask = _dummy_mask(6)
-        actions = self.agent.select_actions(self.obs, mask, training=True)
+        actions = self._actions_for_every_node(mask, training=True)
         self._assert_mask_respected(actions, mask)
 
     def test_noop_only_mask_forces_noop(self):
@@ -831,42 +840,41 @@ class TestSelectActions(unittest.TestCase):
         noop_mask = _dummy_mask(6, force_noop_only=True)
         for eps in [0.0, 1.0]:
             self.agent.epsilon = eps
-            actions = self.agent.select_actions(
-                self.obs, noop_mask, training=(eps > 0))
-            np.testing.assert_array_equal(
-                actions, np.zeros(6, dtype=np.int32),
-                err_msg=f"ε={eps}: all-NOOP mask must yield all-NOOP actions.")
+            actions = self._actions_for_every_node(
+                noop_mask, training=(eps > 0))
+            self.assertEqual(
+                actions, [NOOP] * 6,
+                f"ε={eps}: all-NOOP mask must yield all-NOOP actions.")
 
-    def test_output_shape(self):
+    def test_output_is_a_scalar_int_per_node(self):
         mask = _dummy_mask(6)
-        actions = self.agent.select_actions(self.obs, mask, training=False)
-        self.assertEqual(actions.shape, (6,))
-        self.assertEqual(actions.dtype, np.int32)
+        actions = self._actions_for_every_node(mask, training=False)
+        self.assertEqual(len(actions), 6)
+        for a in actions:
+            self.assertIsInstance(a, int)
 
     def test_actions_are_valid_integers(self):
         mask = _dummy_mask(6)
         for eps in [0.0, 0.5, 1.0]:
             self.agent.epsilon = eps
-            actions = self.agent.select_actions(
-                self.obs, mask, training=True)
+            actions = self._actions_for_every_node(mask, training=True)
             self.assertTrue(
-                np.all((actions >= 0) & (actions < N_ACTIONS)),
+                all(0 <= a < N_ACTIONS for a in actions),
                 f"ε={eps}: actions contain out-of-range values.")
 
     def test_greedy_consistent_across_calls(self):
         # Deterministic greedy must return the same actions on repeated calls.
         self.agent.epsilon = 0.0
         mask = _dummy_mask(6)
-        a1 = self.agent.select_actions(self.obs, mask, training=False)
-        a2 = self.agent.select_actions(self.obs, mask, training=False)
-        np.testing.assert_array_equal(a1, a2)
+        a1 = self._actions_for_every_node(mask, training=False)
+        a2 = self._actions_for_every_node(mask, training=False)
+        self.assertEqual(a1, a2)
 
 
 class TestSelectAction(unittest.TestCase):
-    """select_action (scalar) is the per-micro-step counterpart of
-    select_actions: it picks ONE action for env.active_node against that
-    node's (3,) mask_row, and must never violate the mask either greedily
-    or under exploration."""
+    """select_action is the ONE selection entry point: it picks a scalar
+    action for env.active_node against that node's (3,) mask_row, and must
+    never violate the mask either greedily or under exploration."""
 
     def setUp(self):
         torch.manual_seed(42)
@@ -1175,10 +1183,11 @@ class TestAllActionsMaskedFallback(unittest.TestCase):
         mask[:, NOOP] = True    # only NOOP is valid
 
         self.agent.epsilon = 0.0
-        actions = self.agent.select_actions(obs, mask, training=False)
-        np.testing.assert_array_equal(
-            actions, np.zeros(n, dtype=np.int32),
-            err_msg="Greedy selection with NOOP-only mask must return all NOOPs.")
+        actions = [self.agent.select_action(obs, mask[i], i, training=False)
+                   for i in range(n)]
+        self.assertEqual(
+            actions, [NOOP] * n,
+            "Greedy selection with NOOP-only mask must return all NOOPs.")
 
     def test_noop_only_mask_exploration_returns_noop(self):
         n = 5
@@ -1187,8 +1196,9 @@ class TestAllActionsMaskedFallback(unittest.TestCase):
         mask[:, NOOP] = True
 
         self.agent.epsilon = 1.0
-        actions = self.agent.select_actions(obs, mask, training=True)
-        np.testing.assert_array_equal(actions, np.zeros(n, dtype=np.int32))
+        actions = [self.agent.select_action(obs, mask[i], i, training=True)
+                   for i in range(n)]
+        self.assertEqual(actions, [NOOP] * n)
 
     def test_no_exception_on_fully_masked_node(self):
         """
@@ -1202,7 +1212,8 @@ class TestAllActionsMaskedFallback(unittest.TestCase):
         mask[:, NOOP] = True    # the guard: NOOP always valid
         self.agent.epsilon = 0.0
         try:
-            actions = self.agent.select_actions(obs, mask, training=False)
+            for i in range(n):
+                self.agent.select_action(obs, mask[i], i, training=False)
         except RuntimeError as e:
             self.fail(f"argmax raised RuntimeError on NOOP-only mask: {e}")
 

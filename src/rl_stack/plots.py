@@ -1,11 +1,16 @@
 """
 --------------------------------------------------------------------------------
-Training-curve figures, the validation results table, and the action-timeline grid.
+Training-curve figures and the validation results table.
 
 Split out of agent.py (2026-07-26) so the learning code does not carry
 matplotlib at import time. `plot_training` renders training_metrics.png (return
 / loss / steps vs cumulative optimizer steps) and, when --compare logged paired
 rollouts, training_compare.png.
+
+The validation action-timeline grid (`plot_timeline_grid`, validation_actions.png)
+was deleted 2026-07-26 together with `validate(plot_actions=...)`: it plotted a
+single hand-picked median episode, which no result depended on, and the
+serialized sweep had already forced it onto a synthesized per-tick action row.
 
 Regenerate figures from a finished run's metrics.json without retraining:
   PYTHONPATH=src:. python experiments/training/replot.py --dir checkpoints/<id>/
@@ -15,13 +20,9 @@ from __future__ import annotations
 import os
 import numpy as np
 
-from rl_stack.env_wrapper import NOOP, SWAP, PURIFY
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.colors import to_rgba
 
 
 def _running_avg(vals, window=30):
@@ -30,14 +31,6 @@ def _running_avg(vals, window=30):
         lo = max(0, i - window + 1)
         out.append(np.mean(vals[lo:i+1]))
     return out
-
-
-def _repeater_colors(N: int):
-    cmap = plt.cm.tab10 if N <= 10 else plt.cm.tab20
-    return [to_rgba(cmap(i / max(N - 1, 1))) for i in range(N)]
-
-
-_ACTION_HATCH = {NOOP: "", SWAP: "///", PURIFY: "..."}
 
                                        
                 # ▄▄▄▄▄▄▄   ▄▄▄        ▄▄▄▄▄   ▄▄▄▄▄▄▄▄▄ 
@@ -117,16 +110,21 @@ def plot_training(metrics, save_path='assets/', window=None):
                   ("agent", "royalblue", "Agent (greedy)"))
         series = tuple(s for s in _known if metrics.get(f"cmp_{s[0]}"))
         n = len(metrics["cmp_agent"])
-        # x-axis = cumulative optimizer steps (aligned per episode), fall back
-        # to episode index if opt_steps is absent or length-mismatched.
-        _opt = metrics.get("opt_steps")
-        cep = _opt if (_opt and len(_opt) == n) else list(range(n))
-        _cxlabel = "Optimizer steps" if (_opt and len(_opt) == n) else "Episode"
+        # Comparison samples are taken every compare_every episodes, so they
+        # have their own x-axis (cmp_ep) and cannot share the main figure's
+        # cumulative-optimizer-step axis. Old runs sampled every episode and
+        # recorded no cmp_ep, so fall back to a dense episode range (also the
+        # guard for a run interrupted between the cmp_ep and series appends).
+        _cep = metrics.get("cmp_ep")
+        cep = _cep if (_cep and len(_cep) == n) else list(range(n))
+        _cxlabel = "Episode"
         # Wide smoothing: per-episode (p_gen,p_swap) randomisation injects huge
-        # raw variance, so a small window can't reveal the trend. No raw fog —
-        # at thousands of episodes it just buries the means. `window` (e.g. via
-        # replot.py --window) overrides the adaptive default.
-        win = int(window) if window else max(50, n // 25)
+        # raw variance, so a small window can't reveal the trend. No raw fog,
+        # at thousands of episodes it just buries the means. The floor is 5,
+        # not 50: with compare_every=10 the series is 10x shorter and a window
+        # of 50 would swallow it whole. `window` (e.g. via replot.py --window)
+        # overrides the adaptive default.
+        win = int(window) if window else max(5, n // 25)
 
         # Paired GAP-to-optimal panel (the key readout): because every policy
         # runs on the SAME seeded net each episode, policy_steps - opt_steps
@@ -156,7 +154,7 @@ def plot_training(metrics, save_path='assets/', window=None):
             gax.axhline(0, color="seagreen", ls="--", lw=1.4)  # optimal = 0
             gax.set_ylabel("Steps above Optimal\n(paired; 0 = optimal)")
 
-        _title = (f"Per-episode paired comparison "
+        _title = (f"Paired comparison, sampled episodes "
                   f"(same seeded network, rolling mean w={win})")
         if caption:
             _title += f"\n{caption}"
@@ -188,91 +186,3 @@ def print_results_table(results, N, pg, ps, c):
         std_f = np.std(data["fidelities"])  if ns else 0.0
         print(f"{name:<14} | {avg_s:>5.1f}{pm}{std_s:<5.1f} | "
               f"{avg_f:>6.4f}{pm}{std_f:<6.4f} | {succ:>5.0f}%")
-
-
-def plot_timeline_grid(timelines, N, pg, ps, c, save_dir="."):
-    """Plot action timeline.
-
-    Each cell = one node at one timestep.
-    - Solid colour (repeater ID) = NOOP (wait / background entangle).
-    - Hatched ``///`` = SWAP.
-    - Hatched ``...`` = PURIFY.
-    """
-    strats   = list(timelines.keys())
-    n_strats = len(strats)
-    max_steps = max((len(tl) for tl in timelines.values()), default=1)
-    rep_colors = _repeater_colors(N)
-
-    fig_w = min(max_steps * 0.3 + 3, 22)
-    fig_h = n_strats * 1.4 + 1.2
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-
-    row_h = 1.0
-    bar_h = row_h / N
-
-    for si, sname in enumerate(strats):
-        tl = timelines[sname]
-        y_base = (n_strats - 1 - si) * (row_h + 0.3)
-
-        for t, actions in enumerate(tl):
-            for node in range(min(N, len(actions))):
-                a = int(actions[node])
-                y = y_base + node * bar_h
-                color = rep_colors[node]
-                hatch = _ACTION_HATCH.get(a, "")
-
-                rect = mpatches.FancyBboxPatch(
-                    (t - 0.45, y), 0.9, bar_h * 0.9,
-                    boxstyle="square,pad=0",
-                    facecolor=color, edgecolor="none", linewidth=0)
-                ax.add_patch(rect)
-
-                # Only overlay hatch for SWAP / PURIFY
-                if a in (SWAP, PURIFY):
-                    h_rect = mpatches.FancyBboxPatch(
-                        (t - 0.45, y), 0.9, bar_h * 0.9,
-                        boxstyle="square,pad=0",
-                        facecolor="none", edgecolor="black",
-                        hatch=hatch, linewidth=0, alpha=0.6)
-                    ax.add_patch(h_rect)
-        
-        # Append black patch after the end of the timeline
-        t_end = len(tl)
-        black_patch = mpatches.FancyBboxPatch(
-            (t_end - 0.45, y_base), 0.9, row_h - (bar_h * 0.1),
-            boxstyle="square,pad=0",
-            facecolor="black", edgecolor="none", linewidth=0, zorder=3)
-        ax.add_patch(black_patch)
-
-    y_positions = [(n_strats - 1 - i) * (row_h + 0.3) + row_h / 2
-                   for i in range(n_strats)]
-    ax.set_yticks(y_positions)
-    ax.set_yticklabels(strats)
-    
-    # Extended xlim to ensure the appended patch is not cut off
-    ax.set_xlim(-0.5, max_steps + 1.5)
-    ax.set_ylim(-0.3, n_strats * (row_h + 0.3))
-    ax.set_xlabel("Time Step")
-    ax.set_title(f"Policy Actions — median episode (N={N}, pg={pg}, ps={ps}, c={c})")
-    ax.grid(False)
-
-    handles = []
-    for i in range(N):
-        handles.append(mpatches.Patch(
-            facecolor=rep_colors[i], label=f"R{i}",
-            edgecolor="grey", linewidth=0.5))
-    handles.append(mpatches.Patch(
-        facecolor="white", edgecolor="grey", label="Noop"))
-    handles.append(mpatches.Patch(
-        facecolor="white", edgecolor="black", hatch="///", label="Swap"))
-    handles.append(mpatches.Patch(
-        facecolor="white", edgecolor="black", hatch="...", label="Purify"))
-
-    box = ax.get_position()
-    ax.set_position([box.x0, box.y0, box.width * 0.82, box.height])
-    ax.legend(handles=handles, loc="center left",
-              bbox_to_anchor=(1, 0.5), title="Legend", fontsize=7)
-
-    plt.savefig(os.path.join(save_dir, "validation_actions.png"),
-                dpi=150, bbox_inches="tight")
-    plt.close()

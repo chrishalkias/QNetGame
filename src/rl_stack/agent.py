@@ -142,33 +142,17 @@ class QRNAgent:
             #    ▀████ ███      ███      ███      ███         ███    
             # ███████▀ ▀███████ ████████ ▀███████ ▀███████    ███   
 
-    def select_actions(self, obs: Dict[str, np.ndarray],
-                       mask: np.ndarray, training: bool = True
-                       ) -> np.ndarray:
-        """ε-greedy over masked Q-values.  (N,) int32 actions."""
-        N = mask.shape[0]
-
-        if training and self.rng.random() < self.epsilon:
-            actions = np.zeros(N, dtype=np.int32)
-            for i in range(N):
-                valid = np.flatnonzero(mask[i])
-                actions[i] = self.rng.choice(valid) if len(valid) else NOOP
-            return actions
-
-        data = _obs_to_data(obs, self.device)
-        mask_t = torch.tensor(mask, dtype=torch.bool, device=self.device)
-
-        with torch.no_grad():
-            q = self.policy_net(data)
-            q[~mask_t] = -float("inf")
-
-        return q.argmax(dim=1).cpu().numpy().astype(np.int32)
-
     def select_action(self, obs: Dict[str, np.ndarray], mask_row: np.ndarray,
                       active_node: int, training: bool = True) -> int:
         """ε-greedy scalar action for ONE node: env.active_node, the sole
         node deciding at this micro-step. `mask_row` is that node's (3,)
-        action mask."""
+        action mask.
+
+        This is the only selection entry point. The batched `select_actions`
+        (an (N,3) mask in, an (N,) action vector out) was deleted 2026-07-26:
+        under the serialized sweep exactly one node decides per micro-step, so
+        every caller indexed the result at env.active_node and threw the other
+        N-1 argmaxes away."""
         if training and self.rng.random() < self.epsilon:
             valid = np.flatnonzero(mask_row)
             return int(self.rng.choice(valid)) if len(valid) else NOOP
@@ -350,8 +334,8 @@ class QRNAgent:
               p_gen_std = 0.0,
               p_swap_std = 0.0,
               cutoff = 30,
-              F0 = 0.95,
-              channel_loss = 0.02,
+              F0 = 1.0,
+              channel_loss = 0.0,
               curriculum = True,
               curriculum_frac = 0.5,
               prune_unwinnable = False,
@@ -369,6 +353,7 @@ class QRNAgent:
               eval_mode = 'min',
               disable_actions = (),
               compare = False,
+              compare_every = 10,
               compare_extra = None,
               plot = True) -> Dict[str, list]:
         """
@@ -376,6 +361,11 @@ class QRNAgent:
 
         Curriculum linearly widens the eligible chain size to the full range
         over the first `curriculum_frac` of training (see _curriculum_pool).
+
+        `F0`/`channel_loss` default to IDEALISED physics (perfect fresh links,
+        lossless fibre), matching what every SLURM recipe and the train.py CLI
+        already pass explicitly. The engine keeps its full lossy surface, it is
+        just no longer the default nobody asked for.
 
         Checkpointing: `policy.pth` always holds the BEST agent seen, never the
         final one (late-training degradation therefore can't clobber it); the
@@ -397,14 +387,22 @@ class QRNAgent:
         the Double-DQN target (e.g. (PURIFY,) trains a pure swap-scheduler).
         `eval_mode`: 'min' (lower probe = better, e.g. delivery time) or 'max'.
 
-        `compare`: each episode, also roll out the GREEDY agent, swap-asap and
-        random on one freshly seeded network and log per-policy return, steps
-        and success to metrics['cmp_{agent,swap,rand}{,_steps,_succ}'] (+ a 3-
-        panel `training_compare.png`). Read crossovers off the STEPS/SUCCESS
-        panels — those are the pure task metrics; return also reflects
-        fidelity-weighted success and failed-action penalties, so a policy can
-        lead on return while only tying on delivery time. Diagnostic only; costs
-        ~3 extra rollouts/episode; default off.
+        `compare`: every `compare_every` episodes, also roll out the GREEDY
+        agent, swap-asap and random on one freshly seeded network and log
+        per-policy return, steps and success to
+        metrics['cmp_{agent,swap,rand}{,_steps,_succ}'], with the sampled
+        episode indices in metrics['cmp_ep'] (+ a 3-panel
+        `training_compare.png`). Read crossovers off the STEPS/SUCCESS panels,
+        those are the pure task metrics; return also reflects fidelity-weighted
+        success, so a policy can lead on return while only tying on delivery
+        time. Diagnostic only; default off.
+
+        `compare_every`: sampling period for those extra rollouts (default 10).
+        Each sample costs three extra greedy rollouts, so sampling every
+        episode is the dominant cost of a --compare run; the panels are rolling
+        means, so a 10x sparser sample is visually identical past a few hundred
+        episodes. `compare_every=1` reproduces the old every-episode behaviour
+        exactly, RNG stream included.
 
         `compare_extra`: optional dict {name: policy_fn(env, obs) -> actions} of
         extra baselines to log alongside agent/swap/rand under the SAME per-
@@ -417,6 +415,7 @@ class QRNAgent:
         cmp_names = ['agent', 'swap', 'rand', *compare_extra.keys()]
         metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": [],
                    "opt_steps": []}   # cumulative optimizer steps at each episode end
+        metrics["cmp_ep"] = []   # episode index of each comparison sample
         for nm in cmp_names:
             metrics[f"cmp_{nm}"] = []
             metrics[f"cmp_{nm}_steps"] = []
@@ -432,6 +431,10 @@ class QRNAgent:
         }
         assert eps_schedule in ('linear', 'cosine'), \
             f"eps_schedule must be 'linear' or 'cosine', got {eps_schedule!r}"
+        if int(compare_every) < 1:
+            raise ValueError(
+                f"compare_every must be >= 1, got {compare_every!r}")
+        compare_every = int(compare_every)
         # eps_init/eps_fin now come from the signature (fine-tuning wants a LOW
         # eps_init so a warm-started policy isn't scrambled). lr_decay enables an
         # exponential LR schedule (default None = constant LR, unchanged).
@@ -562,17 +565,23 @@ class QRNAgent:
                 opt_steps_total += len(ep_loss)
                 metrics["opt_steps"].append(opt_steps_total)
 
-                # -- Per-episode paired comparison (--compare): run the GREEDY
-                # agent, swap-asap and random on ONE freshly seeded network so
-                # the returns are directly comparable. Reveals the training
-                # phases where the learned policy overtakes random, then
-                # swap-asap. Greedy (not the eps-exploring training rollout) so
-                # the crossover reflects policy quality, not the eps schedule.
-                if compare:
+                # -- Paired comparison (--compare): run the GREEDY agent,
+                # swap-asap and random on ONE freshly seeded network so the
+                # returns are directly comparable. Reveals the training phases
+                # where the learned policy overtakes random, then swap-asap.
+                # Greedy (not the eps-exploring training rollout) so the
+                # crossover reflects policy quality, not the eps schedule.
+                # Sampled every `compare_every` episodes (default 10): three
+                # extra rollouts per sample are the dominant cost of a
+                # --compare run, and the panels are rolling means, so a sparser
+                # sample is visually identical. The episode index goes to
+                # cmp_ep, which is the x-axis those panels plot against.
+                if compare and ep % compare_every == 0:
                     cmp_seed = int(self.rng.integers(0, 2**32))
-                    policies = {'agent': 'agent', 'swap': 'swap', 'rand': 'rand',
-                                **compare_extra}
-                    for nm, pol in policies.items():
+                    metrics["cmp_ep"].append(ep)
+                    cmp_policies = {'agent': 'agent', 'swap': 'swap',
+                                    'rand': 'rand', **compare_extra}
+                    for nm, pol in cmp_policies.items():
                         ret, st, sc = self._cmp_rollout(
                             args, cmp_seed, pol, max_steps, disable_actions)
                         metrics[f"cmp_{nm}"].append(ret)
@@ -672,12 +681,14 @@ class QRNAgent:
         ret = 0.0
         success = 0.0
         while True:
-            mask = env.get_action_mask()
-            if disable_actions:
-                mask[:, disable_actions] = False
             r_node = env.active_node
             if policy == 'agent':
-                a = int(self.select_actions(obs, mask, training=False)[r_node])
+                # action_mask(node) returns a fresh (3,) array, so disabling
+                # actions in place here cannot leak into anyone else's mask.
+                mask_row = env.action_mask(r_node)
+                for d in disable_actions:
+                    mask_row[d] = False
+                a = self.select_action(obs, mask_row, r_node, training=False)
             elif policy == 'swap':
                 a = policies.swap_asap(env)
             elif policy == 'rand':
@@ -710,13 +721,13 @@ class QRNAgent:
                  p_gen_std=0.0,
                  p_swap_std=0.0,
                  cutoff=15,
-                 F0=0.95,
-                 channel_loss=0.02,
-                 plot_actions=True,
-                 save_dir="."
+                 F0=1.0,
+                 channel_loss=0.0,
                 ):
         """
-        Validate agent vs baselines; plot action timelines."""
+        Validate the agent against the heuristic baselines on paired episode
+        seeds and print the results table (avg steps, avg fidelity, success%).
+        """
         if model_path is not None:
             self.policy_net.load_state_dict(
                 torch.load(model_path, map_location=self.device,
@@ -733,7 +744,6 @@ class QRNAgent:
         }
         results   = {k: {"steps": [], "fidelities": [], "total": 0}
                      for k in strat_fns}
-        timelines = {k: [] for k in strat_fns}
 
         args = {
             'n_repeaters': n_repeaters,
@@ -753,9 +763,6 @@ class QRNAgent:
         seed_rng = np.random.default_rng(42)
         ep_seeds = seed_rng.integers(0, 2**32, size=n_episodes)
 
-        # Store all episode timelines so we can pick the median one
-        all_timelines = {k: [] for k in strat_fns}
-
         for name, fn in strat_fns.items():
             for ep in range(n_episodes):
 
@@ -764,31 +771,19 @@ class QRNAgent:
                 obs  = env.reset()
                 done = False
                 fid  = 0.0
-                ep_actions = []
-                # Sweep is serialized (one node decides per micro-step); a
-                # tick_row accumulates one action per node, one row per tick,
-                # to keep the (N,) per-tick timeline shape plot_timeline_grid
-                # expects, matching the pre-Task-4 simultaneous-tick model.
-                tick_row = np.zeros(env.N, dtype=np.int32)
 
                 while True:
-                    mask = env.get_action_mask()
                     r_node = env.active_node
                     if name == "Agent":
-                        a = int(self.select_actions(obs, mask, training=False)[r_node])
+                        a = self.select_action(obs, env.action_mask(r_node),
+                                               r_node, training=False)
                     elif name == "Random":
                         a = policies.random_policy(env, action_rng)
                     else:
                         a = fn(env)
-                    tick_row[r_node] = a
 
                     obs, reward, done, info = env.step(a)
                     fid = info.get("fidelity", 0.0)
-
-                    if plot_actions and (info["tick_boundary"] or done):
-                        ep_actions.append(tick_row.copy())
-                        tick_row = np.zeros(env.N, dtype=np.int32)
-
                     if done:
                         break
 
@@ -798,38 +793,8 @@ class QRNAgent:
                     results[name]["fidelities"].append(fid)
                 results[name]["total"] += 1
 
-                if plot_actions:
-                    all_timelines[name].append(ep_actions)
-
         self.epsilon = old_eps
         from rl_stack.plots import print_results_table
         print_results_table(results, n_repeaters, p_gen, p_swap, cutoff)
-
-        if plot_actions:
-            # Pick the median-length successful episode per strategy
-            for name in strat_fns:
-                episodes = all_timelines[name]
-                succ_steps = results[name]["steps"]
-                if not succ_steps:
-                    # No successes — use the first episode as fallback
-                    timelines[name] = episodes[0] if episodes else []
-                    continue
-                median_steps = int(np.median(succ_steps))
-                # Find the successful episode closest to the median
-                best_idx, best_diff = 0, float("inf")
-                ep_succ = 0
-                for ep_idx, ep_tl in enumerate(episodes):
-                    ep_len = len(ep_tl)
-                    if ep_len >= max_steps:
-                        continue  # skip failed episodes
-                    diff = abs(ep_len - median_steps)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_idx = ep_idx
-                timelines[name] = episodes[best_idx]
-
-            from rl_stack.plots import plot_timeline_grid
-            plot_timeline_grid(timelines, n_repeaters,
-                               p_gen, p_swap, cutoff, save_dir)
         return results
 

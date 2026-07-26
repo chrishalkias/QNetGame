@@ -130,18 +130,54 @@ def test_compare_logs_paired_baseline_returns(tmp_path):
     import numpy as np
     from rl_stack import QRNAgent
     agent = QRNAgent(rng=np.random.default_rng(0))
+    # compare_every=1: the dense every-episode sample, one row per episode.
     m = agent.train(episodes=12, max_steps=6, n_range=[4], n_ch=2,
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     curriculum=False,
                     save_path=None,
-                    save_best=False, plot=False, compare=True)
+                    save_best=False, plot=False, compare=True, compare_every=1)
     for k in ("cmp_agent", "cmp_swap", "cmp_rand",
               "cmp_agent_steps", "cmp_swap_steps", "cmp_rand_steps",
               "cmp_agent_succ", "cmp_swap_succ", "cmp_rand_succ"):
         assert len(m[k]) == 12, k
+    assert m["cmp_ep"] == list(range(12))
     assert all(isinstance(v, float) for v in m["cmp_swap"])
     assert all(isinstance(v, int) for v in m["cmp_swap_steps"])
     assert set(m["cmp_agent_succ"]) <= {0.0, 1.0}
+
+
+def test_compare_every_samples_sparsely_and_records_episode_index():
+    """compare_every=K logs ceil(episodes/K) samples, and cmp_ep carries the
+    episode index of each one so the compare panels can plot against the right
+    x-axis instead of assuming one sample per episode."""
+    import math
+    import numpy as np
+    from rl_stack import QRNAgent
+    episodes, every = 12, 5
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    m = agent.train(episodes=episodes, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
+                    curriculum=False,
+                    save_path=None,
+                    save_best=False, plot=False, compare=True,
+                    compare_every=every)
+    n_expected = math.ceil(episodes / every)
+    assert m["cmp_ep"] == [0, 5, 10]
+    for k in ("cmp_agent", "cmp_swap", "cmp_rand",
+              "cmp_agent_steps", "cmp_agent_succ"):
+        assert len(m[k]) == n_expected, k
+
+
+def test_compare_every_rejects_zero():
+    import numpy as np
+    import pytest
+    from rl_stack import QRNAgent
+    agent = QRNAgent(rng=np.random.default_rng(0))
+    with pytest.raises(ValueError, match="compare_every"):
+        agent.train(episodes=2, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
+                    curriculum=False, save_path=None, save_best=False,
+                    plot=False, compare=True, compare_every=0)
 
 
 def test_compare_extra_logs_named_baseline(tmp_path):
@@ -155,7 +191,7 @@ def test_compare_extra_logs_named_baseline(tmp_path):
                     p_gen=1.0, p_swap=1.0, cutoff=8, F0=1.0, channel_loss=0.0,
                     curriculum=False,
                     save_path=None,
-                    save_best=False, plot=False, compare=True,
+                    save_best=False, plot=False, compare=True, compare_every=1,
                     compare_extra={"optimal": noop_fn})
     for k in ("cmp_optimal", "cmp_optimal_steps", "cmp_optimal_succ"):
         assert len(m[k]) == 10, k
@@ -172,6 +208,7 @@ def test_no_compare_leaves_cmp_metrics_empty(tmp_path):
                     save_best=False, plot=False)
     assert m["cmp_agent"] == [] and m["cmp_swap"] == [] and m["cmp_rand"] == []
     assert m["cmp_agent_steps"] == [] and m["cmp_agent_succ"] == []
+    assert m["cmp_ep"] == []
 
 
 def test_early_stopping_stops_on_no_improvement(tmp_path):

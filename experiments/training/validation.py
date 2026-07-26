@@ -39,7 +39,6 @@ def parse_args():
 
     parser.add_argument("--path", type=str, default="checkpoints/sota/")
     parser.add_argument("--dict", type=str, default="policy.pth")
-    parser.add_argument("--no_plot_actions", dest="plot_actions", action="store_false", default=True)
 
     return parser.parse_args()
 
@@ -62,6 +61,4 @@ if __name__ == "__main__":
         cutoff=args.cutoff,
         F0=args.F0,
         channel_loss=args.channel_loss,
-        plot_actions=args.plot_actions,
-        save_dir=args.path,
     )
