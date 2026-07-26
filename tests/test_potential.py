@@ -98,7 +98,7 @@ def test_env_chain_progress_matches_potential():
                  F0=1.0, channel_loss=0.0, max_steps=60,
                  topology="chain", rng=np.random.default_rng(1))
     env.reset()
-    adj = env._topo.adjacency
+    adj = env.net.adj
     d_src, d_dst = bfs_hops(adj, env.source), bfs_hops(adj, env.dest)
     expected = path_progress(d_src, d_dst, d_src[env.dest], env._entangled_edges())
     assert env._progress() == pytest.approx(expected)

@@ -41,7 +41,7 @@ def parse_args():
 # feature schema
 # ----------------------------------------------------------------------------
 from experiments.policy_probes._collect import FEATURE_NAMES, greedy  # noqa: E402
-from simulator.repeater import NO_PARTNER  # noqa: E402
+from simulator.repeater import NO_PARTNER, QUBIT_OCCUPIED, werner_to_fidelity  # noqa: E402
 
 OBS_COLS = [f"obs_{n}" for n in FEATURE_NAMES]
 NBR_COLS = [f"nbr_{n}" for n in FEATURE_NAMES]
@@ -52,15 +52,15 @@ CTX_COLS = ["can_swap", "pos_frac", "N", "n_ch", "p_gen", "p_swap",
 COLUMNS = OBS_COLS + NBR_COLS + ENG_COLS + CTX_COLS
 
 
-def candidate_partner(ns):
+def candidate_partner(rep):
     """Replicate QRNEnv._exec_purify partner selection EXACTLY: among partners
     with >=2 available qubits, pick the one with the most such qubits; ties
     break to the lowest partner id (np.unique returns sorted ids and max()
     keeps the first maximal). Returns partner id or None."""
-    avail = ns.occupied
+    avail = rep.status == QUBIT_OCCUPIED
     if int(avail.sum()) < 2:
         return None
-    partners = ns.partner_node[avail]
+    partners = rep.partner_repeater[avail]
     unique, counts = np.unique(partners[partners != NO_PARTNER], return_counts=True)
     valid = [(int(p), c) for p, c in zip(unique, counts) if c >= 2]
     if not valid:
@@ -72,20 +72,20 @@ def node_row(env, obs, mask, acts, i, ctx):
     """Build one feature row (list matching COLUMNS) + label + chosen_action for
     interior node i, which is known to have PURIFY masked-legal. Returns None if
     the candidate partner cannot be resolved (defensive; should not happen)."""
-    ns = env.net.node_state(i)
-    best_nb = candidate_partner(ns)
+    rep = env.net.node(i)
+    best_nb = candidate_partner(rep)
     if best_nb is None:
         return None
-    n_ch = ns.n_ch
-    occ = ns.occupied
+    n_ch = rep.n_ch
+    occ = rep.status == QUBIT_OCCUPIED
     avail = occ
-    cand = avail & (ns.partner_node == best_nb)
-    F = ns.fidelity[cand]
-    lc = np.maximum(ns.link_cutoff[cand].astype(np.float64), 1.0)
-    age_frac = ns.age[cand].astype(np.float64) / lc
+    cand = avail & (rep.partner_repeater == best_nb)
+    F = werner_to_fidelity(rep.werner_param[cand])
+    lc = np.maximum(rep.link_cutoff[cand].astype(np.float64), 1.0)
+    age_frac = rep.age[cand].astype(np.float64) / lc
     hi, lo = int(np.argmax(F)), int(np.argmin(F))
-    lc_av = np.maximum(ns.link_cutoff[avail].astype(np.float64), 1.0)
-    mean_age_frac = float((ns.age[avail].astype(np.float64) / lc_av).mean()) \
+    lc_av = np.maximum(rep.link_cutoff[avail].astype(np.float64), 1.0)
+    mean_age_frac = float((rep.age[avail].astype(np.float64) / lc_av).mean()) \
         if bool(avail.any()) else 0.0
 
     ei = obs["edge_index"]

@@ -18,7 +18,6 @@ from .repeater import (
     fidelity_to_werner, werner_to_fidelity,
     bbpssw_success_prob, bbpssw_new_fidelity,
 )
-from .snapshots import NodeState, Topology, _freeze
 
 def build_chain(n_repeaters, 
                 n_ch=4, 
@@ -521,31 +520,26 @@ class RepeaterNetwork:
                                   int(rep.age[qi])])
         return np.array(links, dtype=np.float64) if links else np.empty((0, 6), dtype=np.float64)
 
-    # ---- immutable read snapshots (engine-agnostic, F-domain) -------------
-    def topology(self) -> Topology:
-        return Topology(
-            N=self.N,
-            adjacency=_freeze(self.adj.copy()),
-            positions=_freeze(self._positions.copy()),
-        )
+    # ---- read handle -------------------------------------------------------
+    def node(self, node: int) -> Repeater:
+        """The LIVE Repeater for `node`. READ-ONLY BY CONVENTION: consumers
+        (the RL env, the probes) must never mutate through this handle, and the
+        arrays it exposes are the engine's own, so they keep changing under a
+        caller that holds the object across an engine mutation.
 
-    def node_state(self, node: int) -> NodeState:
-        rep = self.repeaters[node]
-        occupied = (rep.status == QUBIT_OCCUPIED)
-        fid = werner_to_fidelity(rep.werner_param).astype(np.float64)
-        fid = np.where(occupied, fid, 0.0)
-        return NodeState(
-            node_id=node,
-            n_ch=rep.n_ch,
-            p_gen=float(rep.p_gen),
-            p_swap=float(rep.p_swap),
-            occupied=_freeze(occupied),
-            partner_node=_freeze(rep.partner_repeater),
-            partner_qubit=_freeze(rep.partner_qubit),
-            fidelity=_freeze(fid),
-            age=_freeze(rep.age.astype(np.int32)),
-            link_cutoff=_freeze(rep.link_cutoff.astype(np.int32)),
-        )
+        Returning the object rather than a frozen copy keeps 2N array copies per
+        micro-step out of the hot loop (snapshots.py deleted 2026-07-26). The old
+        node_state() froze six arrays per call and was the single largest cost in
+        the env: over 30 episodes at N=10, n_ch=3 it took 48206 calls and 0.95 s
+        of a 2.47 s profile, 38% of engine runtime. This handle costs 0.006 s
+        over the same run, and the benchmark went 1.41 s to 0.84 s wall.
+
+        Field names are the engine's: `status` / `partner_repeater` /
+        `werner_param`, not `occupied` / `partner_node` / `fidelity`. Fidelity is
+        no longer masked to 0.0 on free qubits, so callers must gate on
+        `status == QUBIT_OCCUPIED` themselves before reading a link value.
+        """
+        return self.repeaters[node]
 
 
                              

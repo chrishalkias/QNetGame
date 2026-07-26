@@ -47,7 +47,7 @@ from typing import Dict, Tuple, Optional
 import numpy as np
 
 from simulator.network import build_network
-from simulator.repeater import NO_PARTNER
+from simulator.repeater import NO_PARTNER, QUBIT_OCCUPIED, werner_to_fidelity
 from rl_stack import potential
 
 # --- action constants ----------------------------------------------------
@@ -80,7 +80,6 @@ class QRNEnv:
         "gamma",      # PBRS discount (threaded to equal the DQN gamma)
         "topology",   # topology tag (always 'chain')
         "net",        # RepeaterNetwork physics engine
-        "_topo",      # frozen Topology snapshot (adjacency + positions)
         "N",          # number of repeaters
         "source",     # source node id (0)
         "dest",       # destination node id (N-1)
@@ -129,8 +128,7 @@ class QRNEnv:
             F0=F0, channel_loss=channel_loss,
             rng=self.rng)
 
-        self._topo = self.net.topology()
-        self.N = self._topo.N
+        self.N = self.net.N
         self.source = -1
         self.dest = -1
         self.steps = 0
@@ -151,7 +149,7 @@ class QRNEnv:
         # Chain endpoints are the two ends; also cache BFS hop distances that
         # the PBRS potential (_progress) reads every step.
         self.source, self.dest = 0, self.N - 1
-        adj = self._topo.adjacency
+        adj = self.net.adj
         self._d_src = potential.bfs_hops(adj, self.source)
         self._d_dst = potential.bfs_hops(adj, self.dest)
         self._d_total = float(self._d_src[self.dest])
@@ -160,9 +158,9 @@ class QRNEnv:
         """Undirected (a, b) edges of the current entanglement graph."""
         edges = set()
         for i in range(self.N):
-            ns = self.net.node_state(i)
-            for qi in np.flatnonzero(ns.occupied):
-                p = int(ns.partner_node[qi])
+            rep = self.net.node(i)
+            for qi in np.flatnonzero(rep.status == QUBIT_OCCUPIED):
+                p = int(rep.partner_repeater[qi])
                 if p != NO_PARTNER and p != i:
                     edges.add((min(i, p), max(i, p)))
         return edges
@@ -209,28 +207,27 @@ class QRNEnv:
         """
         feats = np.zeros((self.N, 8), dtype=np.float32)
         for i in range(self.N):
-            ns = self.net.node_state(i)
-            occ = ns.occupied
+            rep = self.net.node(i)
+            occ = rep.status == QUBIT_OCCUPIED
             capacity = occ.size  # physical qubit count (2*n_ch interior, n_ch ends)
             feats[i, 0] = int(occ.sum()) / capacity
             if self.is_target(i):
                 feats[i, 1] = 0.0
                 feats[i, 2] = 0.0
             else:
-                rep = self.net.repeaters[i]
                 feats[i, 1] = 1.0 if rep.can_swap() else 0.0
                 feats[i, 2] = 1.0 if rep.can_purify() else 0.0
-            feats[i, 3] = ns.p_gen
-            feats[i, 4] = ns.p_swap
+            feats[i, 3] = rep.p_gen
+            feats[i, 4] = rep.p_swap
             if bool(occ.any()):
-                lc = np.maximum(ns.link_cutoff[occ], 1)
-                feats[i, 5] = float(np.clip(np.mean(ns.age[occ] / lc), 0.0, 1.0))
+                lc = np.maximum(rep.link_cutoff[occ], 1)
+                feats[i, 5] = float(np.clip(np.mean(rep.age[occ] / lc), 0.0, 1.0))
             else:
                 feats[i, 5] = 0.0
         feats[:, 6] = np.arange(self.N, dtype=np.float32) / (self.N - 1)
         if self._active != -1:
             feats[self._active, 7] = 1.0
-        src, dst = np.nonzero(self._topo.adjacency)
+        src, dst = np.nonzero(self.net.adj)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}
 
@@ -258,7 +255,7 @@ class QRNEnv:
         m[NOOP] = True
         if self.is_target(node):
             return m
-        rep = self.net.repeaters[node]
+        rep = self.net.node(node)
         m[SWAP] = rep.can_swap()
         m[PURIFY] = rep.can_purify()
         return m
@@ -392,7 +389,7 @@ class QRNEnv:
 
     def _auto_entangle(self):
         """Background entanglement: one pass over all adjacent pairs."""
-        pairs = list(zip(*np.nonzero(np.triu(self._topo.adjacency, k=1))))
+        pairs = list(zip(*np.nonzero(np.triu(self.net.adj, k=1))))
         self.rng.shuffle(pairs)
         for r1, r2 in pairs:
             self.net.entangle(int(r1), int(r2))
@@ -404,11 +401,11 @@ class QRNEnv:
         """One PURIFY action runs the distillation cascade on EVERY partner with
         which node r shares >=2 available links (each cascade leaves one survivor
         or none)."""
-        ns = self.net.node_state(r)
-        avail = ns.occupied
+        rep = self.net.node(r)
+        avail = rep.status == QUBIT_OCCUPIED
         if int(avail.sum()) < 2:
             return {"success": False, "reason": "insufficient_qubits"}
-        partners = ns.partner_node[avail]
+        partners = rep.partner_repeater[avail]
         unique, counts = np.unique(partners[partners != NO_PARTNER],
                                    return_counts=True)
         valid = [int(p) for p, c in zip(unique, counts) if c >= 2]
@@ -422,10 +419,10 @@ class QRNEnv:
 
     def _check_e2e(self) -> Tuple[bool, float]:
         """Check whether source and dest share a direct entanglement link."""
-        ns = self.net.node_state(self.source)
-        for qi in np.flatnonzero(ns.occupied):
-            if int(ns.partner_node[qi]) == self.dest:
-                return True, float(ns.fidelity[qi])
+        rep = self.net.node(self.source)
+        for qi in np.flatnonzero(rep.status == QUBIT_OCCUPIED):
+            if int(rep.partner_repeater[qi]) == self.dest:
+                return True, float(werner_to_fidelity(rep.werner_param[qi]))
         return False, 0.0
 
 

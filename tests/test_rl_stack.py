@@ -548,9 +548,9 @@ class TestObservationFeatures(unittest.TestCase):
                      topology="chain", rng=np.random.default_rng(99))
         x = env.reset()["x"]
         for i in range(env.N):
-            ns = env.net.node_state(i)
-            self.assertAlmostEqual(float(x[i, 3]), float(ns.p_gen), places=5)
-            self.assertAlmostEqual(float(x[i, 4]), float(ns.p_swap), places=5)
+            rep = env.net.node(i)
+            self.assertAlmostEqual(float(x[i, 3]), float(rep.p_gen), places=5)
+            self.assertAlmostEqual(float(x[i, 4]), float(rep.p_swap), places=5)
         self.assertGreater(float(x[:, 3].std()), 0.0)  # inhomogeneous
         self.assertGreater(float(x[:, 4].std()), 0.0)
 
@@ -576,13 +576,13 @@ class TestObservationFeatures(unittest.TestCase):
         env = _perfect_env(4)               # n_ch=4 -> interior cap 8, ends cap 4
         x = env.reset()["x"]
         for i in range(env.N):
-            ns = env.net.node_state(i)
-            cap = ns.occupied.size
-            occ = int(ns.occupied.sum())
+            rep = env.net.node(i)
+            cap = rep.status.size
+            occ = rep.num_occupied()
             self.assertAlmostEqual(float(x[i, 0]) * cap, occ, places=4)
         # capacities really differ between interior and end nodes
-        self.assertEqual(env.net.node_state(1).occupied.size, 8)
-        self.assertEqual(env.net.node_state(0).occupied.size, 4)
+        self.assertEqual(env.net.node(1).status.size, 8)
+        self.assertEqual(env.net.node(0).status.size, 4)
 
 
 class TestMultiPartnerPurify(unittest.TestCase):
