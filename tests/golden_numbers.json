@@ -1,26 +1,136 @@
 {
-  "N6_nch2_pg0.6_ps0.8_cut7_H120_eps200": {
-    "swap_asap": 5.56,
-    "purify_swap": 8.455
+  "_meta": {
+    "reason": "gate hardening: pin all four mc_eval statistics per cell, add the p_gen_std=p_swap_std=0.15 inhomogeneous cell, add the reward/observation rollout signature block",
+    "git_commit": "2d84e57991319c4f3c4aeadb652f30f10f26d27d",
+    "generated_utc": "2026-07-26T06:03:40+00:00",
+    "numpy": "2.4.2",
+    "platform": "macOS-15.7.7-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "note": "Diagnostic provenance only; excluded from every comparison. A red gate on a different numpy or platform than the one recorded here may be a Generator-stream or float difference rather than a defect in the refactor."
   },
-  "N6_nch2_pg0.6_ps0.8_cut20_H120_eps200": {
-    "swap_asap": 4.855,
-    "purify_swap": 7.665
+  "N6_nch2_pg0.6_ps0.8_cut7_H120_eps200_pgstd0.0_psstd0.0": {
+    "swap_asap": {
+      "T": 5.56,
+      "T_std": 4.109306510836105,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.7410027926415205
+    },
+    "purify_swap": {
+      "T": 8.455,
+      "T_std": 6.240030048004576,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.7292278282344341
+    }
   },
-  "N10_nch2_pg0.6_ps0.8_cut10_H200_eps150": {
-    "swap_asap": 12.046666666666667,
-    "purify_swap": 11.026666666666667
+  "N6_nch2_pg0.6_ps0.8_cut20_H120_eps200_pgstd0.0_psstd0.0": {
+    "swap_asap": {
+      "T": 4.855,
+      "T_std": 2.6746915710040287,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.863466665148735
+    },
+    "purify_swap": {
+      "T": 7.665,
+      "T_std": 5.031180279020024,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.8673401607573032
+    }
   },
-  "N10_nch3_pg0.6_ps0.8_cut20_H200_eps150": {
-    "swap_asap": 7.286666666666667,
-    "purify_swap": 9.286666666666667
+  "N10_nch2_pg0.6_ps0.8_cut10_H200_eps150_pgstd0.0_psstd0.0": {
+    "swap_asap": {
+      "T": 12.046666666666667,
+      "T_std": 10.232846893976063,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.6647513118386269
+    },
+    "purify_swap": {
+      "T": 11.026666666666667,
+      "T_std": 8.305778443683383,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.6579888567328454
+    }
   },
-  "N12_nch2_pg0.4_ps0.8_cut15_H300_eps100": {
-    "swap_asap": 43.26,
-    "purify_swap": 25.4
+  "N10_nch3_pg0.6_ps0.8_cut20_H200_eps150_pgstd0.0_psstd0.0": {
+    "swap_asap": {
+      "T": 7.286666666666667,
+      "T_std": 3.997226816459409,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.7522924603521823
+    },
+    "purify_swap": {
+      "T": 9.286666666666667,
+      "T_std": 5.21962535905489,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.7707797726988792
+    }
   },
-  "N4_nch1_pg0.9_ps0.9_cut30_H100_eps200": {
-    "swap_asap": 1.665,
-    "purify_swap": 1.665
+  "N12_nch2_pg0.4_ps0.8_cut15_H300_eps100_pgstd0.0_psstd0.0": {
+    "swap_asap": {
+      "T": 43.26,
+      "T_std": 36.225300550858094,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.6054868882894516
+    },
+    "purify_swap": {
+      "T": 25.4,
+      "T_std": 21.110660813911064,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.6286123526096344
+    }
+  },
+  "N4_nch1_pg0.9_ps0.9_cut30_H100_eps200_pgstd0.0_psstd0.0": {
+    "swap_asap": {
+      "T": 1.665,
+      "T_std": 0.9342242771412013,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.9875248102843761
+    },
+    "purify_swap": {
+      "T": 1.665,
+      "T_std": 0.9342242771412013,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.9875248102843761
+    }
+  },
+  "N8_nch2_pg0.6_ps0.8_cut20_H200_eps150_pgstd0.15_psstd0.15": {
+    "swap_asap": {
+      "T": 6.986666666666666,
+      "T_std": 4.457183963994407,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.784886463880539
+    },
+    "purify_swap": {
+      "T": 9.913333333333334,
+      "T_std": 10.210410809016889,
+      "conn_rate": 1.0,
+      "mean_F_conn": 0.8178670243918895
+    }
+  },
+  "_rollout_signature": {
+    "N5_nch2_pg0.6_ps0.8_cut15_H60_eps4_seed20260726": {
+      "reward_sums": [
+        0.4819462460279465,
+        0.621379997730255,
+        0.6977400255203247,
+        0.6866302496194839
+      ],
+      "obs_sha256": "32ddfc31ec54555afd66bace4a6f57496c037559983a18400d3e19d9e4cda236"
+    },
+    "N8_nch2_pg0.5_ps0.7_cut20_H80_eps3_seed13579": {
+      "reward_sums": [
+        0.6411909357990538,
+        0.6140480786561966,
+        0.5356589112962996
+      ],
+      "obs_sha256": "237d57cf031373f5407689dafa02ea32aee097387dbbb7693560198d76f28457"
+    },
+    "N4_nch1_pg0.9_ps0.9_cut30_H40_eps3_seed2468": {
+      "reward_sums": [
+        0.6666666666666667,
+        0.6287453891833623,
+        0.6666666666666667
+      ],
+      "obs_sha256": "35e8f07a7c70610127c4fa51642503f13425abd22491b43f5cb732317051cf4b"
+    }
   }
 }
