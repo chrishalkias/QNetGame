@@ -1227,8 +1227,48 @@ class TestSwapDecisionGate(unittest.TestCase):
             net.age_links(discard_expired=True)          # both links at age 3
         self.assertIsNone(net.repeaters[1].select_swap_pair(   # 3+3+1 = 7 >= 6
             net._positions, net._cutoffs, rng=np.random.default_rng(0)))
-        self.assertIn(net.swap(1)["reason"],
-                      ("insufficient_qubits", "no_valid_pair"))
+        # both parent links are still alive at age 3 < 6, so the refusal comes
+        # from the viability gate and not from an expiry that silently emptied
+        # the node: the reason is deterministically "no_valid_pair".
+        self.assertEqual(net.swap(1)["reason"], "no_valid_pair")
+
+    def test_swap_gate_refuses_the_exact_boundary_pair(self):
+        """The gate constant must be pinned FROM BELOW, at sum = ec - 1.
+
+        ages (3,3) sum to ec itself, which is refused by +2, +1 and +0 alike,
+        so it discriminates nothing. ages (2,3) sum to ec - 1 = 5 is the only
+        case that separates the correct +1 gate from a too-permissive +0:
+        both parent links are comfortably alive (3 < 6), so this is NOT about
+        parent expiry, it is about the FUSED link being born dead. It would
+        inherit age 2 + 3 = 5 and die at the very next tick boundary
+        (5 + 1 >= 6), the born-dead class select_swap_pair promises can never
+        reach creation.
+        """
+        net = build_chain(3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=6, F0=1.0,
+                          channel_loss=0.0, distance_dep_gen=False,
+                          rng=np.random.default_rng(0))
+        net.entangle(0, 1)
+        net.entangle(1, 2)
+        rep0, rep1, rep2 = net.repeaters
+        # asymmetric ages cannot come from a uniform age_links() loop, so set
+        # them directly, on BOTH endpoints of each link (per-qubit ages live at
+        # each end and the engine reads node 1's copy).
+        qL = int(rep1.qubits_to(0)[0])
+        qR = int(rep1.qubits_to(2)[0])
+        rep1.age[qL] = 2
+        rep0.age[int(rep1.partner_qubit[qL])] = 2
+        rep1.age[qR] = 3
+        rep2.age[int(rep1.partner_qubit[qR])] = 3
+        # sanity: both parents are alive, this is purely the fused-link gate
+        self.assertEqual(rep0.status[int(rep1.partner_qubit[qL])],
+                         QUBIT_OCCUPIED)
+        self.assertEqual(rep2.status[int(rep1.partner_qubit[qR])],
+                         QUBIT_OCCUPIED)
+        self.assertIsNone(net.repeaters[1].select_swap_pair(   # 2+3+1 = 6 >= 6
+            net._positions, net._cutoffs, rng=np.random.default_rng(0)))
+        self.assertEqual(net.swap(1)["reason"], "no_valid_pair")
+        # nothing consumed: the refused pair is still sitting there
+        self.assertEqual(rep1.num_occupied(), 2)
 
     def test_selection_skips_doomed_picks_viable(self):
         # node 1 has TWO pairs: one doomed (old links), one viable (fresh);

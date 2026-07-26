@@ -1383,7 +1383,33 @@ def test_can_swap_masked_when_only_doomed_pairs():
     # age every link so any pair sums past the viability margin
     for rep in env.net.repeaters:
         occ = rep.occupied_indices()
-        rep.age[occ] = 5          # 5 + 5 + 2 = 12 >= 10
+        rep.age[occ] = 5          # 5 + 5 + 1 = 11 >= 10
+    mask = env.get_action_mask()
+    assert not mask[1, SWAP]
+    obs = env.get_observation()
+    assert obs["x"][1, 1] == 0.0   # feature 1 agrees with the mask
+
+
+def test_can_swap_mask_gate_pinned_at_the_exact_boundary():
+    """Mask-side twin of the engine's boundary test: pin the +1 from BELOW.
+
+    A symmetric aging loop can only reach sum = ec (refused by +2, +1 and +0
+    alike). The discriminating case is sum = ec - 1 = 5 at cutoff 6, ages
+    (2,3): both parent links are alive (3 < 6), so this is NOT parent expiry,
+    it is the FUSED link being born dead (2 + 3 + 1 >= 6). A too-permissive
+    +0 gate would advertise SWAP as legal here.
+    """
+    env = QRNEnv(n_repeaters=3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=6,
+                 F0=1.0, channel_loss=0.0, max_steps=20,
+                 rng=np.random.default_rng(0))
+    env.reset()
+    rep0, rep1, rep2 = env.net.repeaters
+    qL = int(rep1.qubits_to(0)[0])
+    qR = int(rep1.qubits_to(2)[0])
+    rep1.age[qL] = 2
+    rep0.age[int(rep1.partner_qubit[qL])] = 2
+    rep1.age[qR] = 3
+    rep2.age[int(rep1.partner_qubit[qR])] = 3
     mask = env.get_action_mask()
     assert not mask[1, SWAP]
     obs = env.get_observation()
