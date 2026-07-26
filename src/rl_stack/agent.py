@@ -342,6 +342,7 @@ class QRNAgent:
               env_seed = None,
               save_path = None,
               save_best = True,
+              ckpt_pool = False,
               best_window = 200,
               eps_init = 1.0,
               eps_fin = 0.05,
@@ -375,6 +376,14 @@ class QRNAgent:
         fully open + epsilon at floor, see _ckpt_window_start): otherwise the easy
         early curriculum phase — small chains deliver fast, high reward — freezes
         the checkpoint at ~ep 300 and the harder late policy never replaces it.
+
+        `ckpt_pool`: with an `eval_fn` and a `save_path`, ALSO write every
+        probed checkpoint to `save_path/pool/ep{ep:06d}.pth` (and log
+        (ep, probe value) to metrics['pool']). The probe is deliberately cheap,
+        so its running argmin is noisy and the online winner is often within
+        noise of several other candidates; `runoff` re-scores the whole pool at
+        a much larger budget once training is over. It is pure extra IO: the
+        training stream is untouched, so a given seed still bit-reproduces.
 
         Early stopping: when `eval_fn` and `eval_every` are set, the probe runs
         every `eval_every` episodes; if it fails to improve for `eval_patience`
@@ -414,7 +423,8 @@ class QRNAgent:
         compare_extra = dict(compare_extra or {})
         cmp_names = ['agent', 'swap', 'rand', *compare_extra.keys()]
         metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": [],
-                   "opt_steps": []}   # cumulative optimizer steps at each episode end
+                   "opt_steps": [],   # cumulative optimizer steps at each episode end
+                   "pool": []}        # (ep, probe value) per pooled checkpoint
         metrics["cmp_ep"] = []   # episode index of each comparison sample
         for nm in cmp_names:
             metrics[f"cmp_{nm}"] = []
@@ -606,6 +616,20 @@ class QRNAgent:
                 if eval_fn is not None and eval_every > 0 and (ep + 1) % eval_every == 0:
                     m = float(eval_fn(self))
                     metrics["eval"].append((ep, m))
+                    if ckpt_pool and save_path:
+                        # Persist EVERY probed checkpoint, not just the running
+                        # best: the probe is a cheap, noisy estimate (a couple
+                        # of cells x a few dozen rollouts of a high-variance
+                        # metric), so the argmin over probes is often within
+                        # noise of several others. runoff() re-scores the whole
+                        # pool at a much larger episode budget and picks the
+                        # real winner. A hidden=64 GNN is ~120 KB, so a
+                        # 20-entry pool costs ~2.4 MB.
+                        pool_dir = os.path.join(save_path, "pool")
+                        os.makedirs(pool_dir, exist_ok=True)
+                        torch.save(self.policy_net.state_dict(),
+                                   os.path.join(pool_dir, f"ep{ep:06d}.pth"))
+                        metrics["pool"].append((ep, m))
                     improved = m < best_eval if eval_mode == 'min' else m > best_eval
                     if improved:
                         best_eval, best_ep, best_saved, eval_stale = m, ep, True, 0
@@ -650,6 +674,50 @@ class QRNAgent:
             plot_training(metrics, save_path)
 
         return metrics
+
+    def runoff(self, pool_dir: str, eval_fn, n_repeats: int = 1):
+        """Re-score every checkpoint in `pool_dir` and return (best_path, score).
+
+        The per-probe eval during training is deliberately cheap, so its argmin
+        is noisy. This re-runs `eval_fn` (normally the SAME probe built with a
+        much larger n_episodes) over the whole pool once, at the end, when the
+        compute is affordable. The comparison is PAIRED by construction: the
+        probe seeds each rollout from (probe_seed, episode index) alone, so
+        every candidate is scored on a bit-identical episode set and nothing
+        here draws from self.rng.
+
+        Scores greedily (epsilon forced to 0) and restores the agent's original
+        weights, epsilon and train/eval mode before returning, so the caller's
+        already-written policy_final.pth stays the LAST training weights.
+
+        Lower is better: this is the delivery-time convention (eval_mode='min'),
+        the only probe in the repo. If a 'max' probe is ever added, thread
+        eval_mode through here, do not silently flip the comparison.
+        """
+        import glob
+        paths = sorted(glob.glob(os.path.join(pool_dir, "*.pth")))
+        if not paths:
+            raise FileNotFoundError(f"no checkpoints in {pool_dir}")
+        saved = {k: v.clone() for k, v in self.policy_net.state_dict().items()}
+        was_training = self.policy_net.training
+        old_eps, self.epsilon = self.epsilon, 0.0
+        scores = {}
+        try:
+            for p in paths:
+                self.policy_net.load_state_dict(
+                    torch.load(p, map_location=self.device, weights_only=True))
+                self.policy_net.eval()
+                s = float(np.mean([eval_fn(self) for _ in range(n_repeats)]))
+                scores[p] = s
+                print(f"  [runoff] {os.path.basename(p)}  {s:.4f}", flush=True)
+        finally:
+            self.policy_net.load_state_dict(saved)
+            self.policy_net.train(was_training)
+            self.epsilon = old_eps
+        best = min(scores, key=scores.get)
+        print(f"[runoff] winner {os.path.basename(best)} = {scores[best]:.4f} "
+              f"over {len(scores)} checkpoints", flush=True)
+        return best, scores[best]
 
     @staticmethod
     def _save_metrics(metrics, save_path):

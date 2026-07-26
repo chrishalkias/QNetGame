@@ -7,6 +7,7 @@ Train an RL agent on a specified system
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime, timezone
 import numpy as np
@@ -73,6 +74,18 @@ def parse_args():
                         help="disable the delivery-time eval probe for best-checkpoint "
                              "selection (auto-enabled for episodes >= 5000); falls back "
                              "to rolling-mean reward selection")
+    parser.add_argument("--force_eval_ckpt", action="store_true",
+                        help="build the delivery-time probe even below the "
+                             "episodes >= 5000 auto threshold (smoke tests, "
+                             "short diagnostic runs)")
+    parser.add_argument("--ckpt_pool", action="store_true",
+                        help="save EVERY eval-probe checkpoint to <save>/pool/ "
+                             "and, after training, re-score the whole pool at "
+                             "--runoff_episodes and copy the winner to policy.pth")
+    parser.add_argument("--runoff_episodes", type=int, default=400,
+                        help="episodes per cell in the final pool runoff (the "
+                             "in-training probe uses 40; the runoff is the "
+                             "honest one)")
     parser.add_argument("--disable_purify", action="store_true",
                         help="mask PURIFY in BOTH selection and the DQN target -> "
                              "train a pure swap-scheduler")
@@ -252,6 +265,42 @@ def make_calibrated_cells(args, lo=0.30, hi=0.70, n_cells=2, n_episodes=20):
           f"{[(c['n_repeaters'], c['cutoff'], round(r, 2)) for c, r in chosen]}")
     return [c for c, _ in chosen]
 
+
+def resolve_eval_probe(args):
+    """Decide whether this run gets a delivery-time eval probe, and build it.
+
+    Returns (eval_fn, eval_every, cells); (None, 0, []) when the run has no
+    probe. Rolling-mean reward demonstrably mis-picked long runs (the 35k
+    overtraining regression, and CC best < final), and raw return is not even
+    comparable across a curriculum run because N grows while STEP_COST
+    accumulates against a SUCCESS_REWARD capped at 1.0. So real runs select
+    policy.pth by a held-out censored delivery time (lower = better).
+
+    The probe is auto-enabled for episodes >= 5000; --force_eval_ckpt turns it
+    on below that threshold (smoke tests) and --no_eval_ckpt turns it off
+    entirely. --ckpt_pool without a probe is rejected here rather than after
+    hours of training against an empty pool.
+    """
+    want = (not args.no_eval_ckpt) and (args.episodes >= 5000
+                                        or args.force_eval_ckpt)
+    if not want:
+        if args.ckpt_pool:
+            raise ValueError(
+                "--ckpt_pool needs the delivery-time eval probe (the pool is "
+                "written at each probe): drop --no_eval_ckpt, or add "
+                "--force_eval_ckpt for a run below the 5000-episode auto "
+                "threshold")
+        return None, 0, []
+    cells = make_calibrated_cells(args)
+    eval_fn = build_eval_probe(args, cells)
+    # episodes // 20 gives ~20 probes per run; the max(1, .) floor only ever
+    # binds for the short forced runs (>= 5000 episodes always yields >= 250).
+    eval_every = max(1, args.episodes // 20)
+    print(f"[eval-ckpt] delivery-time probe every {eval_every} eps "
+          f"({len(cells)} cells x 40 eps); early-stop off")
+    return eval_fn, eval_every, cells
+
+
 if __name__ == "__main__":
     args = parse_args()
 
@@ -280,19 +329,10 @@ if __name__ == "__main__":
                      rng=np.random.default_rng(args.seed),
                      seed=args.seed,)
 
-    # Eval-probe best-checkpoint selection (default for real runs): rolling-mean
-    # reward demonstrably mis-picked long runs (35k overtraining; CC best<final),
-    # so for episodes >= 5000 select policy.pth by a held-out delivery-time probe
-    # (lower = better). Early stopping is OFF (eval_patience=0): we want better
-    # checkpoint selection, not early termination. --no_eval_ckpt reverts.
-    eval_fn = None
-    eval_every = 0
-    if args.episodes >= 5000 and not args.no_eval_ckpt:
-        cells = make_calibrated_cells(args)
-        eval_fn = build_eval_probe(args, cells)
-        eval_every = max(250, args.episodes // 20)
-        print(f"[eval-ckpt] delivery-time probe every {eval_every} eps "
-              f"({len(cells)} cells x 40 eps); early-stop off")
+    # Eval-probe best-checkpoint selection (default for real runs). Early
+    # stopping is OFF (eval_patience=0): we want better checkpoint selection,
+    # not early termination. See resolve_eval_probe for the flag semantics.
+    eval_fn, eval_every, probe_cells = resolve_eval_probe(args)
 
     metrics = agent.train(
         episodes=args.episodes,
@@ -315,8 +355,26 @@ if __name__ == "__main__":
         eval_patience=0,      # checkpoint selection only, no early termination
         eval_mode='min',
         save_path=save_path,
+        save_best=True,
+        ckpt_pool=args.ckpt_pool,
         prune_unwinnable=args.prune_unwinnable,
         disable_actions=((2,) if args.disable_purify else ()),
         compare=args.compare,
         compare_every=args.compare_every,
         plot=True,)
+
+    # Final runoff: the in-training probe is cheap (40 eps/cell) so its running
+    # argmin is within noise of several candidates. Re-score the whole pool once
+    # at --runoff_episodes and promote the true winner to policy.pth. The
+    # comparison is PAIRED: build_eval_probe seeds rollout k from
+    # (probe_seed, k) alone, over the SAME cells the in-training probe used, so
+    # every candidate meets a bit-identical episode set. policy.pth still means
+    # BEST and policy_final.pth (already written by train) still means LAST.
+    if args.ckpt_pool:
+        runoff_probe = build_eval_probe(args, probe_cells,
+                                        n_episodes=args.runoff_episodes)
+        best, score = agent.runoff(os.path.join(save_path, "pool"),
+                                   runoff_probe)
+        shutil.copyfile(best, os.path.join(save_path, "policy.pth"))
+        print(f"[runoff] policy.pth <- {os.path.basename(best)} "
+              f"(T={score:.3f})")

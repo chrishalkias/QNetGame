@@ -420,3 +420,209 @@ class TestCalibratedProbeCells:
 
         cells_again = make_calibrated_cells(args, n_episodes=5)
         assert cells == cells_again
+
+
+# -- Checkpoint pool + final runoff ----------------------------------------
+# The in-training probe is a cheap, noisy estimate, so its running argmin is
+# not reliably the best agent (measured: a 35k run selected by the online
+# criterion was WORSE at the sizes that matter than a 15k one). The pool keeps
+# every probed candidate; the runoff re-scores them all at a bigger budget.
+
+def _fill_net(agent, value):
+    """Set every policy-net parameter to a constant, so a checkpoint carries a
+    single identifiable signature."""
+    import torch
+    with torch.no_grad():
+        for p in agent.policy_net.parameters():
+            p.fill_(float(value))
+
+
+def _net_signature(agent):
+    return float(next(agent.policy_net.parameters()).flatten()[0].item())
+
+
+def _seed_pool(agent, pool_dir, tags):
+    """Write one identifiable checkpoint per tag into `pool_dir`."""
+    import os
+    import torch
+    os.makedirs(pool_dir, exist_ok=True)
+    for t in tags:
+        _fill_net(agent, t)
+        torch.save(agent.policy_net.state_dict(),
+                   os.path.join(pool_dir, f"ep{t:06d}.pth"))
+
+
+def test_ckpt_pool_saves_one_file_per_probe(tmp_path):
+    """ckpt_pool must persist EVERY probed checkpoint, not just the running
+    best: the probe is a noisy small-rollout estimate, so the final runoff
+    needs the losers too."""
+    import numpy as np
+    from rl_stack import QRNAgent
+    calls = []
+    def probe(agent):
+        calls.append(1)
+        return float(len(calls))          # strictly worsening: best is the FIRST
+    agent = QRNAgent(seed=0, rng=np.random.default_rng(0))
+    m = agent.train(episodes=20, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=0.9, p_swap=0.9, cutoff=8, F0=1.0, channel_loss=0.0,
+                    curriculum=False, save_path=str(tmp_path),
+                    eval_fn=probe, eval_every=5, eval_mode='min',
+                    ckpt_pool=True, plot=False)
+    pool = sorted((tmp_path / "pool").glob("*.pth"))
+    assert len(pool) == len(calls) == 4          # probes at ep 4, 9, 14, 19
+    assert [p.name for p in pool] == ["ep000004.pth", "ep000009.pth",
+                                      "ep000014.pth", "ep000019.pth"]
+    assert m["pool"] == [(4, 1.0), (9, 2.0), (14, 3.0), (19, 4.0)]
+    assert (tmp_path / "policy.pth").exists()        # running best still written
+    assert (tmp_path / "policy_final.pth").exists()  # last weights still kept
+
+
+def test_ckpt_pool_off_writes_no_pool_dir(tmp_path):
+    import numpy as np
+    from rl_stack import QRNAgent
+    agent = QRNAgent(seed=0, rng=np.random.default_rng(0))
+    m = agent.train(episodes=10, max_steps=6, n_range=[4], n_ch=2,
+                    p_gen=0.9, p_swap=0.9, cutoff=8, F0=1.0, channel_loss=0.0,
+                    curriculum=False, save_path=str(tmp_path),
+                    eval_fn=lambda a: 1.0, eval_every=5, eval_mode='min',
+                    plot=False)
+    assert not (tmp_path / "pool").exists()
+    assert m["pool"] == []
+
+
+def test_ckpt_pool_does_not_perturb_the_training_stream(tmp_path):
+    """Pooling is pure IO: with the same seed the reward trajectory must be
+    bit-identical with and without it, so a --seed run stays reproducible."""
+    def run(pool, sub):
+        # _repro_agent pins torch net init too: without it the two runs start
+        # from different weights and diverge as soon as epsilon lets the net
+        # pick an action, which would say nothing about the pool.
+        agent = _repro_agent(3)
+        return agent.train(episodes=24, max_steps=6, n_range=[4], n_ch=2,
+                           p_gen=0.9, p_swap=0.9, cutoff=8, F0=1.0,
+                           channel_loss=0.0, curriculum=False, env_seed=3,
+                           save_path=str(tmp_path / sub),
+                           eval_fn=lambda a: 1.0, eval_every=5,
+                           eval_mode='min', ckpt_pool=pool, plot=False)
+    assert run(False, "off")["reward"] == run(True, "on")["reward"]
+
+
+def test_runoff_rescores_the_pool_and_restores_the_live_weights(tmp_path):
+    """The runoff re-scores every candidate and returns the true minimum, even
+    when the running-best selection during training picked another one. It must
+    leave the agent's live weights untouched, so policy_final.pth is unaffected."""
+    import os
+    import numpy as np
+    from rl_stack import QRNAgent
+    agent = QRNAgent(seed=0, rng=np.random.default_rng(0))
+    pool = str(tmp_path / "pool")
+    _seed_pool(agent, pool, [1, 2, 3])
+    _fill_net(agent, 99.0)                 # the "final" weights, must survive
+    seen = []
+    def probe(a):
+        sig = _net_signature(a)
+        seen.append(sig)
+        return abs(sig - 2.0)              # ep000002 is the true winner
+    best, score = agent.runoff(pool, probe)
+    assert os.path.basename(best) == "ep000002.pth"
+    assert score == 0.0
+    assert seen == [1.0, 2.0, 3.0]         # every candidate scored, in order
+    assert _net_signature(agent) == 99.0   # live weights restored
+
+
+def test_runoff_averages_repeats_and_keeps_epsilon(tmp_path):
+    import numpy as np
+    from rl_stack import QRNAgent
+    agent = QRNAgent(seed=0, rng=np.random.default_rng(0), epsilon=0.42)
+    pool = str(tmp_path / "pool")
+    _seed_pool(agent, pool, [1, 2])
+    eps_seen = []
+    n_calls = {"n": 0}
+    def probe(a):
+        eps_seen.append(a.epsilon)
+        n_calls["n"] += 1
+        return _net_signature(a) + n_calls["n"]
+    _, _ = agent.runoff(pool, probe, n_repeats=3)
+    assert n_calls["n"] == 6                 # 2 candidates x 3 repeats
+    assert eps_seen == [0.0] * 6             # scored greedily, never exploring
+    assert agent.epsilon == 0.42             # caller's epsilon restored
+
+
+def test_runoff_raises_on_empty_pool(tmp_path):
+    import numpy as np
+    import pytest
+    from rl_stack import QRNAgent
+    agent = QRNAgent(seed=0, rng=np.random.default_rng(0))
+    (tmp_path / "pool").mkdir()
+    with pytest.raises(FileNotFoundError, match="no checkpoints"):
+        agent.runoff(str(tmp_path / "pool"), lambda a: 1.0)
+
+
+def test_eval_probe_uses_identical_episode_seeds_for_every_candidate():
+    """The runoff is only honest if candidates are compared on the SAME
+    episodes. build_eval_probe seeds each rollout from (probe_seed, k) alone,
+    never from agent state or a live RNG, so two different weight sets are
+    scored on a bit-identical episode set (a paired comparison)."""
+    import numpy as np
+    from experiments.training.train import build_eval_probe
+    from rl_stack import QRNAgent
+    agent = QRNAgent(seed=0, rng=np.random.default_rng(0))
+    cells = [{"n_repeaters": 4, "n_ch": 2, "p_gen": 1.0, "p_swap": 1.0,
+              "cutoff": 8}]
+    probe = build_eval_probe(_probe_args(max_steps=6), cells, n_episodes=4)
+    seen = []
+    real = agent._cmp_rollout
+    def spy(args, seed, policy, max_steps, disable_actions=()):
+        seen.append((seed, sorted(args.items())))
+        return real(args, seed, policy, max_steps, disable_actions)
+    agent._cmp_rollout = spy
+
+    _fill_net(agent, 0.5)
+    probe(agent)
+    first, seen = list(seen), []
+    _fill_net(agent, -0.5)
+    probe(agent)
+    assert len(first) == 4
+    assert first == seen
+
+
+def test_train_cli_exposes_ckpt_pool_and_runoff_episodes():
+    import sys
+    from unittest import mock
+    from experiments.training import train as train_mod
+    argv = ["train.py", "--run_id", "x", "--ckpt_pool", "--force_eval_ckpt",
+            "--runoff_episodes", "7"]
+    with mock.patch.object(sys, "argv", argv):
+        args = train_mod.parse_args()
+    assert args.ckpt_pool is True
+    assert args.force_eval_ckpt is True
+    assert args.runoff_episodes == 7
+
+
+def test_ckpt_pool_without_a_probe_fails_fast():
+    """--ckpt_pool with the probe disabled would train for hours and then find
+    an empty pool. Reject the combination up front instead."""
+    import argparse
+    import pytest
+    from experiments.training.train import resolve_eval_probe
+    args = _probe_args(episodes=300, no_eval_ckpt=True, force_eval_ckpt=False,
+                       ckpt_pool=True)
+    with pytest.raises(ValueError, match="ckpt_pool"):
+        resolve_eval_probe(args)
+
+
+def test_force_eval_ckpt_builds_a_probe_below_the_auto_threshold():
+    from experiments.training.train import resolve_eval_probe
+    args = _probe_args(episodes=200, no_eval_ckpt=False, force_eval_ckpt=True,
+                       ckpt_pool=True, n_lo=3, n_hi=4)
+    eval_fn, eval_every, cells = resolve_eval_probe(args)
+    assert eval_fn is not None and cells
+    assert 1 <= eval_every <= 200 // 20
+
+
+def test_short_run_without_force_builds_no_probe():
+    from experiments.training.train import resolve_eval_probe
+    args = _probe_args(episodes=200, no_eval_ckpt=False, force_eval_ckpt=False,
+                       ckpt_pool=False)
+    eval_fn, eval_every, cells = resolve_eval_probe(args)
+    assert eval_fn is None and eval_every == 0 and cells == []
