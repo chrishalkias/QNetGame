@@ -39,6 +39,10 @@ entirely by the automatic background generation step.
 
 Source and destination nodes never act (structurally excluded from
 `_interior`).
+
+Precondition: N >= 3. A shorter chain has no interior node, so there is no
+decision to make and the MDP is degenerate; `__init__` rejects it rather
+than carrying a second, never-trained step path for it.
 --------------------------------------------------------------------------------
 """
 
@@ -86,7 +90,7 @@ class QRNEnv:
         "done",       # episode terminated or truncated
         "_phi",       # last PBRS potential Φ(s)
         "_interior",  # fixed left-to-right sweep order (source/dest excluded)
-        "_active",    # current active interior node (-1 if _interior is empty)
+        "_active",    # current active interior node (always in _interior)
     )
 
     STEP_COST       = -0.01
@@ -106,6 +110,16 @@ class QRNEnv:
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
                  gamma = 0.99):
+
+        # N >= 3 is a hard precondition of the serialized sweep, not a nicety:
+        # source and dest never act, so a shorter chain has no interior node,
+        # no decision, and no MDP. Raised (not asserted) because `python -O`
+        # strips asserts and this guard is what keeps `active_node` a real
+        # node index everywhere downstream.
+        if n_repeaters < 3:
+            raise ValueError(
+                f"n_repeaters must be at least 3 (source, one interior node, "
+                f"dest); got {n_repeaters}")
 
         self.rng = rng if rng is not None else np.random.default_rng()
         self.max_steps = max_steps
@@ -160,7 +174,9 @@ class QRNEnv:
 
     @property
     def active_node(self) -> int:
-        """Interior node deciding the current micro-step (-1 if none, N<3)."""
+        """Interior node deciding the current micro-step. Always a real node
+        index in [1, N-2]: N >= 3 is enforced at construction, so `_interior`
+        is never empty and the cursor never needs a sentinel."""
         return self._active
 
 #   ▄▄▄▄▄   ▄▄
@@ -182,7 +198,7 @@ class QRNEnv:
             [4] p_swap             per-repeater BSM success prob. (inhomogeneity)
             [5] normalized_age     mean(age/link_cutoff) over occupied qubits (0 if none)
             [6] relative_position  i / (N-1): 0.0 at source, 1.0 at dest
-            [7] is_active          1.0 at env.active_node, the node deciding this micro-step (exactly one node; all 0 if N<3 has no interior nodes)
+            [7] is_active          1.0 at env.active_node, the node deciding this micro-step (exactly one node, always: N >= 3 is enforced at construction)
 
         Features [1] and [2] are forced to 0 for source / dest. Features [3]/[4]
         are constant across nodes when the network is homogeneous (std=0); they
@@ -210,8 +226,7 @@ class QRNEnv:
             else:
                 feats[i, 5] = 0.0
         feats[:, 6] = np.arange(self.N, dtype=np.float32) / (self.N - 1)
-        if self._active != -1:
-            feats[self._active, 7] = 1.0
+        feats[self._active, 7] = 1.0
         src, dst = np.nonzero(self.net.adj)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}
@@ -265,9 +280,6 @@ class QRNEnv:
         docstring for the serialized-sweep model; see the class docstring
         note above for the credit-assignment (gamma_eff / STEP_COST) rules.
         """
-        if not self._interior:
-            return self._step_no_interior(action)
-
         r = self._active
         info = {"active_node": r, "fidelity": 0.0, "age": 0}
         phi_before = self._phi
@@ -319,48 +331,6 @@ class QRNEnv:
         self.done = truncated
         info.update(terminated=False, truncated=truncated, tick_boundary=True,
                     next_active_node=self._active, gamma_eff=self.gamma, ticks=self.steps)
-        return self.get_observation(), reward, truncated, info
-
-    def _step_no_interior(self, action: int) -> Tuple[Dict, float, bool, Dict]:
-        """N < 3: there are no interior nodes to act on, so every call is
-        directly a tick boundary (defensive edge case; no caller trains on
-        chains this short, but reset()/step() must not crash on them)."""
-        info = {"active_node": -1, "fidelity": 0.0, "age": 0}
-        phi_before = self._phi
-
-        # "mid-sweep" equivalent (no action to apply, but mirrors the check
-        # right after the main step()'s action-execution point).
-        connected, fidelity, age = self._check_e2e()
-        if connected:
-            self.done = True
-            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
-                        tick_boundary=True, next_active_node=-1,
-                        gamma_eff=self.gamma, ticks=self.steps + 1)
-            reward = fidelity * self.SUCCESS_REWARD - phi_before
-            self._phi = 0.0
-            return self.get_observation(), reward, True, info
-
-        # tick boundary: physics resolves, then background generation
-        self.net.age_links(discard_expired=True)
-        self.steps += 1
-        connected, fidelity, age = self._check_e2e()
-        if connected:
-            self.done = True
-            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
-                        tick_boundary=True, next_active_node=-1,
-                        gamma_eff=self.gamma, ticks=self.steps)
-            reward = fidelity * self.SUCCESS_REWARD - phi_before
-            self._phi = 0.0
-            return self.get_observation(), reward, True, info
-
-        self._auto_entangle()
-        phi_new = self._progress()
-        reward = self.STEP_COST + (self.gamma * phi_new - phi_before)
-        self._phi = phi_new
-        truncated = self.steps >= self.max_steps
-        self.done = truncated
-        info.update(terminated=False, truncated=truncated, tick_boundary=True,
-                    next_active_node=-1, gamma_eff=self.gamma, ticks=self.steps)
         return self.get_observation(), reward, truncated, info
 
 
@@ -448,8 +418,8 @@ class QRNEnv:
         self._pick_targets()
         self.steps = 0
         self.done  = False
-        self._interior = list(range(1, self.N - 1))
-        self._active = self._interior[0] if self._interior else -1
+        self._interior = list(range(1, self.N - 1))   # non-empty: N >= 3
+        self._active = self._interior[0]
         self._auto_entangle()
         self._phi = self._progress()
         return self.get_observation()

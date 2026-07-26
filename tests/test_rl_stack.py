@@ -1381,19 +1381,54 @@ def test_step_reports_terminated_vs_truncated():
 
 
 def test_step_win_is_terminated_not_truncated():
-    # easy 2-node chain: delivers fast -> terminated True, truncated False.
-    # N=2 has no interior nodes (the reset() empty-_interior edge case).
-    env = QRNEnv(n_repeaters=2, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
+    # easy 3-node chain (the smallest legal chain: exactly one interior node)
+    # delivers fast -> terminated True, truncated False. The subject is the
+    # terminated/truncated split on a WIN, so the size only has to be small
+    # enough to deliver well inside max_steps; it was N=2 before the N>=3
+    # precondition landed (2026-07-26).
+    from rl_stack.policies import swap_asap
+    env = QRNEnv(n_repeaters=3, n_ch=4, p_gen=1.0, p_swap=1.0, cutoff=20,
                  max_steps=50, rng=np.random.default_rng(0))
     env.reset()
     saw_win = False
     for _ in range(50):
-        _, _, done, info = env.step(NOOP)
+        _, _, done, info = env.step(swap_asap(env))
         if done:
             saw_win = info["terminated"]
             assert info["terminated"] != info["truncated"]
             break
     assert saw_win is True
+
+
+def test_env_rejects_chains_with_no_interior_node():
+    """N<3 has no interior node, so no agent decision exists and the MDP is
+    degenerate. Reject at construction instead of carrying a second step path
+    (_step_no_interior, deleted 2026-07-26)."""
+    for n in (0, 1, 2):
+        with pytest.raises(ValueError, match="at least 3"):
+            QRNEnv(n_repeaters=n)
+    QRNEnv(n_repeaters=3)   # smallest valid chain: one interior node
+
+
+def test_active_node_is_always_a_real_interior_node():
+    """The N>=3 precondition is the ONLY thing keeping `active_node == -1`
+    unreachable, and a negative node index would fall through
+    `action_mask`'s is_target check straight into `net.node(-1)`, which is
+    the dest node. Pin the invariant directly: over full rollouts the sweep
+    cursor always names an interior node, on the smallest legal chain and on
+    a longer one, whatever the episode does.
+    """
+    for n in (3, 6):
+        env = QRNEnv(n_repeaters=n, n_ch=2, p_gen=0.7, p_swap=0.7, cutoff=8,
+                     F0=1.0, channel_loss=0.0, max_steps=30,
+                     rng=np.random.default_rng(n))
+        env.reset()
+        for _ in range(4 * env.max_steps):
+            assert 1 <= env.active_node <= env.N - 2
+            _, _, done, _ = env.step(SWAP)
+            if done:
+                break
+        assert 1 <= env.active_node <= env.N - 2
 
 
 def test_delivered_link_reports_both_fidelity_and_age():
