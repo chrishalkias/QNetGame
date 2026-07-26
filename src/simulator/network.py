@@ -157,7 +157,10 @@ class RepeaterNetwork:
         #--- Base parameters
         self.repeaters = repeaters
         self.N = len(repeaters)
-        self.adj = np.asarray(adjacency, dtype=np.float64)
+        # np.array, not np.asarray: asarray does NOT copy a float64 input, which
+        # would alias the caller's array. topology() used to hand out a frozen
+        # copy; with that gone (2026-07-26) the isolation belongs here.
+        self.adj = np.array(adjacency, dtype=np.float64)
 
         # import check: make sure provide adjecency is good
         if self.adj.shape != (self.N, self.N):

@@ -57,9 +57,9 @@ def test_node_returns_the_live_repeater():
     net.entangle(1, 2)
     # the handle reflects engine mutations without being re-fetched
     rep = net.node(2)
-    before = int((rep.status == 1).sum())
+    before = int((rep.status == QUBIT_OCCUPIED).sum())
     net.entangle(2, 3)
-    assert int((rep.status == 1).sum()) == before + 1
+    assert int((rep.status == QUBIT_OCCUPIED).sum()) == before + 1
 
 
 def test_swap_applies_immediately():

@@ -53,10 +53,15 @@ COLUMNS = OBS_COLS + NBR_COLS + ENG_COLS + CTX_COLS
 
 
 def candidate_partner(rep):
-    """Replicate QRNEnv._exec_purify partner selection EXACTLY: among partners
-    with >=2 available qubits, pick the one with the most such qubits; ties
-    break to the lowest partner id (np.unique returns sorted ids and max()
-    keeps the first maximal). Returns partner id or None."""
+    """Pick the SINGLE partner this probe reports on: among partners with >=2
+    available qubits, the one with the most such qubits; ties break to the
+    lowest partner id (np.unique returns sorted ids and max() keeps the first
+    maximal). Returns partner id or None.
+
+    NOTE this is a probe-side simplification, not a replication: the real
+    QRNEnv._exec_purify cascades over EVERY valid partner, not just the
+    largest. The probe records one row per decision, so it names the dominant
+    partner; do not read these rows as "the only partner purified"."""
     avail = rep.status == QUBIT_OCCUPIED
     if int(avail.sum()) < 2:
         return None

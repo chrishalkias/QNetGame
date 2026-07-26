@@ -400,7 +400,21 @@ class QRNEnv:
     def _exec_purify(self, r: int) -> Dict:
         """One PURIFY action runs the distillation cascade on EVERY partner with
         which node r shares >=2 available links (each cascade leaves one survivor
-        or none)."""
+        or none).
+
+        ``valid`` is built ONCE, before the first ``purify()`` call, and ``rep``
+        is the live engine object (snapshots.py deleted 2026-07-26), so the list
+        is deliberately stale by the time later partners are processed. That is
+        safe because of DISJOINTNESS, not because of how the list was copied:
+        the links to a lower-index partner and to a higher-index partner sit on
+        different ports of r, and ``purify(r, p)`` only touches qubits in
+        ``rep.qubits_to(p)``, so cascading on one partner cannot change how many
+        links r shares with another. ``valid`` also holds partner IDs, never
+        qubit indices, and ``purify()`` re-reads the qubits live and returns
+        ``insufficient_shared_pairs`` if a partner has since dropped below two,
+        so a stale ID degrades to a no-op rather than to wrong physics.
+        Guarded by tests/test_rl_stack.py::TestMultiPartnerPurify.
+        """
         rep = self.net.node(r)
         avail = rep.status == QUBIT_OCCUPIED
         if int(avail.sum()) < 2:
