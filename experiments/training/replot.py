@@ -13,7 +13,7 @@ import argparse
 import json
 import os
 
-from rl_stack.agent import QRNAgent
+from rl_stack.plots import plot_training
 
 
 def main(argv=None):
@@ -32,7 +32,7 @@ def main(argv=None):
     with open(mpath) as f:
         metrics = json.load(f)
 
-    QRNAgent._plot_training(metrics, args.dir, window=args.window)
+    plot_training(metrics, args.dir, window=args.window)
     out = ["training_metrics.png"]
     if metrics.get("cmp_agent"):
         out.append("training_compare.png")

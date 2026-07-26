@@ -274,8 +274,8 @@ full, entries overwrite at position `self.pos` (modulo `max_size`). Sampling use
 Geometric `Data` object on the specified device. This bridges the numpy-based environment
 interface with the torch-based model.
 
-**`_running_avg(vals, window)`**: Computes a causal (backward-looking) moving average with
-the given window size. Used exclusively for smoothing training metric plots.
+(`_running_avg`, the causal backward-looking moving average used to smooth the training
+curves, moved to `plots.py` with the rest of the figure code.)
 
 
 ### 5.2 Class `QRNAgent`
@@ -425,17 +425,22 @@ episodes additionally produce per-step geometric renderings of the network state
 `save_dir/visual/state_{step}.png`.
 
 
-### 5.7 Plotting methods (brief)
+### 5.7 Plotting (module `plots.py`)
 
-**`_plot_training(metrics, save_path)`**: Generates a 3-panel figure showing episode return
+The figure code lives in `rl_stack/plots.py`, not in `agent.py`, so importing the agent
+does not pull in matplotlib. `agent.py` imports these lazily, at the call site, only when
+a figure is actually requested. `plots.py` selects the non-interactive `Agg` backend
+before importing `pyplot`, so it works on a headless cluster node.
+
+**`plot_training(metrics, save_path, window=None)`**: Generates a 3-panel figure showing episode return
 (with running average), loss (log scale), and success rate over training. Saved as
 `training_metrics.png`.
 
-**`_print_results_table(results, N, pg, ps, c)`**: Prints a formatted ASCII table of
+**`print_results_table(results, N, pg, ps, c)`**: Prints a formatted ASCII table of
 validation results (average steps with standard deviation, average fidelity with standard
 deviation, success percentage) for each strategy.
 
-**`_plot_timeline_grid(timelines, N, pg, ps, c, save_dir)`**: Visualises action sequences
+**`plot_timeline_grid(timelines, N, pg, ps, c, save_dir)`**: Visualises action sequences
 from the first validation episode. Each cell represents one node at one timestep. The cell
 colour encodes the repeater identity (from a colourmap). Hatching distinguishes actions:
 solid = NOOP, `///` = SWAP, `...` = PURIFY. A black patch marks the terminal step. Saved as
