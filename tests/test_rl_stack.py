@@ -1374,8 +1374,8 @@ def test_draw_winnable_cell_no_oracle_passes_through():
 
 
 def test_can_swap_masked_when_only_doomed_pairs():
-    """SWAP mask must reject pairs that would not survive same-tick resolution
-    (age_i + age_j + 2 >= link_cutoff). Feature 1 agrees."""
+    """SWAP mask must reject pairs that would not survive the tick boundary
+    (age_i + age_j + 1 >= link_cutoff). Feature 1 agrees."""
     env = QRNEnv(n_repeaters=3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=10,
                  F0=1.0, channel_loss=0.0, max_steps=20,
                  rng=np.random.default_rng(0))

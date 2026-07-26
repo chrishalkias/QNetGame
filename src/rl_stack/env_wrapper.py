@@ -195,7 +195,7 @@ class QRNEnv:
 
         Features per node (8):
             [0] frac_occupied      occupied / physical capacity (2*n_ch interior, n_ch ends)
-            [1] can_swap           1.0 if a viable swap pair exists: one available LEFT link (partner<node) + one available RIGHT link (partner>node) whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
+            [1] can_swap           1.0 if a viable swap pair exists: one available LEFT link (partner<node) + one available RIGHT link (partner>node) whose fused link survives the tick boundary (age_i + age_j + 1 < min cutoff)
             [2] can_purify         1.0 if >=2 available qubits to same partner
             [3] p_gen              per-repeater link-generation prob. (inhomogeneity)
             [4] p_swap             per-repeater BSM success prob. (inhomogeneity)
@@ -247,8 +247,8 @@ class QRNEnv:
         """
         True if ns has a VIABLE swap pair: one available LEFT link
         (partner < node) and one available RIGHT link (partner > node) whose
-        fused link survives same-tick resolution
-        (age_L + age_R + 2 < min(link_cutoff_L, link_cutoff_R)). Mirrors the
+        fused link survives the tick boundary
+        (age_L + age_R + 1 < min(link_cutoff_L, link_cutoff_R)). Mirrors the
         engine's left x right decision gate; exact for homogeneous cutoffs (the
         only regime in use), and the engine stays authoritative regardless.
         """
@@ -264,7 +264,7 @@ class QRNEnv:
         ra = ns.age[right].astype(np.int64)[None, :]
         lc = ns.link_cutoff[left].astype(np.int64)[:, None]
         rc = ns.link_cutoff[right].astype(np.int64)[None, :]
-        viable = (la + ra + 2) < np.minimum(lc, rc)
+        viable = (la + ra + 1) < np.minimum(lc, rc)
         return bool(np.any(viable))
 
     def _can_purify_from(self, ns) -> bool:

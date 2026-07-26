@@ -316,12 +316,13 @@ class Repeater:
         A BSM fuses a left-facing link (partner < rid) with a right-facing link
         (partner > rid), so the two remote endpoints are always distinct.
 
-        Viability (arXiv 2401.13168 protocol step 2, adapted to same-tick
-        resolution): the fused link inherits age_a + age_b, and both parents
-        age once more before the swap resolves this same tick, so it survives its
-        cutoff iff age_a + age_b + 2 < ec with ec = min(remote endpoints'
-        cutoffs). This gate is what lets ``swap()`` create the fused link
-        unconditionally: no born-dead link can reach creation.
+        Viability: the fused link inherits age_a + age_b and ages once at the
+        tick boundary, so it survives its cutoff iff age_a + age_b + 1 < ec,
+        with ec = min(remote endpoints' cutoffs). This gate is what lets
+        ``swap()`` create the fused link unconditionally: no born-dead link can
+        reach creation. (Was +2 until 2026-07-26, inherited from the
+        synchronous-barrier model where both parents aged once more before the
+        swap resolved; under immediate apply that extra tick does not exist.)
         """
         left = self.available_on_side(LEFT)
         right = self.available_on_side(RIGHT)
@@ -335,7 +336,7 @@ class Repeater:
         ra = self.partner_repeater[qa_all]
         rb = self.partner_repeater[qb_all]
         ec = np.minimum(network_cutoffs[ra], network_cutoffs[rb])
-        viable = (self.age[qa_all] + self.age[qb_all] + 2) < ec
+        viable = (self.age[qa_all] + self.age[qb_all] + 1) < ec
         if not bool(viable.any()):
             return None
         qa_v, qb_v = qa_all[viable], qb_all[viable]

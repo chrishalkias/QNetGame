@@ -1153,8 +1153,8 @@ class TestRepeaterInternals(unittest.TestCase):
 
 class TestSwapDecisionGate(unittest.TestCase):
     """Paper (arXiv 2401.13168) step 2: swapping is attempted only if the
-    fused link would still be inside its cutoff at resolution
-    (age_a + age_b + 2 < ec for dt=0 same-tick resolution)."""
+    fused link would still be inside its cutoff after the tick boundary
+    (age_a + age_b + 1 < ec under immediate apply)."""
 
     def _chain3(self, cutoff=10):
         net = build_network(topology='chain', n_repeaters=3, n_ch=2,
@@ -1167,10 +1167,10 @@ class TestSwapDecisionGate(unittest.TestCase):
     def test_overage_pair_is_refused(self):
         net = self._chain3(cutoff=10)
         rep1 = net.repeaters[1]
-        # age both of R1's links so summed age + 2 >= cutoff: 4 + 4 + 2 = 10 >= 10
+        # age both of R1's links so summed age + 1 >= cutoff: 5 + 5 + 1 = 11 >= 10
         for rep in net.repeaters:
             for q in rep.occupied_indices():
-                rep.age[q] = 4
+                rep.age[q] = 5
         res = net.swap(1)
         self.assertFalse(res["success"])
         self.assertEqual(res["reason"], "no_valid_pair")
@@ -1179,13 +1179,56 @@ class TestSwapDecisionGate(unittest.TestCase):
 
     def test_viable_pair_still_swaps(self):
         net = self._chain3(cutoff=10)
-        # 3 + 3 + 2 = 8 < 10: viable
+        # 3 + 3 + 1 = 7 < 10: viable
         for q in range(2):
             for rep in net.repeaters:
                 if rep.status[q] == QUBIT_OCCUPIED:
                     rep.age[q] = 3
         res = net.swap(1)
         self.assertTrue(res["success"])
+
+    def test_swap_gate_allows_a_pair_whose_fused_link_survives_the_tick(self):
+        """The viability gate must be exact, not conservative: a fused link of
+        age a+b survives iff a+b+1 < ec (it ages once at the tick boundary).
+        The old +2 came from the synchronous-barrier model, where both parents
+        aged again before resolution; under immediate apply that tick does not
+        exist, and the extra margin refused swaps that would have delivered."""
+        net = build_chain(3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=6, F0=1.0,
+                          channel_loss=0.0, distance_dep_gen=False,
+                          rng=np.random.default_rng(0))
+        net.entangle(0, 1)
+        net.entangle(1, 2)
+        for _ in range(2):
+            net.age_links(discard_expired=True)          # both links at age 2
+        # exercise the ENGINE gate (select_swap_pair), not Repeater.can_swap:
+        # can_swap carries no viability gate, so it would answer True
+        # regardless and prove nothing.
+        self.assertIsNotNone(net.repeaters[1].select_swap_pair(
+            net._positions, net._cutoffs, rng=np.random.default_rng(0)))
+        res = net.swap(1)
+        self.assertTrue(res["success"], res["reason"])
+        # the fused end-to-end link exists at the source, age 4, alive
+        r0 = net.repeaters[0]
+        q = [i for i in np.flatnonzero(r0.status == QUBIT_OCCUPIED)
+             if int(r0.partner_repeater[i]) == 2]
+        self.assertEqual(len(q), 1)
+        self.assertEqual(int(r0.age[q[0]]), 4)
+        self.assertLess(int(r0.age[q[0]]), 6)
+
+    def test_swap_gate_still_refuses_a_born_dead_pair(self):
+        """The 2026-07-12 cutoff leak must stay closed: a fused link that
+        cannot survive the tick boundary is never created."""
+        net = build_chain(3, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=6, F0=1.0,
+                          channel_loss=0.0, distance_dep_gen=False,
+                          rng=np.random.default_rng(0))
+        net.entangle(0, 1)
+        net.entangle(1, 2)
+        for _ in range(3):
+            net.age_links(discard_expired=True)          # both links at age 3
+        self.assertIsNone(net.repeaters[1].select_swap_pair(   # 3+3+1 = 7 >= 6
+            net._positions, net._cutoffs, rng=np.random.default_rng(0)))
+        self.assertIn(net.swap(1)["reason"],
+                      ("insufficient_qubits", "no_valid_pair"))
 
     def test_selection_skips_doomed_picks_viable(self):
         # node 1 has TWO pairs: one doomed (old links), one viable (fresh);
