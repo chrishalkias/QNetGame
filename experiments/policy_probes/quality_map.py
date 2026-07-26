@@ -5,8 +5,8 @@ Average agent decisions over the operation-quality plane (p_swap x p_gen).
 Top row: three panels over a p_s (x) by p_e (y) grid, 0.1-wide bins, aggregated
 across the whole training distribution (all sizes / n_ch):
   (A) P(PURIFY | can_purify)   (B) P(SWAP | can_swap)   (C) P(SWAP)-P(PURIFY), both
-Bottom row: the SAME three panels, each split into a 2x2 block conditioned on link
-urgency u in {0.0, 0.2, 0.4, 0.6} (reading order TL, TR, BL, BR), so the p_e/p_s
+Bottom row: the SAME three panels, each split into a 2x2 block conditioned on the
+normalized link age u in {0.0, 0.2, 0.4, 0.6} (reading order TL, TR, BL, BR), so the p_e/p_s
 maps are resolved by how close the node's links are to the cutoff.
 
 p_e = per-repeater generation prob (feature 3), p_s = per-repeater BSM prob
@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse, json, os, shutil
 import numpy as np
 
-URG_BINS = [(0.0, 0.2), (0.2, 0.35), (0.35, 0.5), (0.5, 0.65)]   # 4 urgency slices
+AGE_BINS = [(0.0, 0.2), (0.2, 0.35), (0.35, 0.5), (0.5, 0.65)]   # 4 normalized-age slices
 
 
 def parse_args():
@@ -41,7 +41,7 @@ def parse_args():
     ap.add_argument("--min_count", type=int, default=20,
                     help="aggregate tiles with fewer decisions are greyed out")
     ap.add_argument("--min_count_cond", type=int, default=8,
-                    help="urgency-conditioned tiles: sparser, lower threshold")
+                    help="age-conditioned tiles: sparser, lower threshold")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save_dir", default=None)
     return ap.parse_args()
@@ -75,15 +75,15 @@ def run_compute(a, out_json):
     d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed, p_lo=a.p_lo, p_hi=a.p_hi,
                   n_chs=tuple(a.n_ch))
     X, act = d["X"], d["A"]
-    p_e, p_s, urg = X[:, 3], X[:, 4], X[:, 5]
+    p_e, p_s, age_frac = X[:, 3], X[:, 4], X[:, 5]
     cs = np.rint(X[:, 1]).astype(bool)
     cp = np.rint(X[:, 2]).astype(bool)
     both = cs & cp
     edges = np.arange(0.0, 1.0 + 1e-9, a.bin)
 
     def slc(s):
-        lo, hi = URG_BINS[s]
-        return (urg >= lo) & (urg < hi)
+        lo, hi = AGE_BINS[s]
+        return (age_frac >= lo) & (age_frac < hi)
 
     def panel(el, took):
         agg = _jsonable(grid2d(p_s[el], p_e[el], took[el], edges, a.min_count))
@@ -98,7 +98,7 @@ def run_compute(a, out_json):
     data = dict(ckpt=a.ckpt, episodes=a.episodes, seed=a.seed, bin=a.bin,
                 p_lo=a.p_lo, p_hi=a.p_hi,
                 min_count=a.min_count, min_count_cond=a.min_count_cond,
-                urg_bins=URG_BINS,
+                age_bins=AGE_BINS,
                 panels=dict(
                     purify=dict(cmap="Greens", vmin=0.0, vmax=1.0, n=int(cp.sum()),
                                 title=r"$P(\mathrm{PURIFY} \mid \mathrm{can\,purify})$",
@@ -132,7 +132,7 @@ def run_plot(data, stem):
         return c
 
     edges = np.arange(0.0, 1.0 + 1e-9, data["bin"])
-    urg_bins = data["urg_bins"]
+    age_bins = data["age_bins"]
     order = ["purify", "swap", "both_pref"]
     letters = "ABC"
 
@@ -143,14 +143,14 @@ def run_plot(data, stem):
         P = data["panels"][key]
         cmap = cmap_for(P["cmap"])
 
-        # --- top: aggregate over all urgency ---
+        # --- top: aggregate over all normalized ages ---
         axt = fig.add_subplot(outer[0, c])
         pm = axt.pcolormesh(edges, edges, np.ma.masked_invalid(_np(P["agg"])),
                             cmap=cmap, vmin=P["vmin"], vmax=P["vmax"],
                             edgecolors="0.55", linewidth=0.5)
         fig.colorbar(pm, ax=axt, fraction=0.046, pad=0.03)
         axt.set_aspect("equal")
-        axt.set_title(f"{P['title']}\n({P['n']} decisions, all urgency)", fontsize=9.5)
+        axt.set_title(f"{P['title']}\n({P['n']} decisions, all ages)", fontsize=9.5)
         lab = f"({letters[c]})"
         axt.text(-0.10, 1.16, rf"\textbf{{{lab}}}" if usetex else lab,
                  transform=axt.transAxes, va="top", ha="left", fontsize=12)
@@ -158,7 +158,7 @@ def run_plot(data, stem):
         if c == 0:
             axt.set_ylabel(r"$p_e$ (generation quality)", fontsize=9)
 
-        # --- bottom: 2x2 block conditioned on urgency (TL,TR,BL,BR = u 0,.2,.4,.6) ---
+        # --- bottom: 2x2 block conditioned on normalized age (TL,TR,BL,BR = u 0,.2,.4,.6) ---
         sub = outer[1, c].subgridspec(2, 2, hspace=0.30, wspace=0.12)
         for k in range(4):
             axs = fig.add_subplot(sub[k // 2, k % 2])
@@ -166,7 +166,7 @@ def run_plot(data, stem):
                            cmap=cmap, vmin=P["vmin"], vmax=P["vmax"],
                            edgecolors="0.6", linewidth=0.25)
             axs.set_aspect("equal")
-            lo, hi = urg_bins[k]
+            lo, hi = age_bins[k]
             axs.set_title(rf"${lo:g} \leq u < {hi:g}$", fontsize=8, pad=2)
             axs.set_xticks([0, 0.5, 1]); axs.set_yticks([0, 0.5, 1])
             axs.tick_params(labelsize=9)
@@ -185,7 +185,7 @@ def run_plot(data, stem):
             if c == 0 and k in (0, 2):
                 axs.set_ylabel(r"$p_e$", fontsize=9)
 
-    fig.text(0.5, 0.06, r"(D,E,F): same panels conditioned on link urgency "
+    fig.text(0.5, 0.06, r"(D,E,F): same panels conditioned on normalized link age "
              r"$u=\langle\mathrm{age/cutoff}\rangle$ in disjoint bins "
              r"(TL,TR,BL,BR $= [0,0.2),[0.2,0.35),[0.35,0.5),[0.5,0.65)$)",
              ha="center", fontsize=9)

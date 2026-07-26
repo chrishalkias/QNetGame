@@ -180,7 +180,7 @@ class QRNEnv:
             [2] can_purify         1.0 if >=2 available qubits to same partner
             [3] p_gen              per-repeater link-generation prob. (inhomogeneity)
             [4] p_swap             per-repeater BSM success prob. (inhomogeneity)
-            [5] link_urgency       mean(age/link_cutoff) over occupied qubits (0 if none)
+            [5] normalized_age     mean(age/link_cutoff) over occupied qubits (0 if none)
             [6] relative_position  i / (N-1): 0.0 at source, 1.0 at dest
             [7] is_active          1.0 at env.active_node, the node deciding this micro-step (exactly one node; all 0 if N<3 has no interior nodes)
 
@@ -269,7 +269,7 @@ class QRNEnv:
             return self._step_no_interior(action)
 
         r = self._active
-        info = {"active_node": r, "fidelity": 0.0}
+        info = {"active_node": r, "fidelity": 0.0, "age": 0}
         phi_before = self._phi
 
         # apply the active node's action immediately (source/dest never active)
@@ -277,10 +277,10 @@ class QRNEnv:
         elif action == SWAP:   self._exec_swap(r)
 
         # mid-sweep delivery check (immediate apply -> link exists now)
-        connected, fidelity = self._check_e2e()
+        connected, fidelity, age = self._check_e2e()
         if connected:
             self.done = True
-            info.update(fidelity=fidelity, terminated=True, truncated=False,
+            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
                         tick_boundary=False, next_active_node=-1,
                         gamma_eff=self.gamma, ticks=self.steps + 1)
             reward = fidelity * self.SUCCESS_REWARD - phi_before  # Phi(terminal)=0
@@ -301,10 +301,10 @@ class QRNEnv:
         # tick boundary: physics resolves, then background generation
         self.net.age_links(discard_expired=True)
         self.steps += 1
-        connected, fidelity = self._check_e2e()     # a link may have expired/formed
+        connected, fidelity, age = self._check_e2e()     # a link may have expired/formed
         if connected:
             self.done = True
-            info.update(fidelity=fidelity, terminated=True, truncated=False,
+            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
                         tick_boundary=True, next_active_node=-1,
                         gamma_eff=self.gamma, ticks=self.steps)
             reward = fidelity * self.SUCCESS_REWARD - phi_before
@@ -325,15 +325,15 @@ class QRNEnv:
         """N < 3: there are no interior nodes to act on, so every call is
         directly a tick boundary (defensive edge case; no caller trains on
         chains this short, but reset()/step() must not crash on them)."""
-        info = {"active_node": -1, "fidelity": 0.0}
+        info = {"active_node": -1, "fidelity": 0.0, "age": 0}
         phi_before = self._phi
 
         # "mid-sweep" equivalent (no action to apply, but mirrors the check
         # right after the main step()'s action-execution point).
-        connected, fidelity = self._check_e2e()
+        connected, fidelity, age = self._check_e2e()
         if connected:
             self.done = True
-            info.update(fidelity=fidelity, terminated=True, truncated=False,
+            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
                         tick_boundary=True, next_active_node=-1,
                         gamma_eff=self.gamma, ticks=self.steps + 1)
             reward = fidelity * self.SUCCESS_REWARD - phi_before
@@ -343,10 +343,10 @@ class QRNEnv:
         # tick boundary: physics resolves, then background generation
         self.net.age_links(discard_expired=True)
         self.steps += 1
-        connected, fidelity = self._check_e2e()
+        connected, fidelity, age = self._check_e2e()
         if connected:
             self.done = True
-            info.update(fidelity=fidelity, terminated=True, truncated=False,
+            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
                         tick_boundary=True, next_active_node=-1,
                         gamma_eff=self.gamma, ticks=self.steps)
             reward = fidelity * self.SUCCESS_REWARD - phi_before
@@ -416,13 +416,21 @@ class QRNEnv:
             any_ok = any_ok or res["success"]
         return {"success": any_ok, "reason": "ok"}
 
-    def _check_e2e(self) -> Tuple[bool, float]:
-        """Check whether source and dest share a direct entanglement link."""
+    def _check_e2e(self) -> Tuple[bool, float, int]:
+        """Whether source and dest share a direct link, plus that link's
+        fidelity and accumulated age.
+
+        Age is the sum-ages inheritance from every swap that built the link, so
+        it reports how much memory lifetime the delivery consumed; a caller can
+        compare it against the cutoff. When there is no end-to-end link the age
+        is reported as 0, matching the 0.0 reported for fidelity.
+        """
         rep = self.net.node(self.source)
         for qi in np.flatnonzero(rep.status == QUBIT_OCCUPIED):
             if int(rep.partner_repeater[qi]) == self.dest:
-                return True, float(werner_to_fidelity(rep.werner_param[qi]))
-        return False, 0.0
+                return (True, float(werner_to_fidelity(rep.werner_param[qi])),
+                        int(rep.age[qi]))
+        return False, 0.0, 0
 
 
 # ▄▄▄      ▄▄▄

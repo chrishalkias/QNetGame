@@ -150,7 +150,7 @@ def test_node_exposes_link_cutoff():
     assert rep.link_cutoff[qi] >= 1
 
 
-def test_observation_has_urgency_feature():
+def test_observation_has_normalized_age_feature():
     from rl_stack.env_wrapper import QRNEnv
     from rl_stack.agent import NODE_DIM
     assert NODE_DIM == 8
@@ -159,11 +159,11 @@ def test_observation_has_urgency_feature():
     env.reset()
     x = env.get_observation()["x"]
     assert x.shape == (env.N, 8)
-    # urgency in [0,1); fresh links -> small; empty node -> 0
+    # normalized age in [0,1); fresh links -> small; empty node -> 0
     assert (x[:, 5] >= 0).all() and (x[:, 5] <= 1).all()
 
 
-def test_urgency_feature_formula():
+def test_normalized_age_feature_formula():
     """feat[5] must equal mean(age[occ]/link_cutoff[occ]) off the engine (within 1e-6).
 
     Uses channel_loss=0.0 so effective p_gen stays at 1.0 regardless of spacing,
@@ -188,8 +188,8 @@ def test_urgency_feature_formula():
     lc = np.maximum(rep.link_cutoff[occ], 1)
     ages = rep.age[occ].copy()
     expected = float(np.mean(ages / lc))
-    obs_urgency = float(env.get_observation()["x"][0, 5])
-    assert abs(obs_urgency - expected) < 1e-6, (
-        f"urgency feat[5]={obs_urgency:.8f} != independently computed {expected:.8f} "
+    obs_age = float(env.get_observation()["x"][0, 5])
+    assert abs(obs_age - expected) < 1e-6, (
+        f"normalized_age feat[5]={obs_age:.8f} != independently computed {expected:.8f} "
         f"(age={ages.tolist()}, lc={lc.tolist()})"
     )

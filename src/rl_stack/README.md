@@ -112,7 +112,7 @@ The nine per-node features (all in `[0, 1]`) are:
 | 5 | `can_purify` | 1.0 if node has >=2 available qubits linked to the same partner |
 | 6 | `p_gen` | per-repeater generation probability (inhomogeneity signal) |
 | 7 | `p_swap` | per-repeater BSM success probability (inhomogeneity signal) |
-| 8 | `link_urgency` | `mean(age / link_cutoff)` over occupied qubits; 0 if none, →1 near expiry |
+| 8 | `normalized_age` | `mean(age / link_cutoff)` over occupied qubits; 0 if none, →1 near expiry |
 
 Features 4 and 5 are forced to 0 for source and destination nodes (they may only NOOP).
 Features 6/7 are constant across nodes when the network is homogeneous (`std = 0`).

@@ -525,7 +525,7 @@ class TestObservationFeatures(unittest.TestCase):
     """
     Verify all 8 node features:
       [0] frac_occupied  [1] can_swap        [2] can_purify   [3] p_gen
-      [4] p_swap         [5] link_urgency    [6] relative_position
+      [4] p_swap         [5] normalized_age  [6] relative_position
       [7] is_active
     """
 
@@ -1383,6 +1383,62 @@ def test_step_win_is_terminated_not_truncated():
             assert info["terminated"] != info["truncated"]
             break
     assert saw_win is True
+
+
+def test_delivered_link_reports_both_fidelity_and_age():
+    """On delivery, info must carry the end-to-end link's fidelity AND its
+    accumulated age, and the age must be the engine's own number.
+
+    Age is the sum-ages inheritance from every swap that built the link, so it
+    is the direct readout of how much memory time the delivery cost, and it is
+    what a cutoff-leak check compares against link_cutoff.
+    """
+    from rl_stack import strategies
+    from simulator.repeater import QUBIT_OCCUPIED
+
+    env = QRNEnv(n_repeaters=4, n_ch=2, p_gen=1.0, p_swap=1.0, cutoff=1000,
+                 F0=1.0, channel_loss=0.0, max_steps=200,
+                 rng=np.random.default_rng(0))
+    env.reset()
+    info = {}
+    while not env.done:
+        _, _, done, info = env.step(strategies.swap_asap(env))
+        if done:
+            break
+
+    assert info["terminated"], "idealised 4-chain must deliver"
+    assert 0.0 < info["fidelity"] <= 1.0
+    assert isinstance(info["age"], int) and info["age"] >= 0
+
+    # the reported age must be the delivered link's age read straight off the
+    # engine, not a recomputation or a placeholder
+    rep = env.net.node(env.source)
+    qis = [qi for qi in np.flatnonzero(rep.status == QUBIT_OCCUPIED)
+           if int(rep.partner_repeater[qi]) == env.dest]
+    assert qis, "terminated episode must leave a source-dest link on the engine"
+    assert info["age"] == int(rep.age[qis[0]])
+    # the 2026-07-12 cutoff invariant is now readable straight off info
+    assert info["age"] < int(rep.link_cutoff[qis[0]])
+
+
+def test_age_key_is_zero_when_episode_does_not_deliver():
+    """info["age"] is 0 on every non-delivering step, mirroring the 0.0 that
+    info["fidelity"] already reports. 0 is a deliberate sentinel, not a real
+    measurement: with no end-to-end link there is no age to report, and 0 is
+    the one value a delivered link can never carry (a delivery always costs at
+    least the ticks its elementary links waited)."""
+    # p_gen=0 -> nothing is ever generated, so nothing can ever be delivered
+    env = QRNEnv(n_repeaters=4, n_ch=2, p_gen=0.0, p_swap=1.0, cutoff=20,
+                 max_steps=3, rng=np.random.default_rng(0))
+    env.reset()
+    seen = 0
+    while not env.done:
+        _, _, _, info = env.step(NOOP)
+        assert info["age"] == 0
+        assert info["fidelity"] == 0.0
+        seen += 1
+    assert seen > 0
+    assert info["terminated"] is False and info["truncated"] is True
 
 
 def test_sample_cutoff_range_is_int_in_band():

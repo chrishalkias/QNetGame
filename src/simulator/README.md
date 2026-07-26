@@ -619,7 +619,7 @@ by a separate action mask, not by edges in the graph.
 | 5 | `can_purify` | 1.0 if ≥2 available qubits to the same partner (forced 0 at endpoints) |
 | 6 | `p_gen` | per-repeater link-generation prob. (inhomogeneity signal) |
 | 7 | `p_swap` | per-repeater BSM success prob. (inhomogeneity signal) |
-| 8 | `link_urgency` | mean(age / link_cutoff) over occupied qubits, 0 if none; →1 near expiry |
+| 8 | `normalized_age` | mean(age / link_cutoff) over occupied qubits, 0 if none; →1 near expiry |
 
 Columns 6/7 are constant across nodes when the network is homogeneous
 (`p_gen_std = p_swap_std = 0`); they carry node-quality signal only under per-repeater

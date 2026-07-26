@@ -1,9 +1,9 @@
 """
 --------------------------------------------------------------------------------
-Empirical action-eagerness maps over (occupancy, urgency), tiled, paper figure.
+Empirical action-eagerness maps over (occupancy, normalized age), tiled, paper figure.
 
 2x3 panel grid over the agent's real greedy rollouts, one row per --n_chs value:
-  col 1 = P(PURIFY | can_purify=1) per (occupied count, urgency) tile
+  col 1 = P(PURIFY | can_purify=1) per (occupied count, normalized age) tile
   col 2 = P(SWAP   | can_swap=1)
   col 3 = swap-vs-purify preference where BOTH are available:
           P(SWAP|both) - P(PURIFY|both) in [-1,1] (NOOP absorbs the rest)
@@ -22,7 +22,7 @@ import numpy as np
 
 # y-axis node feature -> (obs column, default lower edge, axis label)
 YFEATS = {
-    "urgency":  (5, 0.0, "mean link urgency"),
+    "normalized_age":  (5, 0.0, "mean normalized link age"),
 }
 
 
@@ -36,10 +36,10 @@ def parse_args():
                     help="one panel row per memory size (occupancy axis = "
                          "occupied count 0..n_ch)")
     ap.add_argument("--fid_bins", type=int, default=20)
-    ap.add_argument("--yfeat", choices=list(YFEATS), default="urgency",
-                    help="y-axis feature: urgency (X[:,5])")
+    ap.add_argument("--yfeat", choices=list(YFEATS), default="normalized_age",
+                    help="y-axis feature: normalized_age (X[:,5])")
     ap.add_argument("--fid_lo", type=float, default=None,
-                    help="lower edge of the y-axis (default: 0.0 for urgency)")
+                    help="lower edge of the y-axis (default: 0.0 for normalized_age)")
     ap.add_argument("--min_count", type=int, default=5,
                     help="tiles with fewer eligible decisions are greyed out")
     ap.add_argument("--seed", type=int, default=0)
@@ -151,7 +151,7 @@ def run_plot(data, stem):
                     fontsize=13, fontweight="bold")
             if r == len(n_chs) - 1:
                 ax.set_xlabel("occupied qubits")
-        axes[r, 0].set_ylabel(data.get("ylabel", "mean link urgency"))
+        axes[r, 0].set_ylabel(data.get("ylabel", "mean normalized link age"))
     fig.savefig(f"{stem}.pdf", bbox_inches="tight")
     print(f"saved -> {stem}.pdf (usetex={usetex})")
 
@@ -160,7 +160,7 @@ def main():
     a = parse_args()
     out = a.save_dir or os.path.join(os.path.dirname(a.ckpt), "diagnostics")
     os.makedirs(out, exist_ok=True)
-    stem = "decision_map" if a.yfeat == "urgency" else f"decision_map_{a.yfeat}"
+    stem = "decision_map" if a.yfeat == "normalized_age" else f"decision_map_{a.yfeat}"
     out_json = os.path.join(out, f"{stem}.json")
     data = json.load(open(out_json)) if a.plot else run_compute(a, out_json)
     run_plot(data, os.path.join(out, stem))

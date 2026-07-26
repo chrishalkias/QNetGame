@@ -19,7 +19,7 @@ from rl_stack.agent import _obs_to_data
 from rl_stack.env_wrapper import QRNEnv
 
 FEATURE_NAMES = ["occ", "can_swap", "can_purify", "p_gen", "p_swap",
-                 "urgency", "relative_position"]
+                 "normalized_age", "relative_position"]
 # column 7 (is_active) is the only sweep scaffolding left, not an
 # interpretability feature: it is always 1.0 for a collected decision (X is
 # recorded at env.active_node), so it carries no signal for permutation
