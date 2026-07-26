@@ -7,8 +7,8 @@ dashed = mean terminal fidelity of delivered links (right axis). Shows behaviour
 under memory pressure (small cutoff = links expire fast + decohere faster, since
 werner ~ exp(-age/cutoff)) where purification should pay off.
 
-  eval:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_cutoff.py --ckpt ...
-  plot:  PYTHONPATH=src:. python experiments/comparisons/delivery_vs_cutoff.py --plot
+  eval:  PYTHONPATH=src:. python experiments/comparisons/policy_vs_agent/delivery_vs_cutoff.py --ckpt ...
+  plot:  PYTHONPATH=src:. python experiments/comparisons/policy_vs_agent/delivery_vs_cutoff.py --plot
 --------------------------------------------------------------------------------
 """
 from __future__ import annotations

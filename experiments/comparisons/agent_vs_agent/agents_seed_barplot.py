@@ -14,8 +14,8 @@ Produces two side-by-side paper barplots (appendix):
   right = mean delivered fidelity F per agent (error bar = standard deviation)
 
 Dual-mode + chunkable (each chunk is an independent seed, merge concatenates):
-  eval:  PYTHONPATH=src:. python experiments/comparisons/agents_seed_barplot.py --seed 0
-  plot:  PYTHONPATH=src:. python experiments/comparisons/agents_seed_barplot.py --plot
+  eval:  PYTHONPATH=src:. python experiments/comparisons/agent_vs_agent/agents_seed_barplot.py --seed 0
+  plot:  PYTHONPATH=src:. python experiments/comparisons/agent_vs_agent/agents_seed_barplot.py --plot
 --------------------------------------------------------------------------------
 """
 from __future__ import annotations

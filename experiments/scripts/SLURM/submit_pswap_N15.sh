@@ -41,7 +41,7 @@ pg=${PGS[$((cell / 7))]}
 ps=${PSS[$((cell % 7))]}
 echo "Node: $(hostname)  task $i -> p_gen=$pg p_swap=$ps policy=$pol"
 
-python -u experiments/comparisons/delivery_vs_pswap.py \
+python -u experiments/comparisons/policy_vs_agent/delivery_vs_pswap.py \
     --ckpt "$CKPT" --policies "$pol" \
     --N 15 --n_ch 4 --cutoff 40 --horizon 20000 --mc_eps 200 \
     --p_gens "$pg" --p_swaps "$ps" \

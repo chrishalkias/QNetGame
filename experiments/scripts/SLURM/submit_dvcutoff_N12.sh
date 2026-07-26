@@ -17,7 +17,8 @@
 #   python experiments/comparisons/merge_json.py \
 #     'results/comparisons/dvcut_N12/chunk*.json' \
 #     -o results/comparisons/delivery_vs_cutoff_N12.json
-# then plot with delivery_vs_cutoff.py --plot --out <that json> --fig <fig>.
+# then plot with policy_vs_agent/delivery_vs_cutoff.py --plot --out <that json>
+# --fig <fig>.
 
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
@@ -35,7 +36,7 @@ i=$SLURM_ARRAY_TASK_ID
 CT=${CUTOFFS[$i]}
 echo "Node: $(hostname)  task $i -> cutoff=$CT"
 
-python -u experiments/comparisons/delivery_vs_cutoff.py \
+python -u experiments/comparisons/policy_vs_agent/delivery_vs_cutoff.py \
     --ckpt "$CKPT" --N 12 --p_gen 0.5 --p_swap 0.5 --n_ch 4 \
     --cutoffs "$CT" --horizon 2000 --mc_eps 2000 \
     --out "results/comparisons/dvcut_N12/chunk${i}.json"

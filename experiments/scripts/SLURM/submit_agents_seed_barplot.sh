@@ -18,7 +18,7 @@
 #     'results/comparisons/seedbar/chunk*.json' \
 #     -o results/comparisons/agents_seed_barplot.json
 # then plot:
-#   python experiments/comparisons/agents_seed_barplot.py --plot \
+#   python experiments/comparisons/agent_vs_agent/agents_seed_barplot.py --plot \
 #     --out results/comparisons/agents_seed_barplot.json \
 #     --fig results/figures/agents_seed_barplot
 
@@ -35,7 +35,7 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR/src:$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 i=$SLURM_ARRAY_TASK_ID
 echo "Node: $(hostname)  chunk $i (seed $((100 + i)))"
 
-python -u experiments/comparisons/agents_seed_barplot.py \
+python -u experiments/comparisons/agent_vs_agent/agents_seed_barplot.py \
     --episodes 300 --horizon 2000 --seed $((100 + i)) \
     --out "results/comparisons/seedbar/chunk${i}.json"
 

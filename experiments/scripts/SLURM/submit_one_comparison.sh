@@ -10,7 +10,10 @@
 #SBATCH --partition=cpu-zen4
 
 # Run ONE comparison experiment so #3-#6 can run as parallel jobs.
-#   sbatch --job-name=cmp_cut submit_one_comparison.sh delivery_vs_cutoff.py [extra args]
+#   sbatch --job-name=cmp_cut submit_one_comparison.sh \
+#       policy_vs_agent/delivery_vs_cutoff.py [extra args]
+# $1 is the module path RELATIVE to experiments/comparisons/, so it must carry
+# the policy_vs_agent/ or agent_vs_agent/ prefix (split 2026-07-27).
 # mc_eps defaults to 1000 here (half of the script default) for speed; the
 # standard errors stay ~2-3 steps, fine for these plots.
 

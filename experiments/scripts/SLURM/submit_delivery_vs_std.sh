@@ -27,7 +27,7 @@ source "$HOME/.venvs/qnetgame/bin/activate"
 export PYTHONPATH="$SLURM_SUBMIT_DIR/src:$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)  run=$RUN  $(date)"
 
-python -u experiments/comparisons/delivery_vs_std.py \
+python -u experiments/comparisons/policy_vs_agent/delivery_vs_std.py \
     --ckpt "checkpoints/$RUN/policy.pth" \
     --N 10 --p_gen 0.5 --p_swap 0.75 --n_ch 4 --cutoff 20 \
     --sigmas 0.0 0.05 0.1 0.15 0.2 0.25 \

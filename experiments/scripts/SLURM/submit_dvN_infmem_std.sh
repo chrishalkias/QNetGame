@@ -37,7 +37,7 @@ pol=${POLS[$((i % 2))]}
 N=$((10 + i / 2))
 echo "Node: $(hostname)  task $i -> N=$N policy=$pol sigma=0.1"
 
-python -u experiments/comparisons/delivery_vs_N.py \
+python -u experiments/comparisons/policy_vs_agent/delivery_vs_N.py \
     --ckpt "$CKPT" --policies "$pol" \
     --n_lo "$N" --n_hi "$N" --n_ch 4 \
     --p_gen 0.4 --p_swap 0.8 --p_gen_std 0.1 --p_swap_std 0.1 \
