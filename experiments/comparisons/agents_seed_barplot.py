@@ -33,7 +33,6 @@ def parse_args():
         "checkpoints/omni_v3_20k_s2/policy.pth",
         "checkpoints/omni_v3_20k_s3/policy.pth"])
     ap.add_argument("--labels", nargs="+", default=["seed 1", "seed 2", "seed 3"])
-    ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--episodes", type=int, default=3000, help="per run/chunk")
     ap.add_argument("--horizon", type=int, default=2000)
     # random-parameter domain (defaults = the omni_v3_20k training distribution)
@@ -75,7 +74,7 @@ def _rollout(fn, N, n_ch, p_gen, p_swap, cutoff, ep_seed, H, pg_std, ps_std):
 
 def run_eval(a):
     from experiments.mc_eval import make_agent_fn
-    agents = {lab: make_agent_fn(ck, hidden=a.hidden)
+    agents = {lab: make_agent_fn(ck)
               for lab, ck in zip(a.labels, a.ckpts)}
     master = np.random.default_rng(a.seed)
     print(f"{len(agents)} agents, {a.episodes} random episodes, H={a.horizon}, "

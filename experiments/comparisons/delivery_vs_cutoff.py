@@ -14,6 +14,7 @@ werner ~ exp(-age/cutoff)) where purification should pay off.
 from __future__ import annotations
 import argparse
 from experiments.comparisons import _common as C
+from experiments.mc_eval import mc_eval_stats
 
 
 def parse_args():
@@ -21,7 +22,6 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--N", type=int, default=10)
     ap.add_argument("--p_gen", type=float, default=0.5)
     ap.add_argument("--p_swap", type=float, default=0.5)
@@ -39,7 +39,7 @@ POLICIES = ("agent", "purify_swap")   # swap-ASAP dropped from this figure
 
 
 def run_eval(a):
-    allpols = C.build_policies(a.ckpt, hidden=a.hidden)
+    allpols = C.build_policies(a.ckpt)
     pols = {k: allpols[k] for k in POLICIES}
     print(f"N={a.N} p_gen={a.p_gen} p_swap={a.p_swap} n_ch={a.n_ch} "
           f"cutoffs={a.cutoffs} H={a.horizon} mc_eps={a.mc_eps}")
@@ -48,8 +48,12 @@ def run_eval(a):
         row = dict(cutoff=ct, N=a.N, p_gen=a.p_gen, p_swap=a.p_swap,
                    n_ch=a.n_ch, horizon=a.horizon, mc_eps=a.mc_eps)
         for name, fn in pols.items():
-            T, se, F, Fse = C.eval_T_and_F(fn, a.N, a.n_ch, a.p_gen, a.p_swap,
-                                           ct, a.horizon, a.mc_eps)
+            s = mc_eval_stats(fn, a.N, a.n_ch, a.p_gen, a.p_swap,
+                              ct, a.horizon, a.mc_eps)
+            T, se, Fse = s["T"], s["se"], s["seF_conn"]
+            # nan (not None) when nothing delivered: the figure plots F as a
+            # float array and a gap is the honest rendering of "no data"
+            F = s["mean_F_conn"] if s["mean_F_conn"] is not None else float("nan")
             row[f"T_{name}"], row[f"se_{name}"] = T, se
             row[f"F_{name}"], row[f"Fse_{name}"] = F, Fse
             print(f"  cutoff={ct:>2} {name:<12} T={T:7.3f} ± {se:.3f}  "

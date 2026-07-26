@@ -32,7 +32,6 @@ def parse_args():
                     help="T = delivery-time lines; delta = %% reduction of agent "
                          "vs swap-ASAP (headline generalization plot, #2)")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--p_gen", type=float, default=0.4)
     ap.add_argument("--p_swap", type=float, default=0.8)
     ap.add_argument("--n_lo", type=int, default=10)
@@ -69,17 +68,19 @@ def parse_args():
 
 def run_eval(args):
     from experiments import mc_eval as ob
-    from experiments.comparisons._common import eval_stats
+    from experiments.mc_eval import mc_eval_stats
     from rl_stack import policies
 
     wanted = ["agent"] if args.agent_only else args.policies
-    policies = {}
+    # NOT named `policies`: that would shadow the rl_stack.policies module the
+    # two baseline lambdas close over (it did, and both raised AttributeError)
+    pols = {}
     if "agent" in wanted:
-        policies["agent"] = ob.make_agent_fn(args.ckpt, hidden=args.hidden)
+        pols["agent"] = ob.make_agent_fn(args.ckpt)
     if "swap_asap" in wanted:
-        policies["swap_asap"] = lambda env, obs: policies.swap_asap(env)
+        pols["swap_asap"] = lambda env, obs: policies.swap_asap(env)
     if "purify_swap" in wanted:
-        policies["purify_swap"] = lambda env, obs: policies.purify_then_swap(env)
+        pols["purify_swap"] = lambda env, obs: policies.purify_then_swap(env)
     from experiments.comparisons import _common as C
     C.write_meta(args)
     Ns = list(range(args.n_lo, args.n_hi + 1))
@@ -91,10 +92,10 @@ def run_eval(args):
         row = dict(N=N, p_gen=args.p_gen, p_swap=args.p_swap, n_ch=args.n_ch,
                    cutoff=args.cutoff, horizon=args.horizon, mc_eps=args.mc_eps,
                    p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std)
-        for name, fn in policies.items():
-            s = eval_stats(fn, N, args.n_ch, args.p_gen, args.p_swap,
-                           args.cutoff, args.horizon, args.mc_eps,
-                           p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std)
+        for name, fn in pols.items():
+            s = mc_eval_stats(fn, N, args.n_ch, args.p_gen, args.p_swap,
+                              args.cutoff, args.horizon, args.mc_eps,
+                              p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std)
             row[f"T_{name}"] = s["T"]
             row[f"se_{name}"] = s["se"]
             row[f"conn_rate_{name}"] = s["conn_rate"]

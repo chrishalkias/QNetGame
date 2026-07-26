@@ -149,7 +149,7 @@ def build_policies(args):
     if agents:
         from experiments.mc_eval import make_agent_fn
         for ckpt in agents:
-            policies[_agent_name(ckpt)] = make_agent_fn(ckpt, hidden=64)
+            policies[_agent_name(ckpt)] = make_agent_fn(ckpt)
 
     if args.include_swap_asap:
         from experiments.mc_eval import swap_asap_fn

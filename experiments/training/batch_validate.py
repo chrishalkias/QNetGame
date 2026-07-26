@@ -33,7 +33,6 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 import numpy as np
-import torch
 
 import matplotlib
 matplotlib.use("Agg")
@@ -42,9 +41,9 @@ import seaborn as sns
 import pandas as pd
 
 # -- project imports ----------------------------------------------
-from rl_stack.agent import QRNAgent, _obs_to_data
-from rl_stack.env_wrapper import QRNEnv, NOOP, SWAP
+from rl_stack.env_wrapper import QRNEnv
 from rl_stack.policies import swap_asap, purify_then_swap
+from experiments.mc_eval import make_agent_fn, mc_eval_stats
 
 # baseline the agent is compared against (pilots always use swap-ASAP so the
 # adaptive cutoff/max_steps stay identical across baselines)
@@ -180,68 +179,44 @@ class RunConfig:
 
 
 def run_comparison(
-    agent: QRNAgent,
+    agent_fn,
     cfg: RunConfig,
     n_episodes: int,
     rng: np.random.Generator,
     baseline: str = "swap_asap",
-) -> dict[str, np.ndarray]:
-    """Run agent and the chosen baseline for *n_episodes*.
+) -> dict[str, float]:
+    """Run agent and the chosen baseline for *n_episodes* through mc_eval.
 
-    Returns dict with keys: "agent", "swap_asap" (delivery-time arrays),
-    and "agent_succ", "swap_asap_succ" (success counts). The "swap_asap"
-    key is generic — it holds whichever *baseline* was run.
+    Returns dict with keys: "agent", "swap_asap" (mean delivery time T,
+    censored at cfg.max_steps) and "agent_succ", "swap_asap_succ" (delivery
+    counts). The "swap_asap" key is generic - it holds whichever *baseline*
+    was run.
+
+    Both policies are evaluated on the SAME episode seed (drawn from *rng*),
+    so the comparison is paired. The hand-rolled loop this replaced drew the
+    baseline's seeds AFTER the agent's, comparing the two policies on
+    different episodes; it was proved bit-identical to mc_eval episode for
+    episode before deletion (2026-07-27), so only the pairing changed.
     """
     baseline_fn = BASELINES[baseline]
-    result: dict[str, list[int]] = {"agent": [], "swap_asap": []}
-    successes: dict[str, int] = {"agent_succ": 0, "swap_asap_succ": 0}
+    seed = int(rng.integers(2**32))
+    fns = {"agent": agent_fn,
+           "swap_asap": lambda env, obs: baseline_fn(env)}
 
-    for label, use_agent in [("agent", True), ("swap_asap", False)]:
-        for _ in range(n_episodes):
-            env = QRNEnv(
-                n_repeaters=cfg.n_nodes,
-                n_ch=cfg.n_ch,
-                p_gen=cfg.p_gen,
-                p_swap=cfg.p_swap,
-                cutoff=cfg.cutoff,
-                max_steps=cfg.max_steps,
-                F0=1.0,
-                channel_loss=0.0,
-                rng=np.random.default_rng(rng.integers(2**32)),
-            )
-            obs = env.reset()
-            info = {}
-
-            while not env.done and env.steps < cfg.max_steps:
-                if use_agent:
-                    mask_row = env.action_mask(env.active_node)
-                    action = agent.select_action(obs, mask_row, env.active_node,
-                                                 training=False)
-                else:
-                    action = baseline_fn(env)
-                obs, _, done, info = env.step(action)
-                if done:
-                    break
-
-            fid = info.get("fidelity", 0.0)
-            delivered = bool(info.get("terminated")) and fid > 0
-            delivery = info["ticks"] if delivered else cfg.max_steps
-            result[label].append(delivery)
-            if fid > 0:
-                successes[f"{label}_succ"] += 1
-
-    out = {k: np.array(v) for k, v in result.items()}
-    out.update({k: np.array(v) for k, v in successes.items()})
+    out: dict[str, float] = {}
+    for label, fn in fns.items():
+        s = mc_eval_stats(fn, cfg.n_nodes, cfg.n_ch, cfg.p_gen, cfg.p_swap,
+                          cfg.cutoff, cfg.max_steps, n_episodes, seed=seed)
+        out[label] = s["T"]
+        out[f"{label}_succ"] = int(round(s["conn_rate"] * n_episodes))
     return out
 
 
-def relative_improvement(agent_times: np.ndarray, swap_times: np.ndarray) -> float:
+def relative_improvement(T_agent: float, T_swap: float) -> float:
     """Δ% = (T_swap - T_agent) / T_swap * 100.  Positive → agent faster."""
-    mean_swap = np.mean(swap_times)
-    mean_agent = np.mean(agent_times)
-    if mean_swap == 0:
+    if T_swap == 0:
         return 0.0
-    return (mean_swap - mean_agent) / mean_swap * 100.0
+    return (T_swap - T_agent) / T_swap * 100.0
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -277,7 +252,7 @@ def _cell_params(
 
 
 def sweep_pgen_pswap(
-    agent: QRNAgent,
+    agent_fn,
     n_episodes: int,
     rng: np.random.Generator,
     save_dir: str = ".",
@@ -306,7 +281,8 @@ def sweep_pgen_pswap(
                 n_nodes, p_gen, p_swap, rng, fixed_cutoff,
             )
             cfg = RunConfig(n_nodes, p_gen, p_swap, cutoff, max_steps)
-            res = run_comparison(agent, cfg, n_episodes, rng, baseline=baseline)
+            res = run_comparison(agent_fn, cfg, n_episodes, rng,
+                                 baseline=baseline)
             both_fail = (res["agent_succ"] == 0 and res["swap_asap_succ"] == 0)
             rows.append({
                 "N": n_nodes,
@@ -332,7 +308,8 @@ def sweep_pgen_pswap(
                 n_nodes, p_gen, p_swap, rng, fixed_cutoff,
             )
             cfg = RunConfig(n_nodes, p_gen, p_swap, cutoff, max_steps)
-            res = run_comparison(agent, cfg, n_episodes, rng, baseline=baseline)
+            res = run_comparison(agent_fn, cfg, n_episodes, rng,
+                                 baseline=baseline)
             both_fail = (res["agent_succ"] == 0 and res["swap_asap_succ"] == 0)
             rows.append({
                 "N": n_nodes,
@@ -369,7 +346,7 @@ SWEEP2_N = 8  # fixed chain length for sweep 2
 
 
 def sweep_pgen_cutoff(
-    agent: QRNAgent,
+    agent_fn,
     n_episodes: int,
     rng: np.random.Generator,
     n_nodes: int = SWEEP2_N,
@@ -420,7 +397,7 @@ def sweep_pgen_cutoff(
                 max_steps = pilot_cap
 
             cfg = RunConfig(n_nodes, p_gen, p_swap=1.0, cutoff=cutoff, max_steps=max_steps)
-            res = run_comparison(agent, cfg, n_episodes, rng)
+            res = run_comparison(agent_fn, cfg, n_episodes, rng)
             rows.append({
                 "p_gen": p_gen,
                 "cutoff": cutoff,
@@ -448,7 +425,7 @@ def sweep_pgen_cutoff(
 # grows as p_swap drops.
 
 def sweep_pgen_pswap_fixed_cutoff(
-    agent: QRNAgent,
+    agent_fn,
     n_episodes: int,
     rng: np.random.Generator,
     cutoffs: Sequence[int],
@@ -503,7 +480,7 @@ def sweep_pgen_pswap_fixed_cutoff(
 
             cfg = RunConfig(n_nodes, float(p_gen), float(p_swap),
                             cutoff, max_steps)
-            res = run_comparison(agent, cfg, n_episodes, rng)
+            res = run_comparison(agent_fn, cfg, n_episodes, rng)
             rows.append({
                 "cutoff": cutoff,
                 "p_gen": float(p_gen),
@@ -790,16 +767,6 @@ def _log_progress(
         print()
 
 
-def load_agent(model_path: str) -> QRNAgent:
-    agent = QRNAgent()
-    agent.policy_net.load_state_dict(
-        torch.load(model_path, map_location=agent.device, weights_only=True)
-    )
-    agent.policy_net.eval()
-    agent.epsilon = 0.0
-    return agent
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  CLI
 # ═══════════════════════════════════════════════════════════════════
@@ -868,7 +835,7 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
 
     print(f"Loading model from {args.model}")
-    agent = load_agent(args.model)
+    agent_fn = make_agent_fn(args.model)
 
     results_json: dict = {
         "metadata": {
@@ -883,7 +850,7 @@ def main() -> None:
     if args.sweep in ("both", "pgen_pswap"):
         print(f"\n══ Sweep 1: p_gen × p_swap (N = {args.node_counts}, "
               f"baseline = {args.baseline}) ══")
-        df1 = sweep_pgen_pswap(agent, args.episodes, rng, save_dir=args.save_dir,
+        df1 = sweep_pgen_pswap(agent_fn, args.episodes, rng, save_dir=args.save_dir,
                                node_counts=args.node_counts,
                                baseline=args.baseline,
                                fixed_cutoff=args.fixed_cutoff)
@@ -906,7 +873,7 @@ def main() -> None:
         global SWEEP2_N
         SWEEP2_N = args.sweep2_nodes
         print(f"\n══ Sweep 2: p_gen × cutoff (N = {SWEEP2_N}, p_swap = 1) ══")
-        df2 = sweep_pgen_cutoff(agent, args.episodes, rng, n_nodes=SWEEP2_N,
+        df2 = sweep_pgen_cutoff(agent_fn, args.episodes, rng, n_nodes=SWEEP2_N,
                                 save_dir=args.save_dir, resume=args.resume)
         csv2 = os.path.join(args.save_dir, "sweep_pgen_cutoff.csv")
         df2.to_csv(csv2, index=False)
@@ -925,7 +892,7 @@ def main() -> None:
         print(f"\n══ Sweep 3: p_gen × p_swap at FIXED cutoff(s) {cutoffs} "
               f"(N = {n_nodes}) ══")
         dff = sweep_pgen_pswap_fixed_cutoff(
-            agent, args.episodes, rng, cutoffs, n_nodes=n_nodes,
+            agent_fn, args.episodes, rng, cutoffs, n_nodes=n_nodes,
             save_dir=args.save_dir, resume=args.resume)
         csvf = os.path.join(args.save_dir, "sweep_fixed_cutoff.csv")
         dff.to_csv(csvf, index=False)

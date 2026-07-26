@@ -17,6 +17,7 @@ Three policies: agent / swap-ASAP / purify-then-swap.
 from __future__ import annotations
 import argparse
 from experiments.comparisons import _common as C
+from experiments.mc_eval import mc_eval_stats
 
 
 def parse_args():
@@ -24,7 +25,6 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--N", type=int, default=10)
     ap.add_argument("--p_gen", type=float, default=0.5)
     ap.add_argument("--p_swap", type=float, default=0.5)
@@ -42,7 +42,7 @@ def parse_args():
 
 
 def run_eval(a):
-    pols = C.build_policies(a.ckpt, hidden=a.hidden)
+    pols = C.build_policies(a.ckpt)
     print(f"N={a.N} p_gen={a.p_gen} p_swap={a.p_swap} n_ch={a.n_ch} "
           f"cutoff={a.cutoff} sigmas={a.sigmas} H={a.horizon} mc_eps={a.mc_eps}")
     rows = []
@@ -51,8 +51,9 @@ def run_eval(a):
                    cutoff=a.cutoff, sigma_train=a.sigma_train)
         for name, fn in pols.items():
             # sigma spreads BOTH p_gen and p_swap per repeater
-            T, se = C.eval_T(fn, a.N, a.n_ch, a.p_gen, a.p_swap, a.cutoff,
-                             a.horizon, a.mc_eps, p_gen_std=sg, p_swap_std=sg)
+            s = mc_eval_stats(fn, a.N, a.n_ch, a.p_gen, a.p_swap, a.cutoff,
+                              a.horizon, a.mc_eps, p_gen_std=sg, p_swap_std=sg)
+            T, se = s["T"], s["se"]
             row[f"T_{name}"], row[f"se_{name}"] = T, se
             print(f"  sigma={sg:.2f} {name:<12} T={T:7.3f} ± {se:.3f}", flush=True)
         rows.append(row)

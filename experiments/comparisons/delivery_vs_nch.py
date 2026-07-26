@@ -12,6 +12,7 @@ training set {2,3,4} (zero-shot in memory size).
 from __future__ import annotations
 import argparse
 from experiments.comparisons import _common as C
+from experiments.mc_eval import mc_eval_stats
 
 
 def parse_args():
@@ -19,7 +20,6 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--N", type=int, default=10)
     ap.add_argument("--p_gen", type=float, default=0.3)
     ap.add_argument("--p_swap", type=float, default=0.8)
@@ -35,7 +35,7 @@ def parse_args():
 
 
 def run_eval(a):
-    pols = C.build_policies(a.ckpt, hidden=a.hidden)
+    pols = C.build_policies(a.ckpt)
     print(f"N={a.N} p_gen={a.p_gen} p_swap={a.p_swap} n_chs={a.n_chs} "
           f"cutoff={a.cutoff} H={a.horizon} mc_eps={a.mc_eps}")
     rows = []
@@ -43,7 +43,9 @@ def run_eval(a):
         row = dict(n_ch=nch, N=a.N, p_gen=a.p_gen, p_swap=a.p_swap,
                    cutoff=a.cutoff, n_ch_train_max=a.n_ch_train_max)
         for name, fn in pols.items():
-            T, se = C.eval_T(fn, a.N, nch, a.p_gen, a.p_swap, a.cutoff, a.horizon, a.mc_eps)
+            s = mc_eval_stats(fn, a.N, nch, a.p_gen, a.p_swap, a.cutoff,
+                              a.horizon, a.mc_eps)
+            T, se = s["T"], s["se"]
             row[f"T_{name}"], row[f"se_{name}"] = T, se
             print(f"  n_ch={nch} {name:<12} T={T:7.3f} ± {se:.3f}", flush=True)
         rows.append(row)

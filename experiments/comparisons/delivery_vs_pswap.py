@@ -12,6 +12,7 @@ p_gen, over the (p_swap, p_gen) operating regime at fixed N, cutoff, n_ch.
 from __future__ import annotations
 import argparse
 from experiments.comparisons import _common as C
+from experiments.mc_eval import mc_eval_stats
 
 PANELS = [("agent", "Agent"), ("purify_swap", "Purify-then-swap")]
 
@@ -24,7 +25,6 @@ def parse_args():
                     help="backfill missing baseline columns (swap_asap, purify_swap) "
                          "into an existing --out json, keeping the agent column as-is")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--hidden", type=int, default=64)
     ap.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
                     choices=["agent", "swap_asap", "purify_swap"],
                     help="policies to evaluate; swap-ASAP dropped from the "
@@ -45,7 +45,7 @@ def parse_args():
 
 
 def run_eval(a):
-    pols = {k: v for k, v in C.build_policies(a.ckpt, hidden=a.hidden).items()
+    pols = {k: v for k, v in C.build_policies(a.ckpt).items()
             if k in a.policies}
     C.write_meta(a)
     print(f"N={a.N} p_gens={a.p_gens} p_swaps={a.p_swaps} n_ch={a.n_ch} "
@@ -56,7 +56,8 @@ def run_eval(a):
             row = dict(p_gen=pg, p_swap=ps, N=a.N, n_ch=a.n_ch, cutoff=a.cutoff,
                        horizon=a.horizon, mc_eps=a.mc_eps)
             for name, fn in pols.items():
-                s = C.eval_stats(fn, a.N, a.n_ch, pg, ps, a.cutoff, a.horizon, a.mc_eps)
+                s = mc_eval_stats(fn, a.N, a.n_ch, pg, ps, a.cutoff,
+                                  a.horizon, a.mc_eps)
                 row[f"T_{name}"], row[f"se_{name}"] = s["T"], s["se"]
                 row[f"conn_rate_{name}"] = s["conn_rate"]
                 row[f"F_{name}"] = s["mean_F_conn"]
@@ -78,8 +79,9 @@ def run_augment(a):
         todo = [r for r in rows if r.get(f"T_{name}") is None]
         print(f"{name}: {len(todo)}/{len(rows)} cells (H={a.horizon}, mc_eps={a.mc_eps})")
         for r in todo:
-            T, se = C.eval_T(fn, r["N"], r["n_ch"], r["p_gen"], r["p_swap"],
-                             r["cutoff"], a.horizon, a.mc_eps)
+            s = mc_eval_stats(fn, r["N"], r["n_ch"], r["p_gen"], r["p_swap"],
+                              r["cutoff"], a.horizon, a.mc_eps)
+            T, se = s["T"], s["se"]
             r[f"T_{name}"], r[f"se_{name}"] = T, se
             print(f"  {name} p_gen={r['p_gen']:.1f} p_swap={r['p_swap']:.1f}  T={T:7.2f}",
                   flush=True)
