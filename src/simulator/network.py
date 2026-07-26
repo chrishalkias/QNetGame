@@ -33,6 +33,10 @@ def build_chain(n_repeaters,
     Each node's ports face its neighbours: the leftmost node (rid 0) is
     RIGHT-only, the rightmost (rid n-1) is LEFT-only, interior nodes carry both
     ports of width n_ch (2*n_ch qubits total).
+
+    `F0` and `channel_loss` are not declared here, they ride `**kw` straight
+    into `RepeaterNetwork`, whose defaults are IDEALISED (`F0=1.0`,
+    `channel_loss=0.0`). Pass them through `**kw` for lossy physics.
     """
     reps = [
             Repeater(rid=i,
@@ -88,8 +92,8 @@ def build_network(
     p_gen_std: float = 0.0,
     p_swap_std: float = 0.0,
     cutoff: int = 20,
-    F0: float = 0.95,
-    channel_loss: float = 0.02,
+    F0: float = 1.0,
+    channel_loss: float = 0.0,
     rng=None,
 ) -> RepeaterNetwork:
     """Build a linear repeater chain.
@@ -101,6 +105,13 @@ def build_network(
     Inhomogeneity: `p_gen`/`p_swap` are the per-network MEANS; `p_gen_std`/
     `p_swap_std` spread per-repeater values via `_sample_matched_uniform`
     (std=0 -> homogeneous, no rng draw).
+
+    Physics defaults are IDEALISED: `F0=1.0` (perfect fresh links) and
+    `channel_loss=0.0` (no fibre attenuation, so neither the generation rate
+    nor the link fidelity depends on distance). This matches every evaluator
+    and training entry point in the repo, which all passed those two values
+    explicitly. The lossy physics is untouched and fully available: pass
+    `F0=0.95, channel_loss=0.02` (or any other values) to get it back.
     """
     rng = rng if rng is not None else np.random.default_rng()
     net = build_chain(
@@ -146,12 +157,19 @@ class RepeaterNetwork:
     def __init__(self, 
                  repeaters: list[Repeater], 
                  adjacency: np.ndarray,
-                 channel_loss: float = 0.02, 
+                 channel_loss: float = 0.0,
                  F0: float = 1.0,
                  distance_dep_gen: bool = True,
                  rng: Optional[np.random.Generator] = None,
                  ):
-        
+        """Physics defaults are IDEALISED: `F0=1.0`, `channel_loss=0.0`, so a
+        fresh link is perfect and neither the generation rate nor the link
+        fidelity depends on distance. `distance_dep_gen` stays True because it
+        selects the distance-dependent FORM, which at `channel_loss=0.0`
+        reduces to the plain mean rate. The lossy model is untouched: pass
+        `channel_loss=0.02` (and `F0<1` if wanted) to exercise it.
+        """
+
         #--- Base parameters
         self.repeaters = repeaters
         self.N = len(repeaters)

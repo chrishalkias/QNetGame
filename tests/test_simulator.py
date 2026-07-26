@@ -459,10 +459,19 @@ class TestPurifyResolutionDecoherence(unittest.TestCase):
 class TestDistanceDependency(unittest.TestCase):
     """
     Generation probability: p_eff = p_avg * exp(-loss * d / 2)
-    Initial fidelity:       F0_eff = F0 * exp(-loss * d)
+    Initial fidelity:       p0 = w(F0) * exp(-loss * d), F = werner_to_fidelity(p0)
+
+    THIS CLASS IS THE ONLY PLACE IN THE SUITE WITH channel_loss > 0. The
+    engine and env defaults were idealised to F0=1.0, channel_loss=0.0, so
+    nothing inherits a lossy channel any more. Every `channel_loss` value
+    below is DELIBERATE and passed explicitly; do not "simplify" it back to
+    the default or the depolarizing damping and the distance scaling stop
+    being tested at all.
     """
 
     def _make_two_node(self, spacing, loss):
+        # `loss` is threaded from each test, NOT inherited: build_chain now
+        # defaults to channel_loss=0.0 via RepeaterNetwork.
         return build_chain(2, n_ch=4, spacing=spacing,
                            p_gen=1.0, p_swap=1.0,
                            F0=1.0, channel_loss=loss,

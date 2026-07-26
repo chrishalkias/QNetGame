@@ -105,11 +105,19 @@ class QRNEnv:
                  p_gen_std = 0.0,
                  p_swap_std = 0.0,
                  cutoff = 20,
-                 F0 = 0.95,
-                 channel_loss = 0.02,
+                 F0 = 1.0,
+                 channel_loss = 0.0,
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
                  gamma = 0.99):
+        """Physics defaults are IDEALISED: `F0=1.0` (perfect fresh links) and
+        `channel_loss=0.0` (no fibre attenuation, so neither the generation
+        rate nor the link fidelity depends on distance). Every trainer,
+        evaluator and probe in the repo already passed exactly those two
+        values, so the default now matches the regime the project actually
+        studies instead of silently disagreeing with it. The lossy physics is
+        untouched: pass `F0=0.95, channel_loss=0.02` to exercise it.
+        """
 
         # N >= 3 is a hard precondition of the serialized sweep, not a nicety:
         # source and dest never act, so a shorter chain has no interior node,
