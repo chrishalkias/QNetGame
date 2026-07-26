@@ -21,13 +21,13 @@ def swap_asap(env: QRNEnv) -> int:
     earlier micro-step this tick has consumed them).
     """
     r = env.active_node
-    return SWAP if env.get_action_mask()[r, SWAP] else NOOP
+    return SWAP if env.action_mask(r)[SWAP] else NOOP
 
 
 def purify_then_swap(env: QRNEnv) -> int:
     """Purify env.active_node if possible, otherwise swap if possible, else noop."""
     r = env.active_node
-    m = env.get_action_mask()[r]
+    m = env.action_mask(r)
     return PURIFY if m[PURIFY] else (SWAP if m[SWAP] else NOOP)
 
 
@@ -39,5 +39,5 @@ def random_policy(env: QRNEnv, rng: np.random.Generator) -> int:
     (link generation, swap outcomes) and invalidates the comparison.
     """
     r = env.active_node
-    valid = np.flatnonzero(env.get_action_mask()[r])
+    valid = np.flatnonzero(env.action_mask(r))
     return int(rng.choice(valid)) if len(valid) else NOOP

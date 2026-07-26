@@ -182,9 +182,87 @@ class Repeater:
         lo, hi = self._side_range(side)
         return bool(np.any(free[lo:hi]))
 
-    def can_swap(self) -> bool:
-        """A BSM needs one available LEFT link AND one available RIGHT link."""
+    def has_link_each_side(self) -> bool:
+        """A BSM needs one available LEFT link AND one available RIGHT link.
+
+        Structure only, no viability: this is the cheap precheck ``swap()`` uses
+        to tell "this node has nothing to fuse" (reason ``insufficient_qubits``)
+        apart from "it has a pair but every pairing is born dead" (reason
+        ``no_valid_pair``, decided by ``select_swap_pair``). For the
+        agent-facing predicate, which must not offer a doomed pair, use
+        ``can_swap``.
+        """
         return len(self.available_on_side(LEFT)) >= 1 and len(self.available_on_side(RIGHT)) >= 1
+
+    def _pair_survives_tick(self, qa, qb, ec) -> np.ndarray:
+        """THE swap viability gate. This is the single place the ``+ 1`` lives.
+
+        A fused link is created immediately, carrying the summed age of its two
+        parents, and then ages exactly once at the tick boundary, so it outlives
+        its cutoff iff ``age_a + age_b + 1 < ec``. (It was ``+ 2`` until
+        2026-07-26, inherited from the synchronous-barrier model where both
+        parents aged once more before the swap resolved; under immediate apply
+        that extra tick does not exist.)
+
+        *qa*, *qb* and *ec* need only be mutually broadcastable, so both the
+        flat cross-product built by ``select_swap_pair`` and the outer product
+        built by ``can_swap`` evaluate the SAME expression. Keeping one copy is
+        the point: if the mask and the engine ever disagreed, the agent would be
+        offered swaps the engine then refuses, silently turning a legal action
+        into a NOOP and corrupting DQN credit assignment.
+        """
+        return (self.age[qa].astype(np.int64)
+                + self.age[qb].astype(np.int64) + 1) < ec
+
+    def can_swap(self) -> bool:
+        """True iff a VIABLE swap pair exists: one occupied LEFT link
+        (partner < rid) and one occupied RIGHT link (partner > rid) whose fused
+        link survives its first tick boundary (see ``_pair_survives_tick``).
+
+        This is the agent-facing legality predicate behind observation feature
+        [1] and the SWAP bit of the action mask. Without the viability gate an
+        over-age pair is offered and the resolved link is born dead, the
+        2026-07-12 cutoff leak.
+
+        The effective cutoff is read per link from ``link_cutoff``, which was
+        frozen to ``min(cutoff_A, cutoff_B)`` at creation, whereas
+        ``select_swap_pair`` reads the two REMOTE repeaters' cutoffs. The two
+        coincide whenever the network's cutoff is uniform, which is every
+        configuration the builders can produce (``cutoff`` is a scalar broadcast
+        to every repeater; only ``p_gen``/``p_swap`` are made inhomogeneous).
+        Under a hand-built per-node cutoff they can differ, and this side is the
+        conservative one, so the engine stays authoritative.
+        """
+        left = self.available_on_side(LEFT)
+        right = self.available_on_side(RIGHT)
+        if len(left) == 0 or len(right) == 0:
+            return False
+        # An occupied qubit with no partner is an orphan; swap() refuses it, so
+        # it must not make the mask claim a swap is available.
+        left = left[self.partner_repeater[left] != NO_PARTNER]
+        right = right[self.partner_repeater[right] != NO_PARTNER]
+        if len(left) == 0 or len(right) == 0:
+            return False
+        ec = np.minimum(self.link_cutoff[left].astype(np.int64)[:, None],
+                        self.link_cutoff[right].astype(np.int64)[None, :])
+        return bool(np.any(self._pair_survives_tick(left[:, None],
+                                                    right[None, :], ec)))
+
+    def can_purify(self) -> bool:
+        """True iff >= 2 occupied qubits point at the SAME partner, the BBPSSW
+        precondition and the agent-facing PURIFY legality predicate.
+
+        `bincount` over partner ids beats `np.unique` on these tiny arrays: no
+        sort.
+        """
+        occ = self.occupied_indices()
+        if occ.size < 2:
+            return False
+        partners = self.partner_repeater[occ]
+        real = partners[partners != NO_PARTNER]
+        if real.size < 2:
+            return False
+        return bool(np.any(np.bincount(real) >= 2))
 
     def qubits_to(self, partner_rid: int) -> np.ndarray:
         """Occupied qubits linked to partner_rid."""
@@ -310,13 +388,10 @@ class Repeater:
         A BSM fuses a left-facing link (partner < rid) with a right-facing link
         (partner > rid), so the two remote endpoints are always distinct.
 
-        Viability: the fused link inherits age_a + age_b and ages once at the
-        tick boundary, so it survives its cutoff iff age_a + age_b + 1 < ec,
-        with ec = min(remote endpoints' cutoffs). This gate is what lets
-        ``swap()`` create the fused link unconditionally: no born-dead link can
-        reach creation. (Was +2 until 2026-07-26, inherited from the
-        synchronous-barrier model where both parents aged once more before the
-        swap resolved; under immediate apply that extra tick does not exist.)
+        Viability is decided by ``_pair_survives_tick`` (the one place the +1
+        lives, shared with ``can_swap``), here with ec = min(remote endpoints'
+        cutoffs). This gate is what lets ``swap()`` create the fused link
+        unconditionally: no born-dead link can reach creation.
         """
         left = self.available_on_side(LEFT)
         right = self.available_on_side(RIGHT)
@@ -330,7 +405,7 @@ class Repeater:
         ra = self.partner_repeater[qa_all]
         rb = self.partner_repeater[qb_all]
         ec = np.minimum(network_cutoffs[ra], network_cutoffs[rb])
-        viable = (self.age[qa_all] + self.age[qb_all] + 1) < ec
+        viable = self._pair_survives_tick(qa_all, qb_all, ec)
         if not bool(viable.any()):
             return None
         qa_v, qb_v = qa_all[viable], qb_all[viable]

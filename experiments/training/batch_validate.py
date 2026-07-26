@@ -216,7 +216,7 @@ def run_comparison(
 
             while not env.done and env.steps < cfg.max_steps:
                 if use_agent:
-                    mask_row = env.get_action_mask()[env.active_node]
+                    mask_row = env.action_mask(env.active_node)
                     action = agent.select_action(obs, mask_row, env.active_node,
                                                  training=False)
                 else:

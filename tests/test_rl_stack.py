@@ -1215,6 +1215,58 @@ class TestAllActionsMaskedFallback(unittest.TestCase):
                         "NOOP column must be True for every node in every mask.")
 
 
+class TestSingleNodeMaskEquivalence(unittest.TestCase):
+    """`action_mask(node)` is the decision path's primitive and
+    `get_action_mask()` is the offline grid. They must NEVER disagree: if they
+    did, the agent would act on a different notion of legal than the probes and
+    tests measure, and a silently illegal SWAP degrades to a NOOP that still
+    collects credit in the replay buffer."""
+
+    def test_grid_equals_stacked_single_node_masks_over_random_states(self):
+        """Sweep many genuinely different states, driven by random legal
+        actions across several seeds and chain sizes, and compare row by row."""
+        checked = 0
+        nonzero_swap = 0
+        nonzero_purify = 0
+        for seed in range(6):
+            for n in (4, 7):
+                rng = np.random.default_rng(seed)
+                env = QRNEnv(n_repeaters=n, n_ch=2, p_gen=0.7, p_swap=0.7,
+                             cutoff=8, F0=1.0, channel_loss=0.0, max_steps=40,
+                             rng=np.random.default_rng(seed))
+                env.reset()
+                for _ in range(60):
+                    grid = env.get_action_mask()
+                    stacked = np.stack([env.action_mask(i)
+                                        for i in range(env.N)])
+                    np.testing.assert_array_equal(
+                        grid, stacked,
+                        f"mask disagreement at seed={seed} n={n}")
+                    checked += 1
+                    nonzero_swap += int(grid[:, SWAP].sum())
+                    nonzero_purify += int(grid[:, PURIFY].sum())
+                    row = env.action_mask(env.active_node)
+                    a = int(rng.choice(np.flatnonzero(row)))
+                    _, _, done, _ = env.step(a)
+                    if done:
+                        break
+        self.assertGreater(checked, 100)
+        # the sweep must actually have exercised both non-trivial bits,
+        # otherwise it only proved NOOP-only masks agree
+        self.assertGreater(nonzero_swap, 0, "no SWAP bit ever set")
+        self.assertGreater(nonzero_purify, 0, "no PURIFY bit ever set")
+
+    def test_single_node_mask_is_a_fresh_array_callers_may_edit(self):
+        """The decision path drops `.copy()` because `action_mask` hands back a
+        private array; mutating it must not leak into the next call."""
+        env = _perfect_env(5)
+        env.reset()
+        first = env.action_mask(1)
+        first[:] = False
+        second = env.action_mask(1)
+        self.assertTrue(second[NOOP], "mutation leaked between calls")
+
+
 class TestQNetworkForwardPass(unittest.TestCase):
     """Verify the GNN produces the correct output shape and finite values."""
 

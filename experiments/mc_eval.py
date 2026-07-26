@@ -72,7 +72,7 @@ def make_agent_fn(ckpt, hidden=64, disable_actions=None):
     agent.policy_net.eval()
 
     def fn(env, obs):
-        mask_row = env.get_action_mask()[env.active_node].copy()
+        mask_row = env.action_mask(env.active_node)
         if disable_actions:
             for a in disable_actions:
                 mask_row[a] = False

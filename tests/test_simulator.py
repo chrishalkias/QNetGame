@@ -1161,9 +1161,9 @@ class TestSwapDecisionGate(unittest.TestCase):
         net.entangle(1, 2)
         for _ in range(2):
             net.age_links(discard_expired=True)          # both links at age 2
-        # exercise the ENGINE gate (select_swap_pair), not Repeater.can_swap:
-        # can_swap carries no viability gate, so it would answer True
-        # regardless and prove nothing.
+        # exercise the ENGINE gate (select_swap_pair). Repeater.can_swap now
+        # applies the same gate through the shared _pair_survives_tick, and
+        # TestNodeLegalityPredicates pins that side of it.
         self.assertIsNotNone(net.repeaters[1].select_swap_pair(
             net._positions, net._cutoffs, rng=np.random.default_rng(0)))
         res = net.swap(1)
@@ -1298,6 +1298,76 @@ class TestPorts(unittest.TestCase):
         net.entangle(0, 1)
         net.entangle(0, 1)
         self.assertFalse(net.repeaters[0].can_swap())
+
+
+class TestNodeLegalityPredicates(unittest.TestCase):
+    """`Repeater.can_swap` / `Repeater.can_purify` are the SINGLE definition of
+    what is legal at a node. They used to live on the env as
+    `_can_swap_from` / `_can_purify_from`, computed off a snapshot; owning them
+    on the node keeps the agent's action mask and the engine's own gate from
+    drifting apart."""
+
+    def test_can_swap_requires_one_left_and_one_right(self):
+        """Two links to the same side can never fuse: a BSM needs one LEFT and
+        one RIGHT. Guards the port model against a regression to 'any two
+        links'."""
+        net = _perfect_chain(4, n_ch=2, cutoff=50)
+        net.entangle(1, 0)          # one LEFT link at node 1
+        self.assertFalse(net.repeaters[1].can_swap())
+        net.entangle(1, 2)          # now one RIGHT link too
+        self.assertTrue(net.repeaters[1].can_swap())
+
+    def test_can_swap_false_when_fused_link_would_be_born_dead(self):
+        """age_L + age_R + 1 >= cutoff means the fused link expires at the very
+        next tick boundary, so the pair must not be offered to the agent (the
+        2026-07-12 cutoff leak). The constant is +1, not +2: under immediate
+        apply the fused link is created NOW with age_L + age_R and ages exactly
+        once at the boundary.
+
+        ages (2,3) at ec = 6 is the discriminating case: it sums to ec - 1, so
+        a too-permissive +0 gate would wrongly allow it, while both parents are
+        comfortably alive (3 < 6) so the refusal is about the FUSED link being
+        born dead, not about parent expiry.
+        """
+        net = _perfect_chain(4, n_ch=2, cutoff=6)
+        net.entangle(1, 0)
+        net.entangle(1, 2)
+        rep0, rep1, rep2 = net.repeaters[0], net.repeaters[1], net.repeaters[2]
+        self.assertTrue(rep1.can_swap())
+        # asymmetric ages cannot come from a uniform age_links() loop, so set
+        # them directly, on BOTH endpoints of each link.
+        qL = int(rep1.qubits_to(0)[0])
+        qR = int(rep1.qubits_to(2)[0])
+        rep1.age[qL] = 2
+        rep0.age[int(rep1.partner_qubit[qL])] = 2
+        rep1.age[qR] = 3
+        rep2.age[int(rep1.partner_qubit[qR])] = 3
+        # 2 + 3 + 1 == 6 == cutoff -> the fused link is born dead
+        self.assertFalse(rep1.can_swap())
+        # and the engine agrees: mask and gate must never disagree
+        self.assertIsNone(rep1.select_swap_pair(
+            net._positions, net._cutoffs, rng=np.random.default_rng(0)))
+
+    def test_can_swap_true_at_the_last_viable_age_sum(self):
+        """Pin the gate from below too: ages (2,2) at ec = 6 sum to 4, and
+        4 + 1 < 6, so the fused link survives its first boundary and the pair
+        MUST still be offered. A stale +2 gate would refuse it."""
+        net = _perfect_chain(4, n_ch=2, cutoff=6)
+        net.entangle(1, 0)
+        net.entangle(1, 2)
+        for _ in range(2):
+            net.age_links(discard_expired=True)          # both links at age 2
+        self.assertTrue(net.repeaters[1].can_swap())
+        self.assertIsNotNone(net.repeaters[1].select_swap_pair(
+            net._positions, net._cutoffs, rng=np.random.default_rng(0)))
+
+    def test_can_purify_needs_two_links_to_the_same_partner(self):
+        net = _perfect_chain(4, n_ch=2, cutoff=50)
+        net.entangle(1, 0)
+        net.entangle(1, 2)
+        self.assertFalse(net.repeaters[1].can_purify())   # one each side
+        net.entangle(1, 0)                                # second LEFT link
+        self.assertTrue(net.repeaters[1].can_purify())
 
 
 class TestPurifyCascade(unittest.TestCase):

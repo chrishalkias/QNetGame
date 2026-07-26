@@ -278,7 +278,11 @@ class RepeaterNetwork:
         result = {"success": False, "new_fidelity": 0.0,"partners": None, "reason": ""} # Dict[str, Any]
         rep = self.repeaters[r]
 
-        if not rep.can_swap():
+        # Structural precheck only. `can_swap` would ALSO apply the viability
+        # gate, which select_swap_pair applies two lines down, and would then
+        # report a born-dead pair as "insufficient_qubits" instead of
+        # "no_valid_pair".
+        if not rep.has_link_each_side():
             result["reason"] = "insufficient_qubits"; return result
 
         pair = rep.select_swap_pair(self._positions, self._cutoffs, rng=self.rng)

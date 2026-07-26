@@ -217,8 +217,9 @@ class QRNEnv:
                 feats[i, 1] = 0.0
                 feats[i, 2] = 0.0
             else:
-                feats[i, 1] = 1.0 if self._can_swap_from(ns) else 0.0
-                feats[i, 2] = 1.0 if self._can_purify_from(ns) else 0.0
+                rep = self.net.repeaters[i]
+                feats[i, 1] = 1.0 if rep.can_swap() else 0.0
+                feats[i, 2] = 1.0 if rep.can_purify() else 0.0
             feats[i, 3] = ns.p_gen
             feats[i, 4] = ns.p_swap
             if bool(occ.any()):
@@ -233,49 +234,6 @@ class QRNEnv:
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}
 
-#   ▄▄▄▄▄
-# ▄███████▄                         ▀▀
-# ███   ███ ██ ██ ▄█▀█▄ ████▄ ████▄ ██  ▄█▀█▄ ▄█▀▀▀
-# ███▄█▄███ ██ ██ ██▄█▀ ██ ▀▀ ██ ▀▀ ██  ██▄█▀ ▀███▄
-#  ▀█████▀  ▀██▀█ ▀█▄▄▄ ██    ██    ██▄ ▀█▄▄▄ ▄▄▄█▀
-#       ▀▀
-
-
-    def _can_swap_from(self, ns) -> bool:
-        """
-        True if ns has a VIABLE swap pair: one available LEFT link
-        (partner < node) and one available RIGHT link (partner > node) whose
-        fused link survives the tick boundary
-        (age_L + age_R + 1 < min(link_cutoff_L, link_cutoff_R)). Mirrors the
-        engine's left x right decision gate; exact for homogeneous cutoffs (the
-        only regime in use), and the engine stays authoritative regardless.
-        """
-        avail = np.flatnonzero(ns.occupied)
-        partners = ns.partner_node[avail]
-        real = partners != NO_PARTNER
-        avail, partners = avail[real], partners[real]
-        left = avail[partners < ns.node_id]
-        right = avail[partners > ns.node_id]
-        if left.size == 0 or right.size == 0:
-            return False
-        la = ns.age[left].astype(np.int64)[:, None]
-        ra = ns.age[right].astype(np.int64)[None, :]
-        lc = ns.link_cutoff[left].astype(np.int64)[:, None]
-        rc = ns.link_cutoff[right].astype(np.int64)[None, :]
-        viable = (la + ra + 1) < np.minimum(lc, rc)
-        return bool(np.any(viable))
-
-    def _can_purify_from(self, ns) -> bool:
-        """True if ns has ≥2 available qubits linked to the *same* partner.
-        `bincount` over partner ids beats `np.unique` (no sort) for tiny arrays."""
-        avail = ns.occupied
-        if int(avail.sum()) < 2:
-            return False
-        partners = ns.partner_node[avail]
-        counts = np.bincount(partners[partners != NO_PARTNER])
-        return bool(np.any(counts >= 2))
-
-
 # ▄▄▄      ▄▄▄
 # ████▄  ▄████             ▄▄
 # ███▀████▀███  ▀▀█▄ ▄█▀▀▀ ██ ▄█▀
@@ -283,20 +241,34 @@ class QRNEnv:
 # ███      ███ ▀█▄██ ▄▄▄█▀ ██ ▀█▄
 
 
-    def get_action_mask(self) -> np.ndarray:
-        """(N, 3) bool mask.  Source/dest: only NOOP."""
-        mask = np.zeros((self.N, N_ACTIONS), dtype=bool)
-        mask[:, NOOP] = True
+    def action_mask(self, node: int) -> np.ndarray:
+        """(3,) bool mask for ONE node: the decision-path primitive.
 
-        for i in range(self.N):
-            if self.is_target(i):
-                continue
-            ns = self.net.node_state(i)
-            if self._can_swap_from(ns):
-                mask[i, SWAP] = True
-            if self._can_purify_from(ns):
-                mask[i, PURIFY] = True
-        return mask
+        Only env.active_node ever decides, so building an (N,3) grid to read one
+        row was an O(N) pass per micro-step for O(1) of information. NOOP is
+        always legal so a masked argmax can never be all -inf; source and dest
+        are NOOP-only. Legality itself is defined once, on the node
+        (`Repeater.can_swap` / `can_purify`), so the mask cannot drift from the
+        engine's own gate.
+
+        Returns a fresh array every call, so callers may edit it in place (the
+        agent's `disable_actions`) without touching anyone else's mask.
+        """
+        m = np.zeros(N_ACTIONS, dtype=bool)
+        m[NOOP] = True
+        if self.is_target(node):
+            return m
+        rep = self.net.repeaters[node]
+        m[SWAP] = rep.can_swap()
+        m[PURIFY] = rep.can_purify()
+        return m
+
+    def get_action_mask(self) -> np.ndarray:
+        """(N, 3) bool mask for every node. Kept for the offline probes and the
+        tests, which want the whole grid; built FROM `action_mask` so there is
+        exactly one definition of what is legal. The decision path should call
+        `action_mask(node)` directly."""
+        return np.stack([self.action_mask(i) for i in range(self.N)])
 
 #  ▄▄▄▄▄▄▄
 # █████▀▀▀  ██

@@ -528,7 +528,7 @@ class QRNAgent:
                 # just runs to `done`.
                 while True:
                     r_node = env.active_node
-                    mask_row = env.get_action_mask()[r_node]
+                    mask_row = env.action_mask(r_node)
                     if disable_actions:
                         mask_row = mask_row.copy()
                         for d in disable_actions:
@@ -538,7 +538,7 @@ class QRNAgent:
                     next_obs, reward, done, info = env.step(a)
                     nai = (info["next_active_node"]
                            if info["next_active_node"] >= 0 else r_node)
-                    next_mask = env.get_action_mask()[nai].copy()
+                    next_mask = env.action_mask(nai)
                     if disable_actions:
                         for d in disable_actions:
                             next_mask[d] = False
