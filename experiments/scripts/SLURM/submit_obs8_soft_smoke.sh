@@ -33,14 +33,14 @@ export PYTHONPATH="$SLURM_SUBMIT_DIR/src:$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
 echo "Node: $(hostname)  seed: 1"
 
 python -u experiments/training/train.py \
-    --run_id "obs8_soft_smoke_s1" \
+    --run_id "obs8_soft_smoke_s2" \
     --seed 1 \
-    --episodes 100 --batch_size 64 --hidden 64 --lr 5e-4 \
+    --episodes 1000 --batch_size 64 --hidden 64 --lr 5e-4 \
     --max_steps 200 --gamma 0.995 \
     --n_lo 4 --n_hi 8 --n_ch 2 3 \
     --p_gen 0.7 --p_swap 0.6 \
-    --p_gen_std 0.10 --p_swap_std 0.10 \
-    --cutoff_lo 10 --cutoff_hi 30 \
+    --p_gen_std 0.20 --p_swap_std 0.20 \
+    --cutoff_lo 5 --cutoff_hi 10 \
     --prune_unwinnable \
     --topology chain --channel_loss 0.0 --F0 1.0 \
     --save_base_dir checkpoints

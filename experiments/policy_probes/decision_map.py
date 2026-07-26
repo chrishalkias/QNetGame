@@ -128,7 +128,7 @@ def run_plot(data, stem):
     fig, axes = plt.subplots(len(n_chs), 3, figsize=(12.5, 4.1 * len(n_chs)),
                              constrained_layout=True)
     axes = np.atleast_2d(axes)
-    letters = "ABCDEFGH"
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     for r, n_ch in enumerate(n_chs):
         row = data["rows"][n_ch]
         n_occ = np.asarray(_np(row["swap"])).shape[1]   # occupancy tiles = grid width (0..2*n_ch)
