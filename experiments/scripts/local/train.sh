@@ -1,11 +1,11 @@
 #!/bin/bash
 # Local training run
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../../.."
 
 export PYTHONPATH="$(pwd)/src:$(pwd):${PYTHONPATH:-}"
 
-python -u experiments/training/train.py \
+python3 -u experiments/training/train.py \
     --run_id local_run \
     --lr 5e-4 \
     --hidden 64 \
