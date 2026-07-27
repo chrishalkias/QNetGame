@@ -14,16 +14,11 @@ import argparse
 from experiments.comparisons import _common as C
 from experiments.mc_eval import mc_eval_stats
 
-PANELS = [("agent", "Agent"), ("purify_swap", "Purify-then-swap")]
-
 
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--augment_baselines", action="store_true",
-                    help="backfill missing baseline columns (swap_asap, purify_swap) "
-                         "into an existing --out json, keeping the agent column as-is")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
     ap.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
                     choices=["agent", "swap_asap", "purify_swap"],
@@ -66,27 +61,6 @@ def run_eval(a):
             rows.append(row)
             C.save_json(rows, a.out)
     print(f"saved -> {a.out}")
-
-
-def run_augment(a):
-    """Backfill baseline columns (no checkpoint, no agent re-eval). Resumable:
-    skips cells that already have the column."""
-    from rl_stack import policies
-    fns = {"swap_asap":   lambda env, obs: policies.swap_asap(env),
-           "purify_swap": lambda env, obs: policies.purify_then_swap(env)}
-    rows = C.load_json(a.out)
-    for name, fn in fns.items():
-        todo = [r for r in rows if r.get(f"T_{name}") is None]
-        print(f"{name}: {len(todo)}/{len(rows)} cells (H={a.horizon}, mc_eps={a.mc_eps})")
-        for r in todo:
-            s = mc_eval_stats(fn, r["N"], r["n_ch"], r["p_gen"], r["p_swap"],
-                              r["cutoff"], a.horizon, a.mc_eps)
-            T, se = s["T"], s["se"]
-            r[f"T_{name}"], r[f"se_{name}"] = T, se
-            print(f"  {name} p_gen={r['p_gen']:.1f} p_swap={r['p_swap']:.1f}  T={T:7.2f}",
-                  flush=True)
-            C.save_json(rows, a.out)
-    print(f"augmented -> {a.out}")
 
 
 def run_plot(a):
@@ -132,9 +106,7 @@ def run_plot(a):
 
 if __name__ == "__main__":
     a = parse_args()
-    if a.augment_baselines:
-        run_augment(a)
-    elif a.plot:
+    if a.plot:
         run_plot(a)
     else:
         run_eval(a)
