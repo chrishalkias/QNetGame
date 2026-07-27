@@ -32,7 +32,7 @@ ratio, not 80/20, is what it does, on purpose.
 
 Output: experiments/q_heuristic/q_conditional_{tag}.json (NOT
 results/probes/), because the cluster upload script
-(experiments/scripts/sync_upload.sh) syncs code under experiments/, not
+(experiments/scripts/sync.sh up) syncs code under experiments/, not
 results/; a later task that
 runs this policy on the cluster needs the JSON to already be there.
 

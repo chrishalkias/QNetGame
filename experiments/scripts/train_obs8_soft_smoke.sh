@@ -21,15 +21,8 @@
 # for p_gen). --prune_unwinnable may resample a bit more with inhomogeneity.
 # cpu-zen4 (beats GPU for this tiny GNN); 100 eps finishes in minutes.
 
-set -euo pipefail
-cd "$SLURM_SUBMIT_DIR"
-mkdir -p slurm_logs checkpoints
-
-eval "$(/usr/bin/modulecmd bash purge)" 2>/dev/null || true
-eval "$(/usr/bin/modulecmd bash load ALICE/default)"
-eval "$(/usr/bin/modulecmd bash load Python/3.11.3-GCCcore-12.3.0)"
-source "$HOME/.venvs/qnetgame/bin/activate"
-export PYTHONPATH="$SLURM_SUBMIT_DIR/src:$SLURM_SUBMIT_DIR:${PYTHONPATH:-}"
+source experiments/scripts/_setup.sh
+mkdir -p checkpoints
 echo "Node: $(hostname)  seed: 1"
 
 python -u experiments/training/train.py \
