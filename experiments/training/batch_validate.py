@@ -11,7 +11,7 @@ Produces two figures:
 
 Both metrics are:
     Δ% = (T_swap - T_agent) / T_swap * 100
-    positive → agent is faster;  negative → swap-ASAP is faster.
+    positive -> agent is faster;  negative -> swap-ASAP is faster.
 
 Usage
 -----
@@ -27,7 +27,6 @@ import argparse
 import itertools
 import json
 import os
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Sequence
@@ -45,15 +44,54 @@ from rl_stack.env_wrapper import QRNEnv
 from rl_stack.policies import swap_asap, purify_then_swap
 from experiments.mc_eval import make_agent_fn, mc_eval_stats
 
+# ----------------------------------------------------------------
+#  Constants: baselines and sweep grids
+# ----------------------------------------------------------------
+
 # baseline the agent is compared against (pilots always use swap-ASAP so the
 # adaptive cutoff/max_steps stay identical across baselines)
 BASELINES = {"swap_asap": swap_asap, "purify_swap": purify_then_swap}
 BASELINE_LABELS = {"swap_asap": "Swap-ASAP", "purify_swap": "Purify-then-swap"}
 
+# sweep 1: p_gen x p_swap, one panel per chain length
+COARSE_GRID = np.round(np.arange(0.1, 1.01, 0.1), 2)
+INSET_P_GEN = np.round(np.arange(0.05, 0.25, 0.03), 2)
+INSET_P_SWAP = np.round(np.arange(0.75, 1.01, 0.03), 2)
+NODE_COUNTS = [4, 10, 12, 15]
 
-# ═══════════════════════════════════════════════════════════════════
+# sweeps 2 and 3: fixed chain length, cutoff as an axis or pinned
+CUTOFF_GRID = [4, 6, 8, 10, 15, 20, 30, 50, 80]
+PGEN_GRID_SWEEP2 = np.round(np.arange(0.1, 1.01, 0.1), 2)
+SWEEP2_N = 8
+
+# horizon cap for the swap-ASAP pilots that size each cell
+PILOT_CAP = 800
+PILOT_EPISODES = 15
+
+
+# ----------------------------------------------------------------
+#  CLI
+# ----------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Batch validation: agent vs heuristic baselines over parameter sweeps")
+    p.add_argument("--model", type=str, required=True, help="path to policy.pth checkpoint")
+    p.add_argument("--episodes", type=int, default=200, help="episodes per (strategy, parameter) pair")
+    p.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility")
+    p.add_argument("--save_dir", type=str, default="results/batch_validate", help="directory for output plots and CSVs")
+    p.add_argument("--sweep", type=str, default="both", choices=["both", "pgen_pswap", "pgen_cutoff", "pgen_pswap_fixed_cutoff"], help="which sweep(s) to run; 'pgen_pswap_fixed_cutoff' is the old clean_check (p_gen x p_swap at fixed cutoff(s))")
+    p.add_argument("--sweep2_nodes", type=int, default=SWEEP2_N, help="chain length for the pgen_cutoff and pgen_pswap_fixed_cutoff sweeps")
+    p.add_argument("--cutoffs", type=str, default="20,80", help="comma-separated fixed cutoffs for the pgen_pswap_fixed_cutoff sweep")
+    p.add_argument("--node_counts", type=int, nargs="+", default=NODE_COUNTS, help="chain lengths for the pgen_pswap sweep (one heatmap panel each)")
+    p.add_argument("--baseline", type=str, default="swap_asap", choices=sorted(BASELINES), help="heuristic the agent is compared against in the pgen_pswap sweep")
+    p.add_argument("--fixed_cutoff", type=int, default=None, help="pin the cutoff for the pgen_pswap sweep instead of adapting it per cell (e.g. 1000000000 ~ infinite memory: no expiry, no decoherence); the horizon is still pilot-estimated per cell")
+    p.add_argument("--resume", action="store_true", help="skip work already present in the sweep CSV and append (applies to pgen_cutoff and pgen_pswap_fixed_cutoff; replaces the old partial_validate.py)")
+    return p.parse_args()
+
+
+# ----------------------------------------------------------------
 #  Adaptive parameter estimation
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
 
 def estimate_params(
     n_nodes: int,
@@ -61,14 +99,14 @@ def estimate_params(
     p_swap: float,
     *,
     n_ch: int = 4,
-    pilot_episodes: int = 15,
+    pilot_episodes: int = PILOT_EPISODES,
     success_target: float = 0.70,
-    step_cap: int = 800,
+    step_cap: int = PILOT_CAP,
     cutoff_floor: int = 4,
     cutoff_ceil: int = 120,
     rng: np.random.Generator | None = None,
 ) -> tuple[int, int]:
-    """Return (max_steps, cutoff) so that ≥ *success_target* of episodes
+    """Return (max_steps, cutoff) so that at least *success_target* of episodes
     reach end-to-end entanglement under the swap-ASAP strategy.
 
     Strategy
@@ -84,20 +122,16 @@ def estimate_params(
     rng = rng or np.random.default_rng()
     hops = n_nodes - 1
 
-    # Heuristic seed: expected steps to generate a single link ≈ 1/p_gen.
+    # Heuristic seed: expected steps to generate a single link ~ 1/p_gen.
     # A swap needs two links from distinct neighbours, so the bottleneck
     # repeater waits ~2/p_gen steps.  Cutoff must exceed that by a margin
     # proportional to chain length so interior links survive while the
     # edges are still being built.
     est_gen_time = max(1.0 / max(p_gen, 0.01), 1.0)
-    cutoff = int(np.clip(
-        3 * est_gen_time * hops,
-        cutoff_floor,
-        cutoff_ceil,
-    ))
+    cutoff = int(np.clip(3 * est_gen_time * hops, cutoff_floor, cutoff_ceil))
 
     for _attempt in range(4):
-        # generous initial max_steps — capped to keep pilots fast
+        # generous initial max_steps, capped to keep pilots fast
         max_steps = int(np.clip(
             6 * est_gen_time * hops / max(p_swap, 0.05),
             40,
@@ -119,7 +153,7 @@ def estimate_params(
             max_steps = min(int(q95 * 1.2) + 5, step_cap)
             return max_steps, cutoff
 
-        # Not enough successes – relax cutoff
+        # Not enough successes, relax the cutoff
         cutoff = min(cutoff * 2, cutoff_ceil)
 
     # Fallback: generous defaults
@@ -151,11 +185,10 @@ def _pilot_swap_asap(
             channel_loss=0.0,
             rng=np.random.default_rng(rng.integers(2**32)),
         )
-        obs = env.reset()
-        info = {}
+        env.reset()
+        info: dict = {}
         while not env.done and env.steps < max_steps:
-            actions = swap_asap(env)
-            obs, _, done, info = env.step(actions)
+            _, _, done, info = env.step(swap_asap(env))
             if done:
                 break
         fid = info.get("fidelity", 0.0)
@@ -164,9 +197,31 @@ def _pilot_swap_asap(
     return times
 
 
-# ═══════════════════════════════════════════════════════════════════
+def _pilot_max_steps(
+    n_nodes: int,
+    p_gen: float,
+    p_swap: float,
+    cutoff: int,
+    rng: np.random.Generator,
+) -> int:
+    """Horizon for one cell whose cutoff is already pinned.
+
+    Sizes max_steps from a swap-ASAP pilot at PILOT_CAP: the 95th percentile of
+    the delivering pilot episodes plus 20 %, or the cap when the pilot barely
+    delivers.
+    """
+    times = _pilot_swap_asap(n_nodes, p_gen, p_swap, cutoff,
+                             max_steps=PILOT_CAP, n_ch=4,
+                             n_episodes=PILOT_EPISODES, rng=rng)
+    successes = [t for t in times if t < PILOT_CAP]
+    if len(successes) >= 4:
+        return min(int(np.percentile(successes, 95) * 1.2) + 5, PILOT_CAP)
+    return PILOT_CAP
+
+
+# ----------------------------------------------------------------
 #  Episode runner
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
 
 @dataclass(frozen=True)
 class RunConfig:
@@ -189,7 +244,7 @@ def run_comparison(
 
     Returns dict with keys: "agent", "swap_asap" (mean delivery time T,
     censored at cfg.max_steps) and "agent_succ", "swap_asap_succ" (delivery
-    counts). The "swap_asap" key is generic - it holds whichever *baseline*
+    counts). The "swap_asap" key is generic, it holds whichever *baseline*
     was run.
 
     Both policies are evaluated on the SAME episode seed (drawn from *rng*),
@@ -213,21 +268,15 @@ def run_comparison(
 
 
 def relative_improvement(T_agent: float, T_swap: float) -> float:
-    """Δ% = (T_swap - T_agent) / T_swap * 100.  Positive → agent faster."""
+    """Δ% = (T_swap - T_agent) / T_swap * 100.  Positive -> agent faster."""
     if T_swap == 0:
         return 0.0
     return (T_swap - T_agent) / T_swap * 100.0
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  Sweep 1: p_gen × p_swap  for N = 4, 10, 12, 15
-# ═══════════════════════════════════════════════════════════════════
-
-COARSE_GRID = np.round(np.arange(0.1, 1.01, 0.1), 2)
-INSET_P_GEN = np.round(np.arange(0.05, 0.25, 0.03), 2)
-INSET_P_SWAP = np.round(np.arange(0.75, 1.01, 0.03), 2)
-NODE_COUNTS = [4, 10, 12, 15]
-
+# ----------------------------------------------------------------
+#  Sweep 1: p_gen x p_swap  for N = 4, 10, 12, 15
+# ----------------------------------------------------------------
 
 def _cell_params(
     n_nodes: int, p_gen: float, p_swap: float,
@@ -241,14 +290,35 @@ def _cell_params(
     """
     if fixed_cutoff is None:
         return estimate_params(n_nodes, p_gen, p_swap, rng=rng)
-    pilot_cap = 800
-    times = _pilot_swap_asap(n_nodes, p_gen, p_swap, fixed_cutoff,
-                             max_steps=pilot_cap, n_ch=4, n_episodes=15,
-                             rng=rng)
-    succ = [t for t in times if t < pilot_cap]
-    if len(succ) >= 4:
-        return min(int(np.percentile(succ, 95) * 1.2) + 5, pilot_cap), fixed_cutoff
-    return pilot_cap, fixed_cutoff
+    return _pilot_max_steps(n_nodes, p_gen, p_swap, fixed_cutoff, rng), fixed_cutoff
+
+
+def _sweep1_cell(
+    agent_fn,
+    n_nodes: int,
+    p_gen: float,
+    p_swap: float,
+    region: str,
+    n_episodes: int,
+    rng: np.random.Generator,
+    baseline: str,
+    fixed_cutoff: int | None,
+) -> dict:
+    """Evaluate one (N, p_gen, p_swap) cell of sweep 1 and return its row."""
+    max_steps, cutoff = _cell_params(n_nodes, p_gen, p_swap, rng, fixed_cutoff)
+    cfg = RunConfig(n_nodes, p_gen, p_swap, cutoff, max_steps)
+    res = run_comparison(agent_fn, cfg, n_episodes, rng, baseline=baseline)
+    return {
+        "N": n_nodes,
+        "p_gen": p_gen,
+        "p_swap": p_swap,
+        "delta_pct": relative_improvement(res["agent"], res["swap_asap"]),
+        "both_fail": res["agent_succ"] == 0 and res["swap_asap_succ"] == 0,
+        "region": region,
+        "cutoff": cutoff,
+        "max_steps": max_steps,
+        "baseline": baseline,
+    }
 
 
 def sweep_pgen_pswap(
@@ -262,88 +332,33 @@ def sweep_pgen_pswap(
 ) -> pd.DataFrame:
     """Return a DataFrame with columns [N, p_gen, p_swap, delta_pct, ...].
 
-    Saves incrementally after each N value so partial results survive
-    job timeouts.
+    Runs a coarse (p_gen, p_swap) grid plus a fine inset around
+    p_gen ~ 0.1, p_swap ~ 0.9 for every N. The CSV is rewritten after every
+    cell so a cluster walltime kill loses nothing.
     """
+    csv_path = os.path.join(save_dir, "sweep_pgen_pswap.csv")
+    regions = (("coarse", list(itertools.product(COARSE_GRID, COARSE_GRID))),
+               ("inset", list(itertools.product(INSET_P_GEN, INSET_P_SWAP))))
+    total = len(node_counts) * sum(len(cells) for _, cells in regions)
     rows: list[dict] = []
-    total = len(node_counts) * (
-        len(COARSE_GRID) ** 2 + len(INSET_P_GEN) * len(INSET_P_SWAP)
-    )
     done_count = 0
 
     for n_nodes in node_counts:
-        # -- coarse grid --
-        for p_gen, p_swap in itertools.product(COARSE_GRID, COARSE_GRID):
-            done_count += 1
-            _log_progress("sweep1", done_count, total, n_nodes, p_gen, p_swap)
-
-            max_steps, cutoff = _cell_params(
-                n_nodes, p_gen, p_swap, rng, fixed_cutoff,
-            )
-            cfg = RunConfig(n_nodes, p_gen, p_swap, cutoff, max_steps)
-            res = run_comparison(agent_fn, cfg, n_episodes, rng,
-                                 baseline=baseline)
-            both_fail = (res["agent_succ"] == 0 and res["swap_asap_succ"] == 0)
-            rows.append({
-                "N": n_nodes,
-                "p_gen": p_gen,
-                "p_swap": p_swap,
-                "delta_pct": relative_improvement(res["agent"], res["swap_asap"]),
-                "both_fail": both_fail,
-                "region": "coarse",
-                "cutoff": cutoff,
-                "max_steps": max_steps,
-                "baseline": baseline,
-            })
-            # incremental save every cell — cluster walltime kills lose nothing
-            pd.DataFrame(rows).to_csv(
-                os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False)
-
-        # -- inset (fine grid around p_gen ~ 0.1, p_swap ~ 0.9) --
-        for p_gen, p_swap in itertools.product(INSET_P_GEN, INSET_P_SWAP):
-            done_count += 1
-            _log_progress("sweep1", done_count, total, n_nodes, p_gen, p_swap)
-
-            max_steps, cutoff = _cell_params(
-                n_nodes, p_gen, p_swap, rng, fixed_cutoff,
-            )
-            cfg = RunConfig(n_nodes, p_gen, p_swap, cutoff, max_steps)
-            res = run_comparison(agent_fn, cfg, n_episodes, rng,
-                                 baseline=baseline)
-            both_fail = (res["agent_succ"] == 0 and res["swap_asap_succ"] == 0)
-            rows.append({
-                "N": n_nodes,
-                "p_gen": p_gen,
-                "p_swap": p_swap,
-                "delta_pct": relative_improvement(res["agent"], res["swap_asap"]),
-                "both_fail": both_fail,
-                "region": "inset",
-                "cutoff": cutoff,
-                "max_steps": max_steps,
-                "baseline": baseline,
-            })
-            # incremental save every cell — cluster walltime kills lose nothing
-            pd.DataFrame(rows).to_csv(
-                os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False)
-
-        # -- incremental save after each N --
-        df_partial = pd.DataFrame(rows)
-        df_partial.to_csv(
-            os.path.join(save_dir, "sweep_pgen_pswap.csv"), index=False,
-        )
+        for region, cells in regions:
+            for p_gen, p_swap in cells:
+                done_count += 1
+                _log_progress("sweep1", done_count, total, n_nodes, p_gen, p_swap)
+                rows.append(_sweep1_cell(agent_fn, n_nodes, p_gen, p_swap, region,
+                                         n_episodes, rng, baseline, fixed_cutoff))
+                pd.DataFrame(rows).to_csv(csv_path, index=False)
         print(f"\n[checkpoint] saved sweep1 through N={n_nodes}")
 
     return pd.DataFrame(rows)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  Sweep 2: p_gen × cutoff   (p_swap = 1 fixed)
-# ═══════════════════════════════════════════════════════════════════
-
-CUTOFF_GRID = [4, 6, 8, 10, 15, 20, 30, 50, 80]
-PGEN_GRID_SWEEP2 = np.round(np.arange(0.1, 1.01, 0.1), 2)
-SWEEP2_N = 8  # fixed chain length for sweep 2
-
+# ----------------------------------------------------------------
+#  Sweep 2: p_gen x cutoff   (p_swap = 1 fixed)
+# ----------------------------------------------------------------
 
 def sweep_pgen_cutoff(
     agent_fn,
@@ -384,19 +399,10 @@ def sweep_pgen_cutoff(
             done_count += 1
             _log_progress("sweep2", done_count, total, n_nodes, p_gen, 1.0)
 
-            # Estimate max_steps only (cutoff is the independent variable here)
-            pilot_cap = 800
-            pilot_times = _pilot_swap_asap(
-                n_nodes, p_gen, p_swap=1.0, cutoff=cutoff,
-                max_steps=pilot_cap, n_ch=4, n_episodes=15, rng=rng,
-            )
-            successes = [t for t in pilot_times if t < pilot_cap]
-            if len(successes) >= 4:
-                max_steps = min(int(np.percentile(successes, 95) * 1.2) + 5, pilot_cap)
-            else:
-                max_steps = pilot_cap
-
-            cfg = RunConfig(n_nodes, p_gen, p_swap=1.0, cutoff=cutoff, max_steps=max_steps)
+            # cutoff is the independent variable here, estimate only max_steps
+            max_steps = _pilot_max_steps(n_nodes, p_gen, 1.0, cutoff, rng)
+            cfg = RunConfig(n_nodes, p_gen, p_swap=1.0, cutoff=cutoff,
+                            max_steps=max_steps)
             res = run_comparison(agent_fn, cfg, n_episodes, rng)
             rows.append({
                 "p_gen": p_gen,
@@ -414,13 +420,13 @@ def sweep_pgen_cutoff(
     return pd.concat([df_existing, pd.DataFrame(rows)], ignore_index=True)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  Sweep 3: p_gen × p_swap at FIXED cutoff(s)   (the old clean_check)
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
+#  Sweep 3: p_gen x p_swap at FIXED cutoff(s)   (the old clean_check)
+# ----------------------------------------------------------------
 #
 # Disentangles p_swap from cutoff: sweep 1 auto-estimates a cutoff per cell
 # (confounding the two), whereas this holds the memory cutoff FIXED and sweeps
-# p_gen × p_swap, one panel per cutoff value.  Tests the literature prediction
+# p_gen x p_swap, one panel per cutoff value.  Tests the literature prediction
 # (Inesta & Wehner, npj QI 2023) that the agent's advantage over swap-ASAP
 # grows as p_swap drops.
 
@@ -435,7 +441,7 @@ def sweep_pgen_pswap_fixed_cutoff(
 ) -> pd.DataFrame:
     """Return a DataFrame with columns [cutoff, p_gen, p_swap, delta_pct].
 
-    Sweeps p_gen × p_swap (COARSE_GRID) at each fixed cutoff.  Saves
+    Sweeps p_gen x p_swap (COARSE_GRID) at each fixed cutoff.  Saves
     incrementally after each (cutoff, p_gen) column; with *resume* = True,
     skips columns already present in sweep_fixed_cutoff.csv.
     """
@@ -467,17 +473,7 @@ def sweep_pgen_pswap_fixed_cutoff(
                           n_nodes, p_gen, p_swap)
 
             # cutoff is fixed; estimate only max_steps from a swap-ASAP pilot
-            pilot_cap = 800
-            pilot_times = _pilot_swap_asap(
-                n_nodes, p_gen, p_swap, cutoff,
-                max_steps=pilot_cap, n_ch=4, n_episodes=15, rng=rng,
-            )
-            succ = [t for t in pilot_times if t < pilot_cap]
-            if len(succ) >= 4:
-                max_steps = min(int(np.percentile(succ, 95) * 1.2) + 5, pilot_cap)
-            else:
-                max_steps = pilot_cap
-
+            max_steps = _pilot_max_steps(n_nodes, p_gen, p_swap, cutoff, rng)
             cfg = RunConfig(n_nodes, float(p_gen), float(p_swap),
                             cutoff, max_steps)
             res = run_comparison(agent_fn, cfg, n_episodes, rng)
@@ -499,9 +495,9 @@ def sweep_pgen_pswap_fixed_cutoff(
     return pd.concat([df_existing, pd.DataFrame(rows)], ignore_index=True)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
 #  Plotting
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
 
 def _build_fail_mask(sub: pd.DataFrame, index_col: str, columns_col: str) -> pd.DataFrame:
     """Build a pivot of booleans: True where both strategies fail.
@@ -515,7 +511,7 @@ def _build_fail_mask(sub: pd.DataFrame, index_col: str, columns_col: str) -> pd.
             index=index_col, columns=columns_col,
             values="both_fail", aggfunc="any",
         )
-    # No both_fail column — cannot distinguish ties from mutual failure
+    # No both_fail column, cannot distinguish ties from mutual failure
     pivot = sub.pivot_table(
         index=index_col, columns=columns_col,
         values="delta_pct", aggfunc="mean",
@@ -590,7 +586,7 @@ def _draw_heatmap(
             annot=annot,
             fmt="",
             annot_kws={"fontsize": fontsize, "color": "#666666",
-                        "fontweight": "bold"},
+                       "fontweight": "bold"},
             cbar=False,
             linewidths=0.4,
             linecolor="white",
@@ -675,7 +671,8 @@ def plot_pgen_pswap(df: pd.DataFrame, save_dir: str,
     print(f"[plot] saved {path_z}")
 
 
-def plot_pgen_cutoff(df: pd.DataFrame, save_dir: str) -> None:
+def plot_pgen_cutoff(df: pd.DataFrame, save_dir: str,
+                     n_nodes: int = SWEEP2_N) -> None:
     """Single heatmap: p_gen vs cutoff (p_swap = 1 fixed)."""
     pivot = df.pivot_table(
         index="cutoff", columns="p_gen", values="delta_pct", aggfunc="mean",
@@ -701,7 +698,7 @@ def plot_pgen_cutoff(df: pd.DataFrame, save_dir: str) -> None:
         linecolor="white",
     )
     ax.set_title(
-        f"Agent vs Swap-ASAP  (N = {SWEEP2_N}, $p_{{swap}}$ = 1)\n"
+        f"Agent vs Swap-ASAP  (N = {n_nodes}, $p_{{swap}}$ = 1)\n"
         "positive (blue) = agent faster",
         fontsize=12,
     )
@@ -749,9 +746,9 @@ def plot_fixed_cutoff(
     print(f"[plot] saved {path}")
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
 #  Helpers
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
 
 def _log_progress(
     sweep: str, done: int, total: int,
@@ -767,66 +764,69 @@ def _log_progress(
         print()
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  CLI
-# ═══════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------
+#  Entry point
+# ----------------------------------------------------------------
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Batch validation: agent vs swap-ASAP parameter sweeps",
-    )
-    p.add_argument(
-        "--model", type=str, required=True,
-        help="Path to policy.pth checkpoint",
-    )
-    p.add_argument(
-        "--episodes", type=int, default=200,
-        help="Episodes per (strategy, parameter) pair",
-    )
-    p.add_argument(
-        "--seed", type=int, default=42,
-        help="RNG seed for reproducibility",
-    )
-    p.add_argument(
-        "--save_dir", type=str, default="results/batch_validate",
-        help="Directory for output plots and CSVs",
-    )
-    p.add_argument(
-        "--sweep", type=str, default="both",
-        choices=["both", "pgen_pswap", "pgen_cutoff", "pgen_pswap_fixed_cutoff"],
-        help="Which sweep(s) to run. 'pgen_pswap_fixed_cutoff' is the old "
-             "clean_check (p_gen × p_swap at fixed cutoff(s)).",
-    )
-    p.add_argument(
-        "--sweep2_nodes", type=int, default=SWEEP2_N,
-        help="Chain length for the pgen_cutoff and pgen_pswap_fixed_cutoff sweeps",
-    )
-    p.add_argument(
-        "--cutoffs", type=str, default="20,80",
-        help="Comma-separated fixed cutoffs for the pgen_pswap_fixed_cutoff sweep",
-    )
-    p.add_argument(
-        "--node_counts", type=int, nargs="+", default=NODE_COUNTS,
-        help="Chain lengths for the pgen_pswap sweep (one heatmap panel each)",
-    )
-    p.add_argument(
-        "--baseline", type=str, default="swap_asap",
-        choices=sorted(BASELINES),
-        help="Heuristic the agent is compared against in the pgen_pswap sweep",
-    )
-    p.add_argument(
-        "--fixed_cutoff", type=int, default=None,
-        help="Pin the cutoff for the pgen_pswap sweep instead of adapting it "
-             "per cell (e.g. 1000000000 ~ infinite memory: no expiry, no "
-             "decoherence). Horizon is still pilot-estimated per cell.",
-    )
-    p.add_argument(
-        "--resume", action="store_true",
-        help="Skip work already present in the sweep CSV and append "
-             "(applies to pgen_cutoff and pgen_pswap_fixed_cutoff; "
-             "replaces the old partial_validate.py).",
-    )
-    return p.parse_args()
+def _run_sweep1(args, agent_fn, rng) -> dict:
+    """Run sweep 1, write its CSV and figures, return its results.json block."""
+    print(f"\n== Sweep 1: p_gen x p_swap (N = {args.node_counts}, "
+          f"baseline = {args.baseline}) ==")
+    df = sweep_pgen_pswap(agent_fn, args.episodes, rng, save_dir=args.save_dir,
+                          node_counts=args.node_counts, baseline=args.baseline,
+                          fixed_cutoff=args.fixed_cutoff)
+    csv_path = os.path.join(args.save_dir, "sweep_pgen_pswap.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"[data] saved {csv_path}")
+    plot_pgen_pswap(df, args.save_dir, node_counts=args.node_counts,
+                    baseline=args.baseline)
+    return {
+        "description": f"p_gen x p_swap sweep for N = {args.node_counts}, "
+                       f"agent vs {args.baseline}",
+        "node_counts": args.node_counts,
+        "baseline": args.baseline,
+        "fixed_cutoff": args.fixed_cutoff,
+        "results": df.to_dict(orient="records"),
+    }
+
+
+def _run_sweep2(args, agent_fn, rng) -> dict:
+    """Run sweep 2, write its CSV and figure, return its results.json block."""
+    n_nodes = args.sweep2_nodes
+    print(f"\n== Sweep 2: p_gen x cutoff (N = {n_nodes}, p_swap = 1) ==")
+    df = sweep_pgen_cutoff(agent_fn, args.episodes, rng, n_nodes=n_nodes,
+                           save_dir=args.save_dir, resume=args.resume)
+    csv_path = os.path.join(args.save_dir, "sweep_pgen_cutoff.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"[data] saved {csv_path}")
+    plot_pgen_cutoff(df, args.save_dir, n_nodes=n_nodes)
+    return {
+        "description": f"p_gen x cutoff sweep (N = {n_nodes}, p_swap = 1)",
+        "n_nodes": n_nodes,
+        "results": df.to_dict(orient="records"),
+    }
+
+
+def _run_sweep3(args, agent_fn, rng) -> dict:
+    """Run sweep 3, write its CSV and figure, return its results.json block."""
+    cutoffs = [int(c) for c in args.cutoffs.split(",") if c.strip()]
+    n_nodes = args.sweep2_nodes
+    print(f"\n== Sweep 3: p_gen x p_swap at FIXED cutoff(s) {cutoffs} "
+          f"(N = {n_nodes}) ==")
+    df = sweep_pgen_pswap_fixed_cutoff(
+        agent_fn, args.episodes, rng, cutoffs, n_nodes=n_nodes,
+        save_dir=args.save_dir, resume=args.resume)
+    csv_path = os.path.join(args.save_dir, "sweep_fixed_cutoff.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"[data] saved {csv_path}")
+    plot_fixed_cutoff(df, cutoffs, n_nodes, args.save_dir)
+    return {
+        "description": f"p_gen x p_swap at fixed cutoff(s) {cutoffs} "
+                       f"(N = {n_nodes})",
+        "cutoffs": cutoffs,
+        "n_nodes": n_nodes,
+        "results": df.to_dict(orient="records"),
+    }
 
 
 def main() -> None:
@@ -848,64 +848,12 @@ def main() -> None:
     }
 
     if args.sweep in ("both", "pgen_pswap"):
-        print(f"\n══ Sweep 1: p_gen × p_swap (N = {args.node_counts}, "
-              f"baseline = {args.baseline}) ══")
-        df1 = sweep_pgen_pswap(agent_fn, args.episodes, rng, save_dir=args.save_dir,
-                               node_counts=args.node_counts,
-                               baseline=args.baseline,
-                               fixed_cutoff=args.fixed_cutoff)
-        csv1 = os.path.join(args.save_dir, "sweep_pgen_pswap.csv")
-        df1.to_csv(csv1, index=False)
-        print(f"[data] saved {csv1}")
-        plot_pgen_pswap(df1, args.save_dir, node_counts=args.node_counts,
-                        baseline=args.baseline)
-
-        results_json["sweeps"]["pgen_pswap"] = {
-            "description": f"p_gen x p_swap sweep for N = {args.node_counts}, "
-                           f"agent vs {args.baseline}",
-            "node_counts": args.node_counts,
-            "baseline": args.baseline,
-            "fixed_cutoff": args.fixed_cutoff,
-            "results": df1.to_dict(orient="records"),
-        }
-
+        results_json["sweeps"]["pgen_pswap"] = _run_sweep1(args, agent_fn, rng)
     if args.sweep in ("both", "pgen_cutoff"):
-        global SWEEP2_N
-        SWEEP2_N = args.sweep2_nodes
-        print(f"\n══ Sweep 2: p_gen × cutoff (N = {SWEEP2_N}, p_swap = 1) ══")
-        df2 = sweep_pgen_cutoff(agent_fn, args.episodes, rng, n_nodes=SWEEP2_N,
-                                save_dir=args.save_dir, resume=args.resume)
-        csv2 = os.path.join(args.save_dir, "sweep_pgen_cutoff.csv")
-        df2.to_csv(csv2, index=False)
-        print(f"[data] saved {csv2}")
-        plot_pgen_cutoff(df2, args.save_dir)
-
-        results_json["sweeps"]["pgen_cutoff"] = {
-            "description": f"p_gen x cutoff sweep (N = {SWEEP2_N}, p_swap = 1)",
-            "n_nodes": SWEEP2_N,
-            "results": df2.to_dict(orient="records"),
-        }
-
+        results_json["sweeps"]["pgen_cutoff"] = _run_sweep2(args, agent_fn, rng)
     if args.sweep == "pgen_pswap_fixed_cutoff":
-        cutoffs = [int(c) for c in args.cutoffs.split(",") if c.strip()]
-        n_nodes = args.sweep2_nodes
-        print(f"\n══ Sweep 3: p_gen × p_swap at FIXED cutoff(s) {cutoffs} "
-              f"(N = {n_nodes}) ══")
-        dff = sweep_pgen_pswap_fixed_cutoff(
-            agent_fn, args.episodes, rng, cutoffs, n_nodes=n_nodes,
-            save_dir=args.save_dir, resume=args.resume)
-        csvf = os.path.join(args.save_dir, "sweep_fixed_cutoff.csv")
-        dff.to_csv(csvf, index=False)
-        print(f"[data] saved {csvf}")
-        plot_fixed_cutoff(dff, cutoffs, n_nodes, args.save_dir)
-
-        results_json["sweeps"]["pgen_pswap_fixed_cutoff"] = {
-            "description": f"p_gen x p_swap at fixed cutoff(s) {cutoffs} "
-                           f"(N = {n_nodes})",
-            "cutoffs": cutoffs,
-            "n_nodes": n_nodes,
-            "results": dff.to_dict(orient="records"),
-        }
+        results_json["sweeps"]["pgen_pswap_fixed_cutoff"] = _run_sweep3(
+            args, agent_fn, rng)
 
     json_path = os.path.join(args.save_dir, "results.json")
     with open(json_path, "w") as f:
