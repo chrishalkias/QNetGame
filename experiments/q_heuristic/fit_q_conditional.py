@@ -9,26 +9,26 @@ Context: `hybrid_policy.make_hybrid_fn` already tests whether a single
 constant q recovers the trained agent's edge over purify_then_swap in the
 both-legal branch. This script asks the harder question first: how much
 signal is actually IN the state at the moment both PURIFY and SWAP are
-legal? `experiments/policy_probes/purify_map.py::model_fits` already found
-a logistic ceiling of ~0.63 (s1) / ~0.71 (s3) test AUC over ALL purify-legal
-decisions (both-legal and purify-only mixed); this script isolates the
+legal? The purify_map probe's model-search half (since removed, that module
+is a collector now) recorded a logistic ceiling of ~0.63 (s1) / ~0.71 (s3)
+test AUC over ALL purify-legal decisions (both-legal and purify-only
+mixed); this script isolates the
 both-legal subset (`can_swap == 1.0`, i.e. SWAP was ALSO legal, so the
 decision is genuinely a choice) and fits a fresh model on exactly that
 subset, so a later task can graft `q(state)` into the hybrid policy in
 place of a constant q.
 
 Input: results/probes/omni_v3_20k_{tag}/purify_map.npz, produced by
-experiments/policy_probes/purify_map.py (X: (n,35) float32, columns: (35,)
+experiments/policy_probes/purify_map.py (X: (n,31) float32, columns: (31,)
 str, label: (n,) int8 in {0,1} = chose PURIFY, episode: (n,) int32, cell:
 (n,) str in {"train","testbed"}).
 
-Split: episode-level, mirroring
-experiments/policy_probes/purify_map.py::_episode_split EXACTLY (75/25 by
-unique episode id, shuffled with a seeded RNG) so the resulting test AUC is
-directly comparable to the 0.63/0.71 ceilings recorded there. (The
-`_episode_split` name says "the split used for episode-level holdout"; the
-75/25 ratio, not 80/20, is what the function actually does, and that is
-what this script mirrors, on purpose, over the wording.)
+Split: episode-level, mirroring the split the purify_map probe used when
+those ceilings were recorded EXACTLY (75/25 by unique episode id, shuffled
+with a seeded RNG) so the resulting test AUC is directly comparable to the
+0.63/0.71 ceilings. That probe-side split function went away with its
+model-search half, so the copy below is now the only one left; the 75/25
+ratio, not 80/20, is what it does, on purpose.
 
 Output: experiments/q_heuristic/q_conditional_{tag}.json (NOT
 results/probes/), because the cluster upload script (scripts/sync/
@@ -38,7 +38,7 @@ runs this policy on the cluster needs the JSON to already be there.
 Runtime contract (numpy-only, no sklearn needed to USE the model):
     z = coef . ((x - mu) / sigma) + intercept
     q = 1 / (1 + exp(-z))
-`x` is the 34-feature row in `columns` order (all purify_map columns except
+`x` is the 30-feature row in `columns` order (all purify_map columns except
 `can_swap`, which is constant 1.0 in the both-legal subset and therefore
 carries no information as a feature). `mu`/`sigma` are the TRAIN-split
 per-feature mean/std (std==0 clamped to 1.0 so the affine map is always
@@ -67,8 +67,8 @@ def parse_args(argv=None):
                     help="run tags; each maps to "
                          "results/probes/omni_v3_20k_<tag>/purify_map.npz")
     ap.add_argument("--seed", type=int, default=0,
-                    help="episode-split seed, must match purify_map.py's "
-                         "_episode_split call (seed 0 there)")
+                    help="episode-split seed, 0 matches the split used for the "
+                         "recorded purify_map ceilings")
     ap.add_argument("--max_iter", type=int, default=2000,
                     help="LogisticRegression max_iter")
     ap.add_argument("--npz_dir", default="results/probes",
@@ -82,8 +82,8 @@ def parse_args(argv=None):
 
 
 # ----------------------------------------------------------------------------
-# episode split (mirrors experiments/policy_probes/purify_map.py::_episode_split
-# EXACTLY: 0.75 cut, same RNG call sequence, so results are seed-comparable)
+# episode split (mirrors the split the purify_map probe used when the recorded
+# ceilings were measured: 0.75 cut, same RNG call sequence, seed-comparable)
 # ----------------------------------------------------------------------------
 def _episode_split(ep, seed):
     rng = np.random.default_rng(seed)
@@ -164,7 +164,7 @@ def fit_one(tag, args):
     expected = {"s1": 0.63, "s3": 0.71}.get(tag)
     if expected is not None and abs(test_auc - expected) > 0.03:
         print(f"WARNING: tag={tag} test_auc={test_auc:.4f} is more than 0.03 "
-              f"away from the recorded ceiling {expected} (purify_map.py, "
+              f"away from the recorded ceiling {expected} (purify_map probe, "
               f"all purify-legal decisions, not just both-legal; some drift "
               f"is expected but a large one may signal a split/feature bug)")
 

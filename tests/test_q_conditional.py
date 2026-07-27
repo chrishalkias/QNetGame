@@ -94,19 +94,28 @@ def test_saturated_case_matches_purify_then_swap(tmp_path):
 
 
 def test_real_artifact_smoke():
-    """If the fitted s3 artifact is present, roll one episode: every action
+    """If a fitted s3 artifact is present, roll one episode: every action
     is a valid discrete action, and if any both-legal state occurred, at
-    least one PURIFY was drawn at the fitted q-model rate."""
+    least one PURIFY was drawn at the fitted q-model rate.
+
+    The shipped s1/s3 artifacts were parked under
+    checkpoints/legacy/q_conditional_stale_2026-07/ (gitignored) because their
+    columns predate both the obs8 reduction and the A6 link_urgency ->
+    normalized_age rename; see the README there. This test therefore normally
+    SKIPS, and only runs again once a refit lands at the path below."""
     coef_path = "experiments/q_heuristic/q_conditional_s3.json"
     if not os.path.exists(coef_path):
-        pytest.skip("experiments/q_heuristic/q_conditional_s3.json not present")
+        pytest.skip("no fitted q_conditional_s3.json at "
+                    "experiments/q_heuristic/; the stale one is parked under "
+                    "checkpoints/legacy/q_conditional_stale_2026-07/ and must "
+                    "be refit, not migrated")
 
     try:
         cond_fn = make_conditional_fn(coef_path, seed=42, p_gen=0.4, p_swap=0.8, cutoff=30)
     except ValueError:
-        pytest.skip("q_conditional_s3.json columns predate the obs8 schema "
-                     "(mean_fidelity/in_endnode/frac_available removed); "
-                     "refit before re-enabling this smoke test")
+        pytest.skip("q_conditional_s3.json columns do not match the current "
+                    "purify_map.COLUMNS schema; refit before re-enabling "
+                    "this smoke test")
     env = QRNEnv(max_steps=H, rng=np.random.default_rng(123), **ENV_KW)
     obs = env.reset()
 

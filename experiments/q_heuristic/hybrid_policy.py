@@ -78,8 +78,8 @@ def make_conditional_fn(coef_path, seed, p_gen, p_swap, cutoff):
 
         q = sigmoid(coef . ((x - mu) / sigma) + intercept)
 
-    `x` is the 34-feature row (`experiments.policy_probes.purify_map`'s
-    35-column schema minus `can_swap`, which is constant 1.0 in the
+    `x` is the 30-feature row (`experiments.policy_probes.purify_map`'s
+    31-column schema minus `can_swap`, which is constant 1.0 in the
     both-legal subset) built by `purify_map.node_row` at decision time and
     reordered to the JSON's `columns` BY NAME.
 
@@ -106,7 +106,7 @@ def make_conditional_fn(coef_path, seed, p_gen, p_swap, cutoff):
     sigma = np.asarray(data["sigma"], dtype=np.float64)
     coef = np.asarray(data["coef"], dtype=np.float64)
     intercept = float(data["intercept"])
-    # map the JSON's 34 columns -> positions in purify_map.COLUMNS (35), by
+    # map the JSON's 30 columns -> positions in purify_map.COLUMNS (31), by
     # name, never by position (purify_map.node_row's row is COLUMNS-ordered).
     col_idx = np.asarray([purify_map.COLUMNS.index(c) for c in columns],
                          dtype=np.int64)
