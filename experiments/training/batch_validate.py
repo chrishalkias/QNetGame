@@ -360,6 +360,20 @@ def sweep_pgen_pswap(
 #  Sweep 2: p_gen x cutoff   (p_swap = 1 fixed)
 # ----------------------------------------------------------------
 
+def _concat_rows(df_existing: pd.DataFrame, rows: list[dict]) -> pd.DataFrame:
+    """Append *rows* to *df_existing*, skipping empty frames.
+
+    The non-resume path seeds df_existing with a column-only DataFrame, whose
+    columns are dtype object. Concatenating it in would make the whole result
+    object-dtyped, and seaborn then rejects the pivot with "Image data of
+    dtype object cannot be converted to float" at plot time.
+    """
+    frames = [df for df in (df_existing, pd.DataFrame(rows)) if not df.empty]
+    if not frames:
+        return df_existing
+    return pd.concat(frames, ignore_index=True)
+
+
 def sweep_pgen_cutoff(
     agent_fn,
     n_episodes: int,
@@ -411,13 +425,12 @@ def sweep_pgen_cutoff(
             })
 
         # -- incremental save after each p_gen --
-        df_partial = pd.concat(
-            [df_existing, pd.DataFrame(rows)], ignore_index=True)
+        df_partial = _concat_rows(df_existing, rows)
         df_partial.to_csv(csv_path, index=False)
         print(f"\n[checkpoint] saved sweep2 through p_gen={p_gen} "
               f"({len(df_partial)} rows)")
 
-    return pd.concat([df_existing, pd.DataFrame(rows)], ignore_index=True)
+    return _concat_rows(df_existing, rows)
 
 
 # ----------------------------------------------------------------
@@ -486,13 +499,12 @@ def sweep_pgen_pswap_fixed_cutoff(
             })
 
         # incremental save after each (cutoff, p_gen) column
-        df_partial = pd.concat(
-            [df_existing, pd.DataFrame(rows)], ignore_index=True)
+        df_partial = _concat_rows(df_existing, rows)
         df_partial.to_csv(csv_path, index=False)
         print(f"\n[checkpoint] saved fixed-cutoff through cutoff={cutoff}, "
               f"p_gen={p_gen} ({len(df_partial)} rows)")
 
-    return pd.concat([df_existing, pd.DataFrame(rows)], ignore_index=True)
+    return _concat_rows(df_existing, rows)
 
 
 # ----------------------------------------------------------------
