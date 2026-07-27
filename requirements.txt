@@ -1,6 +1,5 @@
 matplotlib==3.10.8
-numpy>=1.26            # NetSquid pin removed
+numpy>=1.26
 torch==2.6.0
 torch_geometric==2.7.0
-networkx==3.6.1
 pytest==9.0.2
