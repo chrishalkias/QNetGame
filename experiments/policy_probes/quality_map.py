@@ -2,8 +2,8 @@
 --------------------------------------------------------------------------------
 Average agent decisions over the operation-quality plane (p_swap x p_gen).
 
-Top row: three panels over a p_s (x) by p_e (y) grid, 0.1-wide bins, aggregated
-across the whole training distribution (all sizes / n_ch):
+Top row: three panels over a p_s (x) by p_e (y) grid, 0.05-wide bins (--bin),
+aggregated across the whole training distribution (all sizes / n_ch):
   (A) P(PURIFY | can_purify)   (B) P(SWAP | can_swap)   (C) P(SWAP)-P(PURIFY), both
 Bottom row: the SAME three panels, each split into a 2x2 block conditioned on the
 normalized link age u in {0.0, 0.2, 0.4, 0.6} (reading order TL, TR, BL, BR), so the p_e/p_s
@@ -15,6 +15,16 @@ fills beyond the [0.4,0.9] episode-mean range. Tiles greyed where under-sampled.
 
   compute: PYTHONPATH=src:. python experiments/policy_probes/quality_map.py --ckpt <path>
   plot:    PYTHONPATH=src:. python experiments/policy_probes/quality_map.py --plot --save_dir <dir>
+
+OUTPUT PATH. Both files land in --save_dir, and when that is not given they land
+in a `diagnostics/` directory NEXT TO THE CHECKPOINT FILE, i.e.
+`os.path.dirname(--ckpt)/diagnostics/`, which is created if missing:
+  <save_dir | dirname(ckpt)/diagnostics>/quality_map.json   the binned grids
+  <save_dir | dirname(ckpt)/diagnostics>/quality_map.pdf    the figure
+So the default `--ckpt checkpoints/sota/policy.pth` writes
+`checkpoints/sota/diagnostics/quality_map.{json,pdf}`. --plot reads that same
+JSON back and re-renders the PDF without rolling anything out, so --save_dir has
+to point at the directory the compute pass wrote.
 --------------------------------------------------------------------------------
 """
 from __future__ import annotations
@@ -29,7 +39,10 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true", help="re-render from the JSON")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=300)
+    ap.add_argument("--episodes", type=int, default=600,
+                    help="greedy rollouts; the 0.05-wide grid needs roughly 4x "
+                         "the decisions of a 0.1-wide one to fill its tiles, so "
+                         "lower this only for a quick look")
     ap.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
                     help="n_ch pool for rollouts (match the ckpt's training n_ch)")
     ap.add_argument("--p_lo", type=float, default=0.4,
@@ -37,7 +50,7 @@ def parse_args():
                          "(collect() default 0.4 = training range; lower this to "
                          "densify the low-p_gen/p_swap corner of the grid)")
     ap.add_argument("--p_hi", type=float, default=0.9)
-    ap.add_argument("--bin", type=float, default=0.1, help="p_s / p_e grid bin width")
+    ap.add_argument("--bin", type=float, default=0.05, help="p_s / p_e grid bin width")
     ap.add_argument("--min_count", type=int, default=20,
                     help="aggregate tiles with fewer decisions are greyed out")
     ap.add_argument("--min_count_cond", type=int, default=8,
