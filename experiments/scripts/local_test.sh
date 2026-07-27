@@ -1,7 +1,7 @@
 #!/bin/bash
 # Local validation run
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/../.."
 
 export PYTHONPATH="$(pwd)/src:$(pwd):${PYTHONPATH:-}"
 

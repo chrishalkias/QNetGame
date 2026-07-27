@@ -12,7 +12,7 @@
 # Delivery time T vs chain size N at fixed (p_gen=0.4, p_swap=0.8), comparing a
 # trained agent against swap-ASAP and purify-then-swap. N: 10..15, dotted line at
 # N=12 (training ceiling -> N>12 is zero-shot OOD).
-#   sbatch scripts/SLURM/submit_delivery_vs_N.sh [run_id]   (default omni_nopen_15k)
+#   sbatch experiments/scripts/submit_delivery_vs_N.sh [run_id]   (default omni_nopen_15k)
 
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"

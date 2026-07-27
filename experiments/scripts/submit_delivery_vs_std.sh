@@ -13,7 +13,7 @@
 # censoring wall (H) stops dominating the mean (see delivery-rate diagnosis:
 # swap-ASAP delivered only ~21% within H=300). Params: p_swap=0.75, sigma up to
 # 0.25, H=1500.
-#   sbatch scripts/SLURM/submit_delivery_vs_std.sh [run_id]   (default omni_nopen_15k)
+#   sbatch experiments/scripts/submit_delivery_vs_std.sh [run_id]   (default omni_nopen_15k)
 
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"

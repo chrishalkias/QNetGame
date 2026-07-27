@@ -112,7 +112,7 @@ experiments/                 entry-point scripts (argparse at top of file)
   comparisons/                paper figure suite (delivery_vs_*)
   policy_probes/              interpretability probes
   q_heuristic/                 stochastic q-heuristic control experiment
-  scripts/                    local/ SLURM/ sync/ shell wrappers
+  scripts/                    flat shell wrappers: local_*, submit_*, sync_*
 tests/                        pytest suites (physics, RL stack, env, potential, ...)
 ```
 
