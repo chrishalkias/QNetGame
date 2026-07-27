@@ -34,28 +34,28 @@ YFEATS = {
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true", help="re-render from the JSON")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=600,
-                    help="greedy rollouts PER ROW; the tile counts scale with "
-                         "this, so lower it for a quick look and raise it for a "
-                         "paper figure (runtime scales roughly linearly)")
-    ap.add_argument("--n_chs", type=int, nargs="+", default=[1, 2, 3],
-                    help="one panel row per memory size (occupancy axis = "
-                         "occupied count 0..2*n_ch); n_ch=1 is the purify-free "
-                         "control row")
-    ap.add_argument("--fid_bins", type=int, default=20)
-    ap.add_argument("--yfeat", choices=list(YFEATS), default="normalized_age",
-                    help="y-axis feature: normalized_age (X[:,5])")
-    ap.add_argument("--fid_lo", type=float, default=None,
-                    help="lower edge of the y-axis (default: 0.0 for normalized_age)")
-    ap.add_argument("--min_count", type=int, default=5,
-                    help="tiles with fewer eligible decisions are greyed out")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--save_dir", default=None)
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true", help="re-render from the JSON")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--episodes", type=int, default=2000,
+                   help="greedy rollouts PER ROW; the tile counts scale with "
+                   "this, so lower it for a quick look and raise it for a "
+                   "paper figure (runtime scales roughly linearly)")
+    p.add_argument("--n_chs", type=int, nargs="+", default=[1, 2, 3],
+                   help="one panel row per memory size (occupancy axis = "
+                   "occupied count 0..2*n_ch); n_ch=1 is the purify-free "
+                   "control row")
+    p.add_argument("--fid_bins", type=int, default=25)
+    p.add_argument("--yfeat", choices=list(YFEATS), default="normalized_age",
+                   help="y-axis feature: normalized_age (X[:,5])")
+    p.add_argument("--fid_lo", type=float, default=None,
+                   help="lower edge of the y-axis (default: 0.0 for normalized_age)")
+    p.add_argument("--min_count", type=int, default=5,
+                   help="tiles with fewer eligible decisions are greyed out")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--save_dir", default=None)
+    return p.parse_args()
 
 
 def eagerness_grid(occ_count, fid, took, n_occ, edges, min_count):

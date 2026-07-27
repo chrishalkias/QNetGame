@@ -29,18 +29,18 @@ import numpy as np
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes_train", type=int, default=300)
-    ap.add_argument("--episodes_testbed", type=int, default=150,
-                    help="per testbed N (N in {13,15})")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out_dir", default=None,
-                    help="default: results/probes/<ckpt parent dir name>/")
-    ap.add_argument("--smoke", action="store_true",
-                    help="20 train episodes at N=6 only, no testbed cells")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--episodes_train", type=int, default=300)
+    p.add_argument("--episodes_testbed", type=int, default=150,
+                   help="per testbed N (N in {13,15})")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out_dir", default=None,
+                   help="default: results/probes/<ckpt parent dir name>/")
+    p.add_argument("--smoke", action="store_true",
+                   help="20 train episodes at N=6 only, no testbed cells")
+    return p.parse_args()
 
 
 # ----------------------------------------------------------------------------

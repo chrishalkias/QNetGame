@@ -15,81 +15,81 @@ import torch
 from rl_stack import QRNAgent
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train QRNAgent")
+    p = argparse.ArgumentParser(description="Train QRNAgent")
     # Algorithm Variables
-    parser.add_argument("--run_id", type=str, default="xxx")
-    parser.add_argument("--seed", type=int, default=0,
-                        help="master seed: seeds torch (net init), the agent RNG "
-                             "(eps-greedy + per-episode domain draws), the replay "
-                             "sampler, AND the per-episode env/network physics RNG "
-                             "(entangle/swap/purify coin flips, auto-entangle "
-                             "shuffle, inhomogeneity). A given seed makes the whole "
-                             "training trajectory + metrics.json bit-reproducible on "
-                             "cpu. Vary for independent agents.")
-    parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--hidden", type=int, default=64)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--max_steps", type=int, default=20)
-    parser.add_argument("--episodes", type=int, default=300)
+    p.add_argument("--run_id", type=str, default="xxx")
+    p.add_argument("--seed", type=int, default=0,
+                   help="master seed: seeds torch (net init), the agent RNG "
+                   "(eps-greedy + per-episode domain draws), the replay "
+                   "sampler, AND the per-episode env/network physics RNG "
+                   "(entangle/swap/purify coin flips, auto-entangle "
+                   "shuffle, inhomogeneity). A given seed makes the whole "
+                   "training trajectory + metrics.json bit-reproducible on "
+                   "cpu. Vary for independent agents.")
+    p.add_argument("--lr", type=float, default=5e-4)
+    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--batch_size", type=int, default=64)
+    p.add_argument("--max_steps", type=int, default=20)
+    p.add_argument("--episodes", type=int, default=300)
 
     # System Variables
-    parser.add_argument("--n_lo", type=int, default=5)
-    parser.add_argument("--n_hi", type=int, default=8)
-    parser.add_argument("--curriculum", action='store_false')
-    parser.add_argument("--n_ch", type=int, nargs="+", default=[4],
-                        help="n_ch pool, e.g. --n_ch 2 3 4 (per-episode draw)")
-    parser.add_argument("--p_gen", type=float, nargs="+", default=[0.60],
-                        help="MEAN p_gen; pass two values for a (lo,hi) per-episode range")
-    parser.add_argument("--p_swap", type=float, nargs="+", default=[0.85],
-                        help="MEAN p_swap; pass two values for a (lo,hi) per-episode range")
-    parser.add_argument("--p_gen_std", type=float, default=0.0,
-                        help="per-repeater spread of p_gen (0 = homogeneous)")
-    parser.add_argument("--p_swap_std", type=float, default=0.0,
-                        help="per-repeater spread of p_swap (0 = homogeneous)")
-    parser.add_argument("--cutoff", type=int, default=6)
-    parser.add_argument("--cutoff_lo", type=int, default=None,
-                        help="with --cutoff_hi, sample cutoff per episode in [lo,hi]")
-    parser.add_argument("--cutoff_hi", type=int, default=None)
-    parser.add_argument("--gamma", type=float, default=0.995,
-                        help="DQN discount AND env PBRS gamma (kept matched)")
-    parser.add_argument("--eps_schedule", choices=["linear", "cosine"],
-                        default="linear",
-                        help="ε annealing shape over first 90%% of episodes "
-                             "(linear = Mnih/SB3 standard; cosine = legacy)")
+    p.add_argument("--n_lo", type=int, default=5)
+    p.add_argument("--n_hi", type=int, default=8)
+    p.add_argument("--curriculum", action='store_false')
+    p.add_argument("--n_ch", type=int, nargs="+", default=[4],
+                   help="n_ch pool, e.g. --n_ch 2 3 4 (per-episode draw)")
+    p.add_argument("--p_gen", type=float, nargs="+", default=[0.60],
+                   help="MEAN p_gen; pass two values for a (lo,hi) per-episode range")
+    p.add_argument("--p_swap", type=float, nargs="+", default=[0.85],
+                   help="MEAN p_swap; pass two values for a (lo,hi) per-episode range")
+    p.add_argument("--p_gen_std", type=float, default=0.0,
+                   help="per-repeater spread of p_gen (0 = homogeneous)")
+    p.add_argument("--p_swap_std", type=float, default=0.0,
+                   help="per-repeater spread of p_swap (0 = homogeneous)")
+    p.add_argument("--cutoff", type=int, default=6)
+    p.add_argument("--cutoff_lo", type=int, default=None,
+                   help="with --cutoff_hi, sample cutoff per episode in [lo,hi]")
+    p.add_argument("--cutoff_hi", type=int, default=None)
+    p.add_argument("--gamma", type=float, default=0.995,
+                   help="DQN discount AND env PBRS gamma (kept matched)")
+    p.add_argument("--eps_schedule", choices=["linear", "cosine"],
+                   default="linear",
+                   help="ε annealing shape over first 90%% of episodes "
+                   "(linear = Mnih/SB3 standard; cosine = legacy)")
 
-    parser.add_argument("--channel_loss", type=float, default=0.00)
-    parser.add_argument("--F0", type=float, default=1.0)
+    p.add_argument("--channel_loss", type=float, default=0.00)
+    p.add_argument("--F0", type=float, default=1.0)
     
-    parser.add_argument("--compare", action="store_true",
-                        help="log sampled greedy-agent vs swap-asap vs random "
-                             "returns on a shared seeded net (+ training_compare.png)")
-    parser.add_argument("--compare_every", type=int, default=10,
-                        help="run the paired comparison rollouts every K episodes "
-                             "(each sample costs 3 extra greedy rollouts; K=1 "
-                             "reproduces the old every-episode behaviour)")
-    parser.add_argument("--save_base_dir", type=str, default="checkpoints")
-    parser.add_argument("--prune_unwinnable", action="store_true",
-                        help="skip cells swap-asap can't deliver (winnability oracle)")
-    parser.add_argument("--no_eval_ckpt", action="store_true",
-                        help="disable the delivery-time eval probe for best-checkpoint "
-                             "selection (auto-enabled for episodes >= 5000); falls back "
-                             "to rolling-mean reward selection")
-    parser.add_argument("--force_eval_ckpt", action="store_true",
-                        help="build the delivery-time probe even below the "
-                             "episodes >= 5000 auto threshold (smoke tests, "
-                             "short diagnostic runs)")
-    parser.add_argument("--ckpt_pool", action="store_true",
-                        help="save EVERY eval-probe checkpoint to <save>/pool/ "
-                             "and, after training, re-score the whole pool at "
-                             "--runoff_episodes and copy the winner to policy.pth")
-    parser.add_argument("--runoff_episodes", type=int, default=400,
-                        help="episodes per cell in the final pool runoff (the "
-                             "in-training probe uses 40; the runoff is the "
-                             "honest one)")
-    parser.add_argument("--disable_purify", action="store_true",
-                        help="mask PURIFY in BOTH selection and the DQN target -> "
-                             "train a pure swap-scheduler")
-    return parser.parse_args()
+    p.add_argument("--compare", action="store_true",
+                   help="log sampled greedy-agent vs swap-asap vs random "
+                   "returns on a shared seeded net (+ training_compare.png)")
+    p.add_argument("--compare_every", type=int, default=10,
+                   help="run the paired comparison rollouts every K episodes "
+                   "(each sample costs 3 extra greedy rollouts; K=1 "
+                   "reproduces the old every-episode behaviour)")
+    p.add_argument("--save_base_dir", type=str, default="checkpoints")
+    p.add_argument("--prune_unwinnable", action="store_true",
+                   help="skip cells swap-asap can't deliver (winnability oracle)")
+    p.add_argument("--no_eval_ckpt", action="store_true",
+                   help="disable the delivery-time eval probe for best-checkpoint "
+                   "selection (auto-enabled for episodes >= 5000); falls back "
+                   "to rolling-mean reward selection")
+    p.add_argument("--force_eval_ckpt", action="store_true",
+                   help="build the delivery-time probe even below the "
+                   "episodes >= 5000 auto threshold (smoke tests, "
+                   "short diagnostic runs)")
+    p.add_argument("--ckpt_pool", action="store_true",
+                   help="save EVERY eval-probe checkpoint to <save>/pool/ "
+                   "and, after training, re-score the whole pool at "
+                   "--runoff_episodes and copy the winner to policy.pth")
+    p.add_argument("--runoff_episodes", type=int, default=400,
+                   help="episodes per cell in the final pool runoff (the "
+                   "in-training probe uses 40; the runoff is the "
+                   "honest one)")
+    p.add_argument("--disable_purify", action="store_true",
+                   help="mask PURIFY in BOTH selection and the DQN target -> "
+                   "train a pure swap-scheduler")
+    return p.parse_args()
 
 
 # -- Run manifest ----------------------------------------------------------

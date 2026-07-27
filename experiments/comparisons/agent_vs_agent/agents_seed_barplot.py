@@ -25,32 +25,32 @@ from experiments.comparisons import _common as C
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--ckpts", nargs="+", default=[
-        "checkpoints/omni_v3_20k_s1/policy.pth",
-        "checkpoints/omni_v3_20k_s2/policy.pth",
-        "checkpoints/omni_v3_20k_s3/policy.pth"])
-    ap.add_argument("--labels", nargs="+", default=["seed 1", "seed 2", "seed 3"])
-    ap.add_argument("--episodes", type=int, default=3000, help="per run/chunk")
-    ap.add_argument("--horizon", type=int, default=2000)
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true")
+    p.add_argument("--ckpts", nargs="+", default=[
+                   "checkpoints/omni_v3_20k_s1/policy.pth",
+                   "checkpoints/omni_v3_20k_s2/policy.pth",
+                   "checkpoints/omni_v3_20k_s3/policy.pth"])
+    p.add_argument("--labels", nargs="+", default=["seed 1", "seed 2", "seed 3"])
+    p.add_argument("--episodes", type=int, default=3000, help="per run/chunk")
+    p.add_argument("--horizon", type=int, default=2000)
     # random-parameter domain (defaults = the omni_v3_20k training distribution)
-    ap.add_argument("--n_lo", type=int, default=4)
-    ap.add_argument("--n_hi", type=int, default=12)
-    ap.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4])
-    ap.add_argument("--pg_lo", type=float, default=0.4)
-    ap.add_argument("--pg_hi", type=float, default=0.9)
-    ap.add_argument("--ps_lo", type=float, default=0.4)
-    ap.add_argument("--ps_hi", type=float, default=0.9)
-    ap.add_argument("--cutoff_lo", type=int, default=10)
-    ap.add_argument("--cutoff_hi", type=int, default=50)
-    ap.add_argument("--p_gen_std", type=float, default=0.15)
-    ap.add_argument("--p_swap_std", type=float, default=0.15)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", default="results/comparisons/agents_seed_barplot.json")
-    ap.add_argument("--fig", default="results/figures/agents_seed_barplot")
-    return ap.parse_args()
+    p.add_argument("--n_lo", type=int, default=4)
+    p.add_argument("--n_hi", type=int, default=12)
+    p.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4])
+    p.add_argument("--pg_lo", type=float, default=0.4)
+    p.add_argument("--pg_hi", type=float, default=0.9)
+    p.add_argument("--ps_lo", type=float, default=0.4)
+    p.add_argument("--ps_hi", type=float, default=0.9)
+    p.add_argument("--cutoff_lo", type=int, default=10)
+    p.add_argument("--cutoff_hi", type=int, default=50)
+    p.add_argument("--p_gen_std", type=float, default=0.15)
+    p.add_argument("--p_swap_std", type=float, default=0.15)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out", default="results/comparisons/agents_seed_barplot.json")
+    p.add_argument("--fig", default="results/figures/agents_seed_barplot")
+    return p.parse_args()
 
 
 def _rollout(fn, N, n_ch, p_gen, p_swap, cutoff, ep_seed, H, pg_std, ps_std):

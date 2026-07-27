@@ -33,29 +33,29 @@ LABELS = {
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true", help="render from existing json")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=200, help="per seed")
-    ap.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
-                    help="n_ch pool for rollouts (match the ckpt's training n_ch)")
-    ap.add_argument("--seeds", type=int, nargs="+", default=[0],
-                    help="one independent collection per seed; bars = mean, "
-                         "error bars = std across seeds")
-    ap.add_argument("--ranges", nargs="+", default=["4-12"],
-                    help="chain-size ranges 'lo-hi', one panel each "
-                         "(training range is 4-12)")
-    ap.add_argument("--notes", nargs="+", default=None,
-                    help="panel titles, one per range (default: '$N=lo$--$hi$')")
-    ap.add_argument("--save_dir", default=None)
-    ap.add_argument("--color", default="#4C72B0",
-                    help="bar color (CC-delay agent uses purple by convention)")
-    ap.add_argument("--max_steps", type=int, default=200,
-                    help="episode cap for rollout collection")
-    ap.add_argument("--xmax", type=float, default=None,
-                    help="fixed x-axis limit (default: auto from the data)")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true", help="render from existing json")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--episodes", type=int, default=200, help="per seed")
+    p.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
+                   help="n_ch pool for rollouts (match the ckpt's training n_ch)")
+    p.add_argument("--seeds", type=int, nargs="+", default=[0],
+                   help="one independent collection per seed; bars = mean, "
+                   "error bars = std across seeds")
+    p.add_argument("--ranges", nargs="+", default=["4-12"],
+                   help="chain-size ranges 'lo-hi', one panel each "
+                   "(training range is 4-12)")
+    p.add_argument("--notes", nargs="+", default=None,
+                   help="panel titles, one per range (default: '$N=lo$--$hi$')")
+    p.add_argument("--save_dir", default=None)
+    p.add_argument("--color", default="#4C72B0",
+                   help="bar color (CC-delay agent uses purple by convention)")
+    p.add_argument("--max_steps", type=int, default=200,
+                   help="episode cap for rollout collection")
+    p.add_argument("--xmax", type=float, default=None,
+                   help="fixed x-axis limit (default: auto from the data)")
+    return p.parse_args()
 
 
 def _flip_fractions(ckpt, episodes, seed, sizes, max_steps, n_chs=(2, 3, 4)):

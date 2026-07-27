@@ -62,24 +62,24 @@ import numpy as np
 
 
 def parse_args(argv=None):
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tag", nargs="+", default=["s1", "s3"],
-                    help="run tags; each maps to "
-                         "results/probes/omni_v3_20k_<tag>/purify_map.npz")
-    ap.add_argument("--seed", type=int, default=0,
-                    help="episode-split seed, 0 matches the split used for the "
-                         "recorded purify_map ceilings")
-    ap.add_argument("--max_iter", type=int, default=2000,
-                    help="LogisticRegression max_iter")
-    ap.add_argument("--npz_dir", default="results/probes",
-                    help="parent of results/probes/omni_v3_20k_<tag>/purify_map.npz")
-    ap.add_argument("--out_dir", default="experiments/q_heuristic",
-                    help="where to write q_conditional_<tag>.json")
-    ap.add_argument("--verify", action="store_true",
-                    help="after fitting, reload the JSON and recompute test AUC "
-                         "with pure numpy; assert it matches sklearn to 1e-6")
-    return ap.parse_args(argv)
+    p = argparse.ArgumentParser(
+                                description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--tag", nargs="+", default=["s1", "s3"],
+                   help="run tags; each maps to "
+                   "results/probes/omni_v3_20k_<tag>/purify_map.npz")
+    p.add_argument("--seed", type=int, default=0,
+                   help="episode-split seed, 0 matches the split used for the "
+                   "recorded purify_map ceilings")
+    p.add_argument("--max_iter", type=int, default=2000,
+                   help="LogisticRegression max_iter")
+    p.add_argument("--npz_dir", default="results/probes",
+                   help="parent of results/probes/omni_v3_20k_<tag>/purify_map.npz")
+    p.add_argument("--out_dir", default="experiments/q_heuristic",
+                   help="where to write q_conditional_<tag>.json")
+    p.add_argument("--verify", action="store_true",
+                   help="after fitting, reload the JSON and recompute test AUC "
+                   "with pure numpy; assert it matches sklearn to 1e-6")
+    return p.parse_args(argv)
 
 
 # ----------------------------------------------------------------------------

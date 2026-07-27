@@ -24,46 +24,46 @@ import argparse, json, os
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true",
-                    help="plot from --out json instead of evaluating")
-    ap.add_argument("--metric", choices=["T", "delta"], default="T",
-                    help="T = delivery-time lines; delta = %% reduction of agent "
-                         "vs swap-ASAP (headline generalization plot, #2)")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--p_gen", type=float, default=0.4)
-    ap.add_argument("--p_swap", type=float, default=0.8)
-    ap.add_argument("--n_lo", type=int, default=10)
-    ap.add_argument("--n_hi", type=int, default=15)
-    ap.add_argument("--n_train_max", type=int, default=12,
-                    help="training ceiling; dotted line, N>this is out-of-distribution")
-    ap.add_argument("--n_ch", type=int, default=4)
-    ap.add_argument("--p_gen_std", type=float, default=0.0,
-                    help="per-repeater inhomogeneity spread on p_gen (0 = homogeneous)")
-    ap.add_argument("--p_swap_std", type=float, default=0.0,
-                    help="per-repeater inhomogeneity spread on p_swap (0 = homogeneous)")
-    ap.add_argument("--cutoff", type=int, default=20)
-    ap.add_argument("--agent_only", action="store_true",
-                    help="evaluate only the agent policy (skip the ckpt-independent "
-                         "heuristics); used for the seed-sweep curves")
-    ap.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
-                    choices=["agent", "swap_asap", "purify_swap"],
-                    help="policies to evaluate; swap-ASAP dropped from the "
-                         "default roster (paper decision 2026-07-13). A single "
-                         "policy lets SLURM array tasks split N x policies")
-    ap.add_argument("--logy", action="store_true", help="log-scale y axis")
-    ap.add_argument("--legend_loc", default="upper left",
-                    help="matplotlib legend location for the T-metric plot")
-    ap.add_argument("--fidelity", action="store_true",
-                    help="retained for back-compat: mean end-to-end fidelity is "
-                         "now always recorded (free from the gated pass) and "
-                         "overlaid when present")
-    ap.add_argument("--horizon", type=int, default=300)
-    ap.add_argument("--mc_eps", type=int, default=2000)
-    ap.add_argument("--out", default="results/comparisons/delivery_vs_N.json")
-    ap.add_argument("--fig", default="results/figures/delivery_vs_N")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true",
+                   help="plot from --out json instead of evaluating")
+    p.add_argument("--metric", choices=["T", "delta"], default="T",
+                   help="T = delivery-time lines; delta = %% reduction of agent "
+                   "vs swap-ASAP (headline generalization plot, #2)")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--p_gen", type=float, default=0.4)
+    p.add_argument("--p_swap", type=float, default=0.8)
+    p.add_argument("--n_lo", type=int, default=10)
+    p.add_argument("--n_hi", type=int, default=15)
+    p.add_argument("--n_train_max", type=int, default=12,
+                   help="training ceiling; dotted line, N>this is out-of-distribution")
+    p.add_argument("--n_ch", type=int, default=4)
+    p.add_argument("--p_gen_std", type=float, default=0.0,
+                   help="per-repeater inhomogeneity spread on p_gen (0 = homogeneous)")
+    p.add_argument("--p_swap_std", type=float, default=0.0,
+                   help="per-repeater inhomogeneity spread on p_swap (0 = homogeneous)")
+    p.add_argument("--cutoff", type=int, default=20)
+    p.add_argument("--agent_only", action="store_true",
+                   help="evaluate only the agent policy (skip the ckpt-independent "
+                   "heuristics); used for the seed-sweep curves")
+    p.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
+                   choices=["agent", "swap_asap", "purify_swap"],
+                   help="policies to evaluate; swap-ASAP dropped from the "
+                   "default roster (paper decision 2026-07-13). A single "
+                   "policy lets SLURM array tasks split N x policies")
+    p.add_argument("--logy", action="store_true", help="log-scale y axis")
+    p.add_argument("--legend_loc", default="upper left",
+                   help="matplotlib legend location for the T-metric plot")
+    p.add_argument("--fidelity", action="store_true",
+                   help="retained for back-compat: mean end-to-end fidelity is "
+                   "now always recorded (free from the gated pass) and "
+                   "overlaid when present")
+    p.add_argument("--horizon", type=int, default=300)
+    p.add_argument("--mc_eps", type=int, default=2000)
+    p.add_argument("--out", default="results/comparisons/delivery_vs_N.json")
+    p.add_argument("--fig", default="results/figures/delivery_vs_N")
+    return p.parse_args()
 
 
 def run_eval(args):

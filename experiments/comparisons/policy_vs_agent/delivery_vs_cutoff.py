@@ -18,21 +18,21 @@ from experiments.mc_eval import mc_eval_stats
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--N", type=int, default=10)
-    ap.add_argument("--p_gen", type=float, default=0.5)
-    ap.add_argument("--p_swap", type=float, default=0.5)
-    ap.add_argument("--n_ch", type=int, default=4)
-    ap.add_argument("--cutoffs", type=int, nargs="+",
-                    default=[10, 15, 20, 25, 30, 35, 40, 50])
-    ap.add_argument("--horizon", type=int, default=300)
-    ap.add_argument("--mc_eps", type=int, default=2000)
-    ap.add_argument("--out", default="results/comparisons/delivery_vs_cutoff.json")
-    ap.add_argument("--fig", default="results/figures/delivery_vs_cutoff")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--N", type=int, default=10)
+    p.add_argument("--p_gen", type=float, default=0.5)
+    p.add_argument("--p_swap", type=float, default=0.5)
+    p.add_argument("--n_ch", type=int, default=4)
+    p.add_argument("--cutoffs", type=int, nargs="+",
+                   default=[10, 15, 20, 25, 30, 35, 40, 50])
+    p.add_argument("--horizon", type=int, default=300)
+    p.add_argument("--mc_eps", type=int, default=2000)
+    p.add_argument("--out", default="results/comparisons/delivery_vs_cutoff.json")
+    p.add_argument("--fig", default="results/figures/delivery_vs_cutoff")
+    return p.parse_args()
 
 
 POLICIES = ("agent", "purify_swap")   # swap-ASAP dropped from this figure

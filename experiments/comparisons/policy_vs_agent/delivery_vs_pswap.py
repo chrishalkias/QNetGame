@@ -16,27 +16,27 @@ from experiments.mc_eval import mc_eval_stats
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
-                    choices=["agent", "swap_asap", "purify_swap"],
-                    help="policies to evaluate; swap-ASAP dropped from the "
-                         "default roster (paper decision 2026-07-13). A single "
-                         "policy lets SLURM array tasks split cells x policies")
-    ap.add_argument("--logy", action="store_true", help="log-scale y axis")
-    ap.add_argument("--N", type=int, default=10)
-    ap.add_argument("--p_gens", type=float, nargs="+", default=[0.4, 0.5, 0.6, 0.7, 0.8])
-    ap.add_argument("--p_swaps", type=float, nargs="+",
-                    default=[0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
-    ap.add_argument("--n_ch", type=int, default=4)
-    ap.add_argument("--cutoff", type=int, default=20)
-    ap.add_argument("--horizon", type=int, default=300)
-    ap.add_argument("--mc_eps", type=int, default=2000)
-    ap.add_argument("--out", default="results/comparisons/delivery_vs_pswap.json")
-    ap.add_argument("--fig", default="results/figures/delivery_vs_pswap")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--policies", nargs="+", default=["agent", "purify_swap"],
+                   choices=["agent", "swap_asap", "purify_swap"],
+                   help="policies to evaluate; swap-ASAP dropped from the "
+                   "default roster (paper decision 2026-07-13). A single "
+                   "policy lets SLURM array tasks split cells x policies")
+    p.add_argument("--logy", action="store_true", help="log-scale y axis")
+    p.add_argument("--N", type=int, default=10)
+    p.add_argument("--p_gens", type=float, nargs="+", default=[0.4, 0.5, 0.6, 0.7, 0.8])
+    p.add_argument("--p_swaps", type=float, nargs="+",
+                   default=[0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
+    p.add_argument("--n_ch", type=int, default=4)
+    p.add_argument("--cutoff", type=int, default=20)
+    p.add_argument("--horizon", type=int, default=300)
+    p.add_argument("--mc_eps", type=int, default=2000)
+    p.add_argument("--out", default="results/comparisons/delivery_vs_pswap.json")
+    p.add_argument("--fig", default="results/figures/delivery_vs_pswap")
+    return p.parse_args()
 
 
 def run_eval(a):

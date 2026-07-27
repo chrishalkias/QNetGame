@@ -14,11 +14,11 @@ with both policies' columns. `.meta.json` sidecars are skipped.
 from __future__ import annotations
 import argparse, glob, json, os
 
-ap = argparse.ArgumentParser(description=__doc__,
-                             formatter_class=argparse.RawDescriptionHelpFormatter)
-ap.add_argument("pattern", help="glob of per-task JSONs (quote it)")
-ap.add_argument("-o", "--out", required=True)
-a = ap.parse_args()
+p = argparse.ArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
+p.add_argument("pattern", help="glob of per-task JSONs (quote it)")
+p.add_argument("-o", "--out", required=True)
+a = p.parse_args()
 
 files = [f for f in sorted(glob.glob(a.pattern)) if not f.endswith(".meta.json")]
 assert files, f"no files match {a.pattern}"

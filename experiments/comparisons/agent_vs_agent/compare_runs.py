@@ -14,12 +14,12 @@ import numpy as np
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--runs", nargs="+", required=True, help="label=path.json pairs")
-    ap.add_argument("--n_train_max", type=int, default=12)
-    ap.add_argument("--fig", default="results/figures/delivery_vs_N_compare")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--runs", nargs="+", required=True, help="label=path.json pairs")
+    p.add_argument("--n_train_max", type=int, default=12)
+    p.add_argument("--fig", default="results/figures/delivery_vs_N_compare")
+    return p.parse_args()
 
 
 def main():

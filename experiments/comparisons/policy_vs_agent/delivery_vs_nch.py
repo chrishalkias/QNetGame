@@ -16,22 +16,22 @@ from experiments.mc_eval import mc_eval_stats
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--N", type=int, default=10)
-    ap.add_argument("--p_gen", type=float, default=0.3)
-    ap.add_argument("--p_swap", type=float, default=0.8)
-    ap.add_argument("--n_chs", type=int, nargs="+", default=[2, 3, 4, 5, 6])
-    ap.add_argument("--n_ch_train_max", type=int, default=4,
-                    help="training ceiling for memory size; n_ch>this is zero-shot")
-    ap.add_argument("--cutoff", type=int, default=20)
-    ap.add_argument("--horizon", type=int, default=300)
-    ap.add_argument("--mc_eps", type=int, default=2000)
-    ap.add_argument("--out", default="results/comparisons/delivery_vs_nch.json")
-    ap.add_argument("--fig", default="results/figures/delivery_vs_nch")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--N", type=int, default=10)
+    p.add_argument("--p_gen", type=float, default=0.3)
+    p.add_argument("--p_swap", type=float, default=0.8)
+    p.add_argument("--n_chs", type=int, nargs="+", default=[2, 3, 4, 5, 6])
+    p.add_argument("--n_ch_train_max", type=int, default=4,
+                   help="training ceiling for memory size; n_ch>this is zero-shot")
+    p.add_argument("--cutoff", type=int, default=20)
+    p.add_argument("--horizon", type=int, default=300)
+    p.add_argument("--mc_eps", type=int, default=2000)
+    p.add_argument("--out", default="results/comparisons/delivery_vs_nch.json")
+    p.add_argument("--fig", default="results/figures/delivery_vs_nch")
+    return p.parse_args()
 
 
 def run_eval(a):

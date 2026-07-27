@@ -20,23 +20,23 @@ import numpy as np
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dir", default="results/comparisons/delivery_vs_N_different_seeds")
-    ap.add_argument("--n_train_max", type=int, default=12)
-    ap.add_argument("--no_swap_asap", action="store_true",
-                    help="drop the swap-ASAP line (it dwarfs the agents and "
-                         "compresses the y-axis)")
-    ap.add_argument("--logy", action="store_true",
-                    help="log-scale the y-axis to resolve the closely-spaced "
-                         "agent-length curves")
-    ap.add_argument("--logx", action="store_true",
-                    help="log-scale the x-axis (chain size N)")
-    ap.add_argument("--delta", action="store_true",
-                    help="plot %% delivery-time reduction vs purify-then-swap "
-                         "(per length, mean±std over seeds) instead of raw T")
-    ap.add_argument("--fig", default="results/figures/delivery_vs_N_seed_length_sweep")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--dir", default="results/comparisons/delivery_vs_N_different_seeds")
+    p.add_argument("--n_train_max", type=int, default=12)
+    p.add_argument("--no_swap_asap", action="store_true",
+                   help="drop the swap-ASAP line (it dwarfs the agents and "
+                   "compresses the y-axis)")
+    p.add_argument("--logy", action="store_true",
+                   help="log-scale the y-axis to resolve the closely-spaced "
+                   "agent-length curves")
+    p.add_argument("--logx", action="store_true",
+                   help="log-scale the x-axis (chain size N)")
+    p.add_argument("--delta", action="store_true",
+                   help="plot %% delivery-time reduction vs purify-then-swap "
+                   "(per length, mean±std over seeds) instead of raw T")
+    p.add_argument("--fig", default="results/figures/delivery_vs_N_seed_length_sweep")
+    return p.parse_args()
 
 
 # ds_ep15k.json / ds_ep15k_s7.json -> length "15k" (episodes 15000), optional seed

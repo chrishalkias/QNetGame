@@ -21,24 +21,24 @@ from experiments.mc_eval import mc_eval_stats
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--N", type=int, default=10)
-    ap.add_argument("--p_gen", type=float, default=0.5)
-    ap.add_argument("--p_swap", type=float, default=0.5)
-    ap.add_argument("--n_ch", type=int, default=4)
-    ap.add_argument("--cutoff", type=int, default=20)
-    ap.add_argument("--sigmas", type=float, nargs="+",
-                    default=[0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3])
-    ap.add_argument("--sigma_train", type=float, default=0.15,
-                    help="inhomogeneity the agent was trained at (dotted marker)")
-    ap.add_argument("--horizon", type=int, default=300)
-    ap.add_argument("--mc_eps", type=int, default=2000)
-    ap.add_argument("--out", default="results/comparisons/delivery_vs_std.json")
-    ap.add_argument("--fig", default="results/figures/inhom/delivery_vs_std")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--N", type=int, default=10)
+    p.add_argument("--p_gen", type=float, default=0.5)
+    p.add_argument("--p_swap", type=float, default=0.5)
+    p.add_argument("--n_ch", type=int, default=4)
+    p.add_argument("--cutoff", type=int, default=20)
+    p.add_argument("--sigmas", type=float, nargs="+",
+                   default=[0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3])
+    p.add_argument("--sigma_train", type=float, default=0.15,
+                   help="inhomogeneity the agent was trained at (dotted marker)")
+    p.add_argument("--horizon", type=int, default=300)
+    p.add_argument("--mc_eps", type=int, default=2000)
+    p.add_argument("--out", default="results/comparisons/delivery_vs_std.json")
+    p.add_argument("--fig", default="results/figures/inhom/delivery_vs_std")
+    return p.parse_args()
 
 
 def run_eval(a):

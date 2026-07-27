@@ -35,29 +35,29 @@ AGE_BINS = [(0.0, 0.2), (0.2, 0.35), (0.35, 0.5), (0.5, 0.65)]   # 4 normalized-
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true", help="re-render from the JSON")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=600,
-                    help="greedy rollouts; the 0.05-wide grid needs roughly 4x "
-                         "the decisions of a 0.1-wide one to fill its tiles, so "
-                         "lower this only for a quick look")
-    ap.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
-                    help="n_ch pool for rollouts (match the ckpt's training n_ch)")
-    ap.add_argument("--p_lo", type=float, default=0.4,
-                    help="lower edge of the per-episode p_gen/p_swap MEAN draw "
-                         "(collect() default 0.4 = training range; lower this to "
-                         "densify the low-p_gen/p_swap corner of the grid)")
-    ap.add_argument("--p_hi", type=float, default=0.9)
-    ap.add_argument("--bin", type=float, default=0.05, help="p_s / p_e grid bin width")
-    ap.add_argument("--min_count", type=int, default=20,
-                    help="aggregate tiles with fewer decisions are greyed out")
-    ap.add_argument("--min_count_cond", type=int, default=8,
-                    help="age-conditioned tiles: sparser, lower threshold")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--save_dir", default=None)
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true", help="re-render from the JSON")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--episodes", type=int, default=2000,
+                   help="greedy rollouts; the 0.05-wide grid needs roughly 4x "
+                   "the decisions of a 0.1-wide one to fill its tiles, so "
+                   "lower this only for a quick look")
+    p.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
+                   help="n_ch pool for rollouts (match the ckpt's training n_ch)")
+    p.add_argument("--p_lo", type=float, default=0.4,
+                   help="lower edge of the per-episode p_gen/p_swap MEAN draw "
+                   "(collect() default 0.4 = training range; lower this to "
+                   "densify the low-p_gen/p_swap corner of the grid)")
+    p.add_argument("--p_hi", type=float, default=0.9)
+    p.add_argument("--bin", type=float, default=0.05, help="p_s / p_e grid bin width")
+    p.add_argument("--min_count", type=int, default=30,
+                   help="aggregate tiles with fewer decisions are greyed out")
+    p.add_argument("--min_count_cond", type=int, default=12,
+                   help="age-conditioned tiles: sparser, lower threshold")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--save_dir", default=None)
+    return p.parse_args()
 
 
 def grid2d(px, py, took, edges, min_count):
