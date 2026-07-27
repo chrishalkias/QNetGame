@@ -2,14 +2,21 @@
 --------------------------------------------------------------------------------
 Empirical action-eagerness maps over (occupancy, normalized age), tiled, paper figure.
 
-2x3 panel grid over the agent's real greedy rollouts, one row per --n_chs value:
+3-column panel grid over the agent's real greedy rollouts, one row per --n_chs value:
   col 1 = P(PURIFY | can_purify=1) per (occupied count, normalized age) tile
   col 2 = P(SWAP   | can_swap=1)
   col 3 = swap-vs-purify preference where BOTH are available:
           P(SWAP|both) - P(PURIFY|both) in [-1,1] (NOOP absorbs the rest)
 Rollouts run at a single n_ch per row so the occupancy axis is the exact number
-of occupied qubits (n_ch+1 discrete tiles); the y-axis feature is binned. Tiles are
-outlined, colour-coded, greyed where under-sampled. Purely empirical.
+of occupied qubits (2*n_ch+1 discrete tiles at an interior node); the y-axis
+feature is binned. Tiles are outlined, colour-coded, greyed where under-sampled.
+Purely empirical.
+
+The default row set is n_ch = 1, 2, 3, which sweeps memory pressure from tightest
+to loosest. n_ch = 1 is a CONTROL row: a purify needs two links to the same
+partner and a single qubit per side cannot hold two, so can_purify is
+structurally 0 there and the row must show a pure swap-scheduling policy, with
+the purify and both-available panels fully greyed and annotated as empty.
 
 Dual-mode so the figure re-renders without recomputing:
   compute: PYTHONPATH=src:. python experiments/policy_probes/decision_map.py --ckpt <path>
@@ -31,10 +38,14 @@ def parse_args():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plot", action="store_true", help="re-render from the JSON")
     ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=300)
-    ap.add_argument("--n_chs", type=int, nargs="+", default=[4, 6],
+    ap.add_argument("--episodes", type=int, default=600,
+                    help="greedy rollouts PER ROW; the tile counts scale with "
+                         "this, so lower it for a quick look and raise it for a "
+                         "paper figure (runtime scales roughly linearly)")
+    ap.add_argument("--n_chs", type=int, nargs="+", default=[1, 2, 3],
                     help="one panel row per memory size (occupancy axis = "
-                         "occupied count 0..n_ch)")
+                         "occupied count 0..2*n_ch); n_ch=1 is the purify-free "
+                         "control row")
     ap.add_argument("--fid_bins", type=int, default=20)
     ap.add_argument("--yfeat", choices=list(YFEATS), default="normalized_age",
                     help="y-axis feature: normalized_age (X[:,5])")
@@ -98,7 +109,16 @@ def run_compute(a, out_json):
             "both_pref": g(both, (act == 1).astype(float) - (act == 2).astype(float)),
             "n_purify": int(cp.sum()), "n_swap": int(cs.sum()),
             "n_both": int(both.sum()),
+            # sampling audit: total decisions behind this row, and how the
+            # greedy policy actually spent them (NOOP, SWAP, PURIFY)
+            "n_decisions": int(act.size),
+            "n_actions": [int((act == k).sum()) for k in range(3)],
         }
+        print(f"  n_ch={n_ch}: {int(act.size)} decisions, "
+              f"actions NOOP/SWAP/PURIFY = "
+              f"{[int((act == k).sum()) for k in range(3)]}, "
+              f"eligible purify/swap/both = "
+              f"{int(cp.sum())}/{int(cs.sum())}/{int(both.sum())}")
     json.dump(data, open(out_json, "w"), indent=1)
     print(f"saved -> {out_json}")
     return data
@@ -142,6 +162,11 @@ def run_plot(data, stem):
                                cmap=cmap, vmin=vmin, vmax=vmax,
                                edgecolors="0.55", linewidth=0.6)
             fig.colorbar(pm, ax=ax, fraction=0.046, pad=0.03)
+            if row[nkey] == 0:
+                # a structurally impossible panel (e.g. purify at n_ch=1) is all
+                # grey; say so, so it cannot be misread as a broken render
+                ax.text(0.5, 0.5, "no eligible\ndecisions", transform=ax.transAxes,
+                        va="center", ha="center", fontsize=11, color="0.35")
             ax.set_xticks(range(n_occ))
             ax.set_title(f"{title}\n({row[nkey]} eligible decisions, "
                          rf"$n_\mathrm{{ch}}={n_ch}$)", fontsize=10)
