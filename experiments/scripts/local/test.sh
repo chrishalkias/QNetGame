@@ -1,7 +1,7 @@
 #!/bin/bash
 # Local validation run
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../../.."
 
 export PYTHONPATH="$(pwd)/src:$(pwd):${PYTHONPATH:-}"
 
@@ -15,5 +15,4 @@ python3 -u experiments/training/validation.py \
     --cutoff 15 \
     --path checkpoints/legacy/cluster/smoke_netsquid_001/ \
     --dict policy.pth \
-    --verbose 0 \
     "$@"
