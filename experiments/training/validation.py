@@ -6,54 +6,50 @@ Delivery is topological (source connects to dest); the cutoff already bounds
 delivered-link decoherence, so no fidelity threshold gates the win condition.
 agent.validate() below already reports the paired-seed table (avg steps, avg
 fidelity, success%) across Agent / SwapASAP / PurifySwap / Random.
+
+  PYTHONPATH=src:. python experiments/training/validation.py --path checkpoints/sota/
 --------------------------------------------------------------------------------
 """
 
 import argparse
+import os
+
 from rl_stack import QRNAgent
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Test QRNAgent")
-    #Validation variables
-    parser.add_argument("--run_id", type=str, default="v006")
-    parser.add_argument("--episodes", type=int, default=10)
-    parser.add_argument("--steps", type=int, default=200)
-
-    #System variables
-    parser.add_argument("--nodes", type=int, default=6)
-    parser.add_argument("--n_ch", type=int, default=4)
-    parser.add_argument("--p_gen", type=float, default=0.1,
-                        help="per-network MEAN link-generation prob.")
-    parser.add_argument("--p_swap", type=float, default=0.85,
-                        help="per-network MEAN BSM success prob.")
-    parser.add_argument("--p_gen_std", type=float, default=0.0,
-                        help="per-repeater spread of p_gen (0 = homogeneous)")
-    parser.add_argument("--p_swap_std", type=float, default=0.0,
-                        help="per-repeater spread of p_swap (0 = homogeneous)")
-    parser.add_argument("--cutoff", type=int, default=100)
-
-    # CC variables
-    parser.add_argument("--F0", type=float, default=1.0)
-    parser.add_argument("--channel_loss", type=float, default=0.0)
-
-    parser.add_argument("--path", type=str, default="checkpoints/sota/")
-    parser.add_argument("--dict", type=str, default="policy.pth")
-
-    return parser.parse_args()
+    p = argparse.ArgumentParser(description="Validate a QRNAgent checkpoint against the heuristics")
+    # checkpoint
+    p.add_argument("--path", type=str, default="checkpoints/sota/", help="run directory holding the state dict")
+    p.add_argument("--dict", type=str, default="policy.pth", help="state dict filename inside --path")
+    # validation run
+    p.add_argument("--episodes", type=int, default=10, help="paired episodes per strategy")
+    p.add_argument("--steps", type=int, default=200, help="episode horizon in ticks")
+    # network
+    p.add_argument("--nodes", type=int, default=6, help="chain length N")
+    p.add_argument("--n_ch", type=int, default=4, help="qubits per side, per repeater")
+    p.add_argument("--p_gen", type=float, default=0.1, help="per-network MEAN link-generation prob.")
+    p.add_argument("--p_swap", type=float, default=0.85, help="per-network MEAN BSM success prob.")
+    p.add_argument("--p_gen_std", type=float, default=0.0, help="per-repeater spread of p_gen (0 = homogeneous)")
+    p.add_argument("--p_swap_std", type=float, default=0.0, help="per-repeater spread of p_swap (0 = homogeneous)")
+    p.add_argument("--cutoff", type=int, default=100, help="memory cutoff age in ticks")
+    # physics
+    p.add_argument("--F0", type=float, default=1.0, help="fidelity of a freshly generated link")
+    p.add_argument("--channel_loss", type=float, default=0.0, help="attenuation alpha per km")
+    return p.parse_args()
 
 
-if __name__ == "__main__":
-    agent = QRNAgent()
+def main():
     args = parse_args()
-    model_path = args.path + args.dict
+    model_path = os.path.join(args.path, args.dict)
 
-    results = agent.validate(
+    agent = QRNAgent()
+    agent.validate(
         model_path=model_path,
-        n_episodes=args.episodes, 
+        n_episodes=args.episodes,
         max_steps=args.steps,
         n_ch=args.n_ch,
-        n_repeaters=args.nodes,           
+        n_repeaters=args.nodes,
         p_gen=args.p_gen,
         p_swap=args.p_swap,
         p_gen_std=args.p_gen_std,
@@ -62,3 +58,7 @@ if __name__ == "__main__":
         F0=args.F0,
         channel_loss=args.channel_loss,
     )
+
+
+if __name__ == "__main__":
+    main()
