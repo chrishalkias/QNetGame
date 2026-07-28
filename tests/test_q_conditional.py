@@ -21,7 +21,7 @@ from experiments.q_heuristic.hybrid_policy import (
     make_hybrid_fn, make_conditional_fn, purify_then_swap_fn)
 
 ENV_KW = dict(n_repeaters=6, n_ch=4, p_gen=0.4, p_swap=0.8, cutoff=30,
-              F0=1.0, channel_loss=0.0, dt_seconds=0.0, topology="chain")
+              F0=1.0, channel_loss=0.0)
 H = 200
 
 
@@ -35,7 +35,7 @@ def _write_coef_json(tmp_path, columns, coef, mu, sigma, intercept, name="q.json
 
 
 def _synthetic_columns():
-    """The JSON's 34 columns: purify_map.COLUMNS (35) minus `can_swap`,
+    """The JSON's 30 columns: purify_map.COLUMNS (31) minus `can_swap`,
     which is constant 1.0 in the both-legal subset (see fit_q_conditional.py's
     docstring)."""
     from experiments.policy_probes import purify_map
@@ -43,13 +43,14 @@ def _synthetic_columns():
 
 
 def _rollout(policy_fn, seed):
-    """Roll one episode, returning the per-step action arrays."""
+    """Roll one episode (serialized sweep), returning the per-micro-step
+    scalar actions."""
     env = QRNEnv(max_steps=H, rng=np.random.default_rng(seed), **ENV_KW)
     obs = env.reset()
     log = []
-    for _ in range(H):
+    while not env.done:
         a = policy_fn(env, obs)
-        log.append(np.asarray(a).copy())
+        log.append(a)
         obs, _, done, _ = env.step(a)
         if done:
             break
@@ -62,8 +63,8 @@ def test_bit_identity_degenerate_case_matches_constant_hybrid(tmp_path):
     columns = _synthetic_columns()
     q = 0.369
     intercept = math.log(q / (1.0 - q))
-    coef_path = _write_coef_json(tmp_path, columns, np.zeros(34), np.zeros(34),
-                                 np.ones(34), intercept)
+    coef_path = _write_coef_json(tmp_path, columns, np.zeros(30), np.zeros(30),
+                                 np.ones(30), intercept)
 
     cond_fn = make_conditional_fn(coef_path, seed=7, p_gen=0.4, p_swap=0.8, cutoff=30)
     hyb_fn = make_hybrid_fn(q=q, seed=7)
@@ -81,8 +82,8 @@ def test_saturated_case_matches_purify_then_swap(tmp_path):
     """intercept=+50 -> q~1 in every both-legal state -> reproduces
     purify_then_swap_fn action-for-action on one seeded episode."""
     columns = _synthetic_columns()
-    coef_path = _write_coef_json(tmp_path, columns, np.zeros(34), np.zeros(34),
-                                 np.ones(34), 50.0)
+    coef_path = _write_coef_json(tmp_path, columns, np.zeros(30), np.zeros(30),
+                                 np.ones(30), 50.0)
     cond_fn = make_conditional_fn(coef_path, seed=3, p_gen=0.4, p_swap=0.8, cutoff=30)
 
     a_cond = _rollout(cond_fn, seed=11)
@@ -93,27 +94,42 @@ def test_saturated_case_matches_purify_then_swap(tmp_path):
 
 
 def test_real_artifact_smoke():
-    """If the fitted s3 artifact is present, roll one episode: every action
+    """If a fitted s3 artifact is present, roll one episode: every action
     is a valid discrete action, and if any both-legal state occurred, at
-    least one PURIFY was drawn at the fitted q-model rate."""
+    least one PURIFY was drawn at the fitted q-model rate.
+
+    The shipped s1/s3 artifacts were parked under
+    checkpoints/legacy/q_conditional_stale_2026-07/ (gitignored) because their
+    columns predate both the obs8 reduction and the A6 link_urgency ->
+    normalized_age rename; see the README there. This test therefore normally
+    SKIPS, and only runs again once a refit lands at the path below."""
     coef_path = "experiments/q_heuristic/q_conditional_s3.json"
     if not os.path.exists(coef_path):
-        pytest.skip("experiments/q_heuristic/q_conditional_s3.json not present")
+        pytest.skip("no fitted q_conditional_s3.json at "
+                    "experiments/q_heuristic/; the stale one is parked under "
+                    "checkpoints/legacy/q_conditional_stale_2026-07/ and must "
+                    "be refit, not migrated")
 
-    cond_fn = make_conditional_fn(coef_path, seed=42, p_gen=0.4, p_swap=0.8, cutoff=30)
+    try:
+        cond_fn = make_conditional_fn(coef_path, seed=42, p_gen=0.4, p_swap=0.8, cutoff=30)
+    except ValueError:
+        pytest.skip("q_conditional_s3.json columns do not match the current "
+                    "purify_map.COLUMNS schema; refit before re-enabling "
+                    "this smoke test")
     env = QRNEnv(max_steps=H, rng=np.random.default_rng(123), **ENV_KW)
     obs = env.reset()
 
     saw_both_legal = False
     saw_purify = False
     valid_actions = {NOOP, SWAP, PURIFY}
-    for _ in range(H):
+    while not env.done:
+        i = env.active_node
         mask = env.get_action_mask()
-        if bool(np.any(mask[:, PURIFY] & mask[:, SWAP])):
+        if bool(mask[i, PURIFY] and mask[i, SWAP]):
             saw_both_legal = True
         a = cond_fn(env, obs)
-        assert set(np.unique(a).tolist()).issubset(valid_actions)
-        if bool(np.any(a == PURIFY)):
+        assert a in valid_actions
+        if a == PURIFY:
             saw_purify = True
         obs, _, done, _ = env.step(a)
         if done:

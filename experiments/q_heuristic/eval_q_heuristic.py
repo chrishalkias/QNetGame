@@ -51,43 +51,43 @@ DEFAULT_AGENTS = ["checkpoints/omni_v3_20k_s1/policy.pth",
 
 
 def parse_args(argv=None):
-    ap = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true",
-                    help="render T-vs-N from --out (may be a glob) instead of evaluating")
-    ap.add_argument("--sanity", action="store_true",
-                    help="run the q=1.0 bit-identity self-test and exit (nonzero on failure)")
-    ap.add_argument("--N", type=int, nargs="+", default=[8, 13],
-                    help="chain sizes to evaluate")
-    ap.add_argument("--q", type=float, nargs="+", default=[0.215, 0.369, 0.5],
-                    help="both-legal purify probabilities for the hybrid roster")
-    ap.add_argument("--qcond", nargs="*", default=[],
-                    help="coefficient JSONs for the state-conditioned q-heuristic "
-                         "(make_conditional_fn); roster name qcond_{tag}")
-    ap.add_argument("--agents", nargs="*", default=DEFAULT_AGENTS,
-                    help="trained-agent checkpoints (torch); empty list = "
-                         "heuristics+hybrids only, fully numpy-only")
-    ap.add_argument("--include_swap_asap", action="store_true",
-                    help="also evaluate swap_asap alongside purify_then_swap")
-    ap.add_argument("--n_ch", type=int, default=4)
-    ap.add_argument("--p_gen", type=float, default=0.4)
-    ap.add_argument("--p_swap", type=float, default=0.8)
-    ap.add_argument("--cutoff", type=int, default=30)
-    ap.add_argument("--horizon", type=int, default=2000)
-    ap.add_argument("--episodes", type=int, default=150)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--out", default=None,
-                    help="JSON path; default results/comparisons/q_heuristic/eval_{tag}.json")
-    ap.add_argument("--fig", default=None,
-                    help="plot output stem (PDF); default derived from the first --out")
-    ap.add_argument("--logy", action="store_true", help="log-scale y axis in --plot")
-    ap.add_argument("--chunk", type=int, default=0,
-                    help="this task's index in [0, nchunks) for SLURM arrays")
-    ap.add_argument("--nchunks", type=int, default=1,
-                    help="split the (N x policy) work list round-robin; >1 forces "
-                         "a per-chunk output file (never a shared JSON)")
-    return ap.parse_args(argv)
+    p = argparse.ArgumentParser(
+                                description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true",
+                   help="render T-vs-N from --out (may be a glob) instead of evaluating")
+    p.add_argument("--sanity", action="store_true",
+                   help="run the q=1.0 bit-identity self-test and exit (nonzero on failure)")
+    p.add_argument("--N", type=int, nargs="+", default=[8, 13],
+                   help="chain sizes to evaluate")
+    p.add_argument("--q", type=float, nargs="+", default=[0.215, 0.369, 0.5],
+                   help="both-legal purify probabilities for the hybrid roster")
+    p.add_argument("--qcond", nargs="*", default=[],
+                   help="coefficient JSONs for the state-conditioned q-heuristic "
+                   "(make_conditional_fn); roster name qcond_{tag}")
+    p.add_argument("--agents", nargs="*", default=DEFAULT_AGENTS,
+                   help="trained-agent checkpoints (torch); empty list = "
+                   "heuristics+hybrids only, fully numpy-only")
+    p.add_argument("--include_swap_asap", action="store_true",
+                   help="also evaluate swap_asap alongside purify_then_swap")
+    p.add_argument("--n_ch", type=int, default=4)
+    p.add_argument("--p_gen", type=float, default=0.4)
+    p.add_argument("--p_swap", type=float, default=0.8)
+    p.add_argument("--cutoff", type=int, default=30)
+    p.add_argument("--horizon", type=int, default=2000)
+    p.add_argument("--episodes", type=int, default=150)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--out", default=None,
+                   help="JSON path; default results/comparisons/q_heuristic/eval_{tag}.json")
+    p.add_argument("--fig", default=None,
+                   help="plot output stem (PDF); default derived from the first --out")
+    p.add_argument("--logy", action="store_true", help="log-scale y axis in --plot")
+    p.add_argument("--chunk", type=int, default=0,
+                   help="this task's index in [0, nchunks) for SLURM arrays")
+    p.add_argument("--nchunks", type=int, default=1,
+                   help="split the (N x policy) work list round-robin; >1 forces "
+                   "a per-chunk output file (never a shared JSON)")
+    return p.parse_args(argv)
 
 
 # --------------------------- naming / io helpers -----------------------------
@@ -149,7 +149,7 @@ def build_policies(args):
     if agents:
         from experiments.mc_eval import make_agent_fn
         for ckpt in agents:
-            policies[_agent_name(ckpt)] = make_agent_fn(ckpt, hidden=64)
+            policies[_agent_name(ckpt)] = make_agent_fn(ckpt)
 
     if args.include_swap_asap:
         from experiments.mc_eval import swap_asap_fn

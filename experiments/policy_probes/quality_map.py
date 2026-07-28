@@ -2,47 +2,62 @@
 --------------------------------------------------------------------------------
 Average agent decisions over the operation-quality plane (p_swap x p_gen).
 
-Top row: three panels over a p_s (x) by p_e (y) grid, 0.1-wide bins, aggregated
-across the whole training distribution (all sizes / n_ch):
+Top row: three panels over a p_s (x) by p_e (y) grid, 0.05-wide bins (--bin),
+aggregated across the whole training distribution (all sizes / n_ch):
   (A) P(PURIFY | can_purify)   (B) P(SWAP | can_swap)   (C) P(SWAP)-P(PURIFY), both
-Bottom row: the SAME three panels, each split into a 2x2 block conditioned on link
-urgency u in {0.0, 0.2, 0.4, 0.6} (reading order TL, TR, BL, BR), so the p_e/p_s
+Bottom row: the SAME three panels, each split into a 2x2 block conditioned on the
+normalized link age u in {0.0, 0.2, 0.4, 0.6} (reading order TL, TR, BL, BR), so the p_e/p_s
 maps are resolved by how close the node's links are to the cutoff.
 
-p_e = per-repeater generation prob (feature 6), p_s = per-repeater BSM prob
-(feature 7); their per-node spread comes from the inhomogeneity std, so the grid
+p_e = per-repeater generation prob (feature 3), p_s = per-repeater BSM prob
+(feature 4); their per-node spread comes from the inhomogeneity std, so the grid
 fills beyond the [0.4,0.9] episode-mean range. Tiles greyed where under-sampled.
 
   compute: PYTHONPATH=src:. python experiments/policy_probes/quality_map.py --ckpt <path>
   plot:    PYTHONPATH=src:. python experiments/policy_probes/quality_map.py --plot --save_dir <dir>
+
+OUTPUT PATH. Both files land in --save_dir, and when that is not given they land
+in a `diagnostics/` directory NEXT TO THE CHECKPOINT FILE, i.e.
+`os.path.dirname(--ckpt)/diagnostics/`, which is created if missing:
+  <save_dir | dirname(ckpt)/diagnostics>/quality_map.json   the binned grids
+  <save_dir | dirname(ckpt)/diagnostics>/quality_map.pdf    the figure
+So the default `--ckpt checkpoints/sota/policy.pth` writes
+`checkpoints/sota/diagnostics/quality_map.{json,pdf}`. --plot reads that same
+JSON back and re-renders the PDF without rolling anything out, so --save_dir has
+to point at the directory the compute pass wrote.
 --------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import argparse, json, os, shutil
 import numpy as np
 
-URG_BINS = [(0.0, 0.2), (0.2, 0.35), (0.35, 0.5), (0.5, 0.65)]   # 4 urgency slices
+AGE_BINS = [(0.0, 0.2), (0.2, 0.35), (0.35, 0.5), (0.5, 0.65)]   # 4 normalized-age slices
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true", help="re-render from the JSON")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=300)
-    ap.add_argument("--p_lo", type=float, default=0.4,
-                    help="lower edge of the per-episode p_gen/p_swap MEAN draw "
-                         "(collect() default 0.4 = training range; lower this to "
-                         "densify the low-p_gen/p_swap corner of the grid)")
-    ap.add_argument("--p_hi", type=float, default=0.9)
-    ap.add_argument("--bin", type=float, default=0.1, help="p_s / p_e grid bin width")
-    ap.add_argument("--min_count", type=int, default=20,
-                    help="aggregate tiles with fewer decisions are greyed out")
-    ap.add_argument("--min_count_cond", type=int, default=8,
-                    help="urgency-conditioned tiles: sparser, lower threshold")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--save_dir", default=None)
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true", help="re-render from the JSON")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--episodes", type=int, default=2000,
+                   help="greedy rollouts; the 0.05-wide grid needs roughly 4x "
+                   "the decisions of a 0.1-wide one to fill its tiles, so "
+                   "lower this only for a quick look")
+    p.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
+                   help="n_ch pool for rollouts (match the ckpt's training n_ch)")
+    p.add_argument("--p_lo", type=float, default=0.4,
+                   help="lower edge of the per-episode p_gen/p_swap MEAN draw "
+                   "(collect() default 0.4 = training range; lower this to "
+                   "densify the low-p_gen/p_swap corner of the grid)")
+    p.add_argument("--p_hi", type=float, default=0.9)
+    p.add_argument("--bin", type=float, default=0.05, help="p_s / p_e grid bin width")
+    p.add_argument("--min_count", type=int, default=30,
+                   help="aggregate tiles with fewer decisions are greyed out")
+    p.add_argument("--min_count_cond", type=int, default=12,
+                   help="age-conditioned tiles: sparser, lower threshold")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--save_dir", default=None)
+    return p.parse_args()
 
 
 def grid2d(px, py, took, edges, min_count):
@@ -70,17 +85,18 @@ def _np(g):
 
 def run_compute(a, out_json):
     from experiments.policy_probes import _collect as C
-    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed, p_lo=a.p_lo, p_hi=a.p_hi)
+    d = C.collect(a.ckpt, episodes=a.episodes, seed=a.seed, p_lo=a.p_lo, p_hi=a.p_hi,
+                  n_chs=tuple(a.n_ch))
     X, act = d["X"], d["A"]
-    p_e, p_s, urg = X[:, 6], X[:, 7], X[:, 8]
-    cs = np.rint(X[:, 4]).astype(bool)
-    cp = np.rint(X[:, 5]).astype(bool)
+    p_e, p_s, age_frac = X[:, 3], X[:, 4], X[:, 5]
+    cs = np.rint(X[:, 1]).astype(bool)
+    cp = np.rint(X[:, 2]).astype(bool)
     both = cs & cp
     edges = np.arange(0.0, 1.0 + 1e-9, a.bin)
 
     def slc(s):
-        lo, hi = URG_BINS[s]
-        return (urg >= lo) & (urg < hi)
+        lo, hi = AGE_BINS[s]
+        return (age_frac >= lo) & (age_frac < hi)
 
     def panel(el, took):
         agg = _jsonable(grid2d(p_s[el], p_e[el], took[el], edges, a.min_count))
@@ -95,7 +111,7 @@ def run_compute(a, out_json):
     data = dict(ckpt=a.ckpt, episodes=a.episodes, seed=a.seed, bin=a.bin,
                 p_lo=a.p_lo, p_hi=a.p_hi,
                 min_count=a.min_count, min_count_cond=a.min_count_cond,
-                urg_bins=URG_BINS,
+                age_bins=AGE_BINS,
                 panels=dict(
                     purify=dict(cmap="Greens", vmin=0.0, vmax=1.0, n=int(cp.sum()),
                                 title=r"$P(\mathrm{PURIFY} \mid \mathrm{can\,purify})$",
@@ -129,7 +145,7 @@ def run_plot(data, stem):
         return c
 
     edges = np.arange(0.0, 1.0 + 1e-9, data["bin"])
-    urg_bins = data["urg_bins"]
+    age_bins = data["age_bins"]
     order = ["purify", "swap", "both_pref"]
     letters = "ABC"
 
@@ -140,14 +156,14 @@ def run_plot(data, stem):
         P = data["panels"][key]
         cmap = cmap_for(P["cmap"])
 
-        # --- top: aggregate over all urgency ---
+        # --- top: aggregate over all normalized ages ---
         axt = fig.add_subplot(outer[0, c])
         pm = axt.pcolormesh(edges, edges, np.ma.masked_invalid(_np(P["agg"])),
                             cmap=cmap, vmin=P["vmin"], vmax=P["vmax"],
                             edgecolors="0.55", linewidth=0.5)
         fig.colorbar(pm, ax=axt, fraction=0.046, pad=0.03)
         axt.set_aspect("equal")
-        axt.set_title(f"{P['title']}\n({P['n']} decisions, all urgency)", fontsize=9.5)
+        axt.set_title(f"{P['title']}\n({P['n']} decisions, all ages)", fontsize=9.5)
         lab = f"({letters[c]})"
         axt.text(-0.10, 1.16, rf"\textbf{{{lab}}}" if usetex else lab,
                  transform=axt.transAxes, va="top", ha="left", fontsize=12)
@@ -155,7 +171,7 @@ def run_plot(data, stem):
         if c == 0:
             axt.set_ylabel(r"$p_e$ (generation quality)", fontsize=9)
 
-        # --- bottom: 2x2 block conditioned on urgency (TL,TR,BL,BR = u 0,.2,.4,.6) ---
+        # --- bottom: 2x2 block conditioned on normalized age (TL,TR,BL,BR = u 0,.2,.4,.6) ---
         sub = outer[1, c].subgridspec(2, 2, hspace=0.30, wspace=0.12)
         for k in range(4):
             axs = fig.add_subplot(sub[k // 2, k % 2])
@@ -163,7 +179,7 @@ def run_plot(data, stem):
                            cmap=cmap, vmin=P["vmin"], vmax=P["vmax"],
                            edgecolors="0.6", linewidth=0.25)
             axs.set_aspect("equal")
-            lo, hi = urg_bins[k]
+            lo, hi = age_bins[k]
             axs.set_title(rf"${lo:g} \leq u < {hi:g}$", fontsize=8, pad=2)
             axs.set_xticks([0, 0.5, 1]); axs.set_yticks([0, 0.5, 1])
             axs.tick_params(labelsize=9)
@@ -182,7 +198,7 @@ def run_plot(data, stem):
             if c == 0 and k in (0, 2):
                 axs.set_ylabel(r"$p_e$", fontsize=9)
 
-    fig.text(0.5, 0.06, r"(D,E,F): same panels conditioned on link urgency "
+    fig.text(0.5, 0.06, r"(D,E,F): same panels conditioned on normalized link age "
              r"$u=\langle\mathrm{age/cutoff}\rangle$ in disjoint bins "
              r"(TL,TR,BL,BR $= [0,0.2),[0.2,0.35),[0.35,0.5),[0.5,0.65)$)",
              ha="center", fontsize=9)

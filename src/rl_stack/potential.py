@@ -1,62 +1,39 @@
 """
 --------------------------------------------------------------------------------
-Topology-general PBRS potential: the single entanglement link that shortcuts
-the most of the source->dest path. Pure (no env/torch deps).
+PBRS potential for the linear repeater chain: the single entanglement link that
+shortcuts the most of the source->dest path. Pure (no env/torch deps).
 
-Phi(s) = max over entangled links (a, b) of
-         max(0, d_total - d_src[a] - d_dst[b], d_total - d_src[b] - d_dst[a]) / d_total
-where d_src/d_dst are physical shortest-path hops from source / to dest.
+On a chain, node i sits i hops from the source and N-1-i hops from the dest, so
+the shortcut a link (a, b) offers collapses to |a - b| hops out of N-1:
+
+    Phi(s) = max over entangled links (a, b) of |a - b| / (N - 1)
+
+(This is the topology-general BFS formula
+ max(0, d_total - d_src[a] - d_dst[b], ...sym...) / d_total specialised to the
+ chain, which is the only geometry the project models since f0bb963. The values
+ are identical, see
+ tests/test_potential.py::test_chain_closed_form_matches_the_bfs_formula.)
 
 SINGLE longest link, NOT a component union, ON PURPOSE: crediting a connected
-component's span let a blob of ADJACENT links — which background auto-
-entanglement creates for free — span the geodesic and max out Phi with zero
+component's span let a blob of ADJACENT links, which background auto-
+entanglement creates for free, span the geodesic and max out Phi with zero
 swaps, so the agent learned to do nothing (NOOP) and collect that free reward.
 Adjacent links span only 1 hop each, so a single-longest-link potential is only
-raised by SWAP-built long links — the progress the agent actually controls. The
+raised by SWAP-built long links, the progress the agent actually controls. The
 cost: it under-credits a chain of swapped links (credited by their longest
 member, not their union). See docs/superpowers for the debugging trail.
 --------------------------------------------------------------------------------
 """
 from __future__ import annotations
-from collections import deque
-
-import numpy as np
 
 
-def bfs_hops(adjacency: np.ndarray, start: int) -> np.ndarray:
-    """
-    Shortest-path hop distance from `start` to every node over the unweighted
-    graph (edge where adjacency != 0). Unreachable nodes are np.inf.
-    """
-    n = adjacency.shape[0]
-    dist = np.full(n, np.inf)
-    dist[start] = 0.0
-    q = deque([int(start)])
-    while q:
-        u = q.popleft()
-        for v in np.flatnonzero(adjacency[u] != 0):
-            if not np.isfinite(dist[v]):
-                dist[v] = dist[u] + 1.0
-                q.append(int(v))
-    return dist
-
-
-def path_progress(d_src: np.ndarray, d_dst: np.ndarray, d_total: float,
-                  entangled_edges) -> float:
+def path_progress(entangled_edges, n_nodes: int) -> float:
     """
     PBRS potential Phi in [0, 1] (see module docstring): the single entangled
-    link offering the largest source->dest shortcut. 0 if no edges or d_total is
-    non-positive / non-finite.
+    link offering the largest source->dest shortcut on an `n_nodes` chain. 0
+    when there are no edges or the chain is degenerate (n_nodes < 2).
     """
-    if not np.isfinite(d_total) or d_total <= 0:
+    if n_nodes < 2:
         return 0.0
-    best = 0.0
-    for a, b in entangled_edges:
-        a, b = int(a), int(b)
-        for x, y in ((a, b), (b, a)):
-            dx, dy = d_src[x], d_dst[y]
-            if np.isfinite(dx) and np.isfinite(dy):
-                span = d_total - dx - dy
-                if span > best:
-                    best = span
-    return float(min(max(best, 0.0) / d_total, 1.0))
+    span = max((abs(int(a) - int(b)) for a, b in entangled_edges), default=0)
+    return min(span / (n_nodes - 1), 1.0)

@@ -7,6 +7,7 @@ Train an RL agent on a specified system
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime, timezone
 import numpy as np
@@ -14,61 +15,81 @@ import torch
 from rl_stack import QRNAgent
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train QRNAgent")
+    p = argparse.ArgumentParser(description="Train QRNAgent")
     # Algorithm Variables
-    parser.add_argument("--run_id", type=str, default="xxx")
-    parser.add_argument("--seed", type=int, default=0,
-                        help="master seed: seeds torch (net init), the agent RNG "
-                             "(eps-greedy + per-episode domain draws), the replay "
-                             "sampler, AND the per-episode env/network physics RNG "
-                             "(entangle/swap/purify coin flips, auto-entangle "
-                             "shuffle, inhomogeneity). A given seed makes the whole "
-                             "training trajectory + metrics.json bit-reproducible on "
-                             "cpu. Vary for independent agents.")
-    parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--hidden", type=int, default=64)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--max_steps", type=int, default=20)
-    parser.add_argument("--episodes", type=int, default=300)
+    p.add_argument("--run_id", type=str, default="xxx")
+    p.add_argument("--seed", type=int, default=0,
+                   help="master seed: seeds torch (net init), the agent RNG "
+                   "(eps-greedy + per-episode domain draws), the replay "
+                   "sampler, AND the per-episode env/network physics RNG "
+                   "(entangle/swap/purify coin flips, auto-entangle "
+                   "shuffle, inhomogeneity). A given seed makes the whole "
+                   "training trajectory + metrics.json bit-reproducible on "
+                   "cpu. Vary for independent agents.")
+    p.add_argument("--lr", type=float, default=5e-4)
+    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--batch_size", type=int, default=64)
+    p.add_argument("--max_steps", type=int, default=20)
+    p.add_argument("--episodes", type=int, default=300)
 
     # System Variables
-    parser.add_argument("--n_lo", type=int, default=5)
-    parser.add_argument("--n_hi", type=int, default=8)
-    parser.add_argument("--curriculum", action='store_false')
-    parser.add_argument("--n_ch", type=int, nargs="+", default=[4],
-                        help="n_ch pool, e.g. --n_ch 2 3 4 (per-episode draw)")
-    parser.add_argument("--topology", type=str, default='chain')
-    parser.add_argument("--p_gen", type=float, nargs="+", default=[0.60],
-                        help="MEAN p_gen; pass two values for a (lo,hi) per-episode range")
-    parser.add_argument("--p_swap", type=float, nargs="+", default=[0.85],
-                        help="MEAN p_swap; pass two values for a (lo,hi) per-episode range")
-    parser.add_argument("--p_gen_std", type=float, default=0.0,
-                        help="per-repeater spread of p_gen (0 = homogeneous)")
-    parser.add_argument("--p_swap_std", type=float, default=0.0,
-                        help="per-repeater spread of p_swap (0 = homogeneous)")
-    parser.add_argument("--cutoff", type=int, default=6)
-    parser.add_argument("--cutoff_lo", type=int, default=None,
-                        help="with --cutoff_hi, sample cutoff per episode in [lo,hi]")
-    parser.add_argument("--cutoff_hi", type=int, default=None)
-    parser.add_argument("--gamma", type=float, default=0.995,
-                        help="DQN discount AND env PBRS gamma (kept matched)")
+    p.add_argument("--n_lo", type=int, default=5)
+    p.add_argument("--n_hi", type=int, default=8)
+    p.add_argument("--curriculum", action='store_false')
+    p.add_argument("--n_ch", type=int, nargs="+", default=[4],
+                   help="n_ch pool, e.g. --n_ch 2 3 4 (per-episode draw)")
+    p.add_argument("--p_gen", type=float, nargs="+", default=[0.60],
+                   help="MEAN p_gen; pass two values for a (lo,hi) per-episode range")
+    p.add_argument("--p_swap", type=float, nargs="+", default=[0.85],
+                   help="MEAN p_swap; pass two values for a (lo,hi) per-episode range")
+    p.add_argument("--p_gen_std", type=float, default=0.0,
+                   help="per-repeater spread of p_gen (0 = homogeneous)")
+    p.add_argument("--p_swap_std", type=float, default=0.0,
+                   help="per-repeater spread of p_swap (0 = homogeneous)")
+    p.add_argument("--cutoff", type=int, default=6)
+    p.add_argument("--cutoff_lo", type=int, default=None,
+                   help="with --cutoff_hi, sample cutoff per episode in [lo,hi]")
+    p.add_argument("--cutoff_hi", type=int, default=None)
+    p.add_argument("--gamma", type=float, default=0.995,
+                   help="DQN discount AND env PBRS gamma (kept matched)")
+    p.add_argument("--eps_schedule", choices=["linear", "cosine"],
+                   default="linear",
+                   help="ε annealing shape over first 90%% of episodes "
+                   "(linear = Mnih/SB3 standard; cosine = legacy)")
 
-    # CC Variables
-    parser.add_argument("--dt_seconds", type=float, default=0.00) #1e-4 for CC
-    parser.add_argument("--channel_loss", type=float, default=0.00)
-    parser.add_argument("--F0", type=float, default=1.0)
+    p.add_argument("--channel_loss", type=float, default=0.00)
+    p.add_argument("--F0", type=float, default=1.0)
     
-    parser.add_argument("--compare", action="store_true",
-                        help="log per-episode greedy-agent vs swap-asap vs random "
-                             "returns on a shared seeded net (+ training_compare.png)")
-    parser.add_argument("--save_base_dir", type=str, default="checkpoints")
-    parser.add_argument("--prune_unwinnable", action="store_true",
-                        help="skip cells swap-asap can't deliver (winnability oracle)")
-    parser.add_argument("--no_eval_ckpt", action="store_true",
-                        help="disable the delivery-time eval probe for best-checkpoint "
-                             "selection (auto-enabled for episodes >= 5000); falls back "
-                             "to rolling-mean reward selection")
-    return parser.parse_args()
+    p.add_argument("--compare", action="store_true",
+                   help="log sampled greedy-agent vs swap-asap vs random "
+                   "returns on a shared seeded net (+ training_compare.png)")
+    p.add_argument("--compare_every", type=int, default=10,
+                   help="run the paired comparison rollouts every K episodes "
+                   "(each sample costs 3 extra greedy rollouts; K=1 "
+                   "reproduces the old every-episode behaviour)")
+    p.add_argument("--save_base_dir", type=str, default="checkpoints")
+    p.add_argument("--prune_unwinnable", action="store_true",
+                   help="skip cells swap-asap can't deliver (winnability oracle)")
+    p.add_argument("--no_eval_ckpt", action="store_true",
+                   help="disable the delivery-time eval probe for best-checkpoint "
+                   "selection (auto-enabled for episodes >= 5000); falls back "
+                   "to rolling-mean reward selection")
+    p.add_argument("--force_eval_ckpt", action="store_true",
+                   help="build the delivery-time probe even below the "
+                   "episodes >= 5000 auto threshold (smoke tests, "
+                   "short diagnostic runs)")
+    p.add_argument("--ckpt_pool", action="store_true",
+                   help="save EVERY eval-probe checkpoint to <save>/pool/ "
+                   "and, after training, re-score the whole pool at "
+                   "--runoff_episodes and copy the winner to policy.pth")
+    p.add_argument("--runoff_episodes", type=int, default=400,
+                   help="episodes per cell in the final pool runoff (the "
+                   "in-training probe uses 40; the runoff is the "
+                   "honest one)")
+    p.add_argument("--disable_purify", action="store_true",
+                   help="mask PURIFY in BOTH selection and the DQN target -> "
+                   "train a pure swap-scheduler")
+    return p.parse_args()
 
 
 # -- Run manifest ----------------------------------------------------------
@@ -142,12 +163,10 @@ def build_eval_probe(args, hard_cells, probe_seed=12345, n_episodes=40):
                 "gamma": agent.gamma,
                 "F0": args.F0,
                 "channel_loss": args.channel_loss,
-                "dt_seconds": args.dt_seconds,
                 "max_steps": max_steps,
-                "topology": args.topology,
             }
             for k in range(n_episodes):
-                # greedy rollout (select_actions training=False ignores epsilon);
+                # greedy rollout (select_action training=False ignores epsilon);
                 # deterministic per (cell, k); steps censored at max_steps.
                 _, steps, _ = agent._cmp_rollout(
                     env_args, probe_seed + 1000 * k, "agent", max_steps)
@@ -162,7 +181,7 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
     within max_steps. Post cutoff-fix, every delivery is entangled by
     construction, so plain delivery rate is the right calibration signal."""
     from rl_stack.env_wrapper import QRNEnv
-    from rl_stack import strategies
+    from rl_stack import policies
     wins = 0
     for k in range(n_episodes):
         env = QRNEnv(
@@ -170,12 +189,15 @@ def _pilot_delivery_rate(cell, args, n_episodes=20, seed=999):
             p_gen=cell["p_gen"], p_swap=cell["p_swap"],
             p_gen_std=args.p_gen_std, p_swap_std=args.p_swap_std,
             cutoff=cell["cutoff"], F0=args.F0,
-            channel_loss=args.channel_loss, dt_seconds=args.dt_seconds,
-            max_steps=args.max_steps, topology=args.topology,
+            channel_loss=args.channel_loss,
+            max_steps=args.max_steps,
             rng=np.random.default_rng(seed + k))
         env.reset()
-        for _ in range(args.max_steps):
-            _, _, done, info = env.step(strategies.purify_then_swap(env))
+        # Serialized sweep: one micro-decision at env.active_node per
+        # env.step call; the env self-truncates at max_steps ticks.
+        while True:
+            a = policies.purify_then_swap(env)
+            _, _, done, info = env.step(a)
             if done:
                 wins += int(bool(info["terminated"]))
                 break
@@ -243,6 +265,42 @@ def make_calibrated_cells(args, lo=0.30, hi=0.70, n_cells=2, n_episodes=20):
           f"{[(c['n_repeaters'], c['cutoff'], round(r, 2)) for c, r in chosen]}")
     return [c for c, _ in chosen]
 
+
+def resolve_eval_probe(args):
+    """Decide whether this run gets a delivery-time eval probe, and build it.
+
+    Returns (eval_fn, eval_every, cells); (None, 0, []) when the run has no
+    probe. Rolling-mean reward demonstrably mis-picked long runs (the 35k
+    overtraining regression, and CC best < final), and raw return is not even
+    comparable across a curriculum run because N grows while STEP_COST
+    accumulates against a SUCCESS_REWARD capped at 1.0. So real runs select
+    policy.pth by a held-out censored delivery time (lower = better).
+
+    The probe is auto-enabled for episodes >= 5000; --force_eval_ckpt turns it
+    on below that threshold (smoke tests) and --no_eval_ckpt turns it off
+    entirely. --ckpt_pool without a probe is rejected here rather than after
+    hours of training against an empty pool.
+    """
+    want = (not args.no_eval_ckpt) and (args.episodes >= 5000
+                                        or args.force_eval_ckpt)
+    if not want:
+        if args.ckpt_pool:
+            raise ValueError(
+                "--ckpt_pool needs the delivery-time eval probe (the pool is "
+                "written at each probe): drop --no_eval_ckpt, or add "
+                "--force_eval_ckpt for a run below the 5000-episode auto "
+                "threshold")
+        return None, 0, []
+    cells = make_calibrated_cells(args)
+    eval_fn = build_eval_probe(args, cells)
+    # episodes // 20 gives ~20 probes per run; the max(1, .) floor only ever
+    # binds for the short forced runs (>= 5000 episodes always yields >= 250).
+    eval_every = max(1, args.episodes // 20)
+    print(f"[eval-ckpt] delivery-time probe every {eval_every} eps "
+          f"({len(cells)} cells x 40 eps); early-stop off")
+    return eval_fn, eval_every, cells
+
+
 if __name__ == "__main__":
     args = parse_args()
 
@@ -271,19 +329,10 @@ if __name__ == "__main__":
                      rng=np.random.default_rng(args.seed),
                      seed=args.seed,)
 
-    # Eval-probe best-checkpoint selection (default for real runs): rolling-mean
-    # reward demonstrably mis-picked long runs (35k overtraining; CC best<final),
-    # so for episodes >= 5000 select policy.pth by a held-out delivery-time probe
-    # (lower = better). Early stopping is OFF (eval_patience=0): we want better
-    # checkpoint selection, not early termination. --no_eval_ckpt reverts.
-    eval_fn = None
-    eval_every = 0
-    if args.episodes >= 5000 and not args.no_eval_ckpt:
-        cells = make_calibrated_cells(args)
-        eval_fn = build_eval_probe(args, cells)
-        eval_every = max(250, args.episodes // 20)
-        print(f"[eval-ckpt] delivery-time probe every {eval_every} eps "
-              f"({len(cells)} cells x 40 eps); early-stop off")
+    # Eval-probe best-checkpoint selection (default for real runs). Early
+    # stopping is OFF (eval_patience=0): we want better checkpoint selection,
+    # not early termination. See resolve_eval_probe for the flag semantics.
+    eval_fn, eval_every, probe_cells = resolve_eval_probe(args)
 
     metrics = agent.train(
         episodes=args.episodes,
@@ -299,14 +348,33 @@ if __name__ == "__main__":
                 if args.cutoff_lo is not None else args.cutoff),
         channel_loss=args.channel_loss,
         F0=args.F0,
-        dt_seconds=args.dt_seconds,
         env_seed=args.seed,
+        eps_schedule=args.eps_schedule,
         eval_fn=eval_fn,
         eval_every=eval_every,
         eval_patience=0,      # checkpoint selection only, no early termination
         eval_mode='min',
         save_path=save_path,
-        topology=args.topology,
+        save_best=True,
+        ckpt_pool=args.ckpt_pool,
         prune_unwinnable=args.prune_unwinnable,
+        disable_actions=((2,) if args.disable_purify else ()),
         compare=args.compare,
+        compare_every=args.compare_every,
         plot=True,)
+
+    # Final runoff: the in-training probe is cheap (40 eps/cell) so its running
+    # argmin is within noise of several candidates. Re-score the whole pool once
+    # at --runoff_episodes and promote the true winner to policy.pth. The
+    # comparison is PAIRED: build_eval_probe seeds rollout k from
+    # (probe_seed, k) alone, over the SAME cells the in-training probe used, so
+    # every candidate meets a bit-identical episode set. policy.pth still means
+    # BEST and policy_final.pth (already written by train) still means LAST.
+    if args.ckpt_pool:
+        runoff_probe = build_eval_probe(args, probe_cells,
+                                        n_episodes=args.runoff_episodes)
+        best, score = agent.runoff(os.path.join(save_path, "pool"),
+                                   runoff_probe)
+        shutil.copyfile(best, os.path.join(save_path, "policy.pth"))
+        print(f"[runoff] policy.pth <- {os.path.basename(best)} "
+              f"(T={score:.3f})")

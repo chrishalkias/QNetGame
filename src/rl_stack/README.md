@@ -19,9 +19,8 @@ topologies and is evaluated zero-shot on larger or differently parameterised net
 | `model.py` | Neural network | 3-layer GraphSAGE Q-network producing per-node action values |
 | `buffer.py` | Experience storage | Fixed-size ring buffer for (s, a, r, s', done, mask') transitions |
 | `agent.py` | Training and evaluation | Double-DQN agent: action selection, loss computation, training loop, validation |
-| `strategies.py` | Baselines | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking |
-| `potential.py` | Reward shaping | PBRS potential (`bfs_hops`, `path_progress`), pure, no torch |
-| `winnability.py` | Training helper | Purify-then-swap winnability oracle (2026-07-12; was swap-asap) used to prune unsolvable episode cells |
+| `policies.py` | Baselines + training helper | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking, plus the purify-then-swap winnability oracle (2026-07-12; was swap-asap) used to prune unsolvable episode cells |
+| `potential.py` | Reward shaping | PBRS potential (`path_progress`, chain closed form), pure, no torch |
 | `__init__.py` | Re-exports | Public API surface with guarded torch imports |
 
 
@@ -89,8 +88,8 @@ pair for the current episode.
 ### 2.2 Target selection: `_pick_targets()`
 
 Chain-only: source and destination are always fixed to the first and last node (indices `0`
-and `N-1`). Also caches the BFS hop distances (`_d_src`, `_d_dst`, `_d_total`) the PBRS
-potential reads every step (§5.5).
+and `N-1`). The PBRS potential needs no cached hop distances: on a chain the shortcut a
+link `(a, b)` offers is just `|a - b| / (N - 1)`.
 
 
 ### 2.3 Observation: `get_observation()`
@@ -112,7 +111,7 @@ The nine per-node features (all in `[0, 1]`) are:
 | 5 | `can_purify` | 1.0 if node has >=2 available qubits linked to the same partner |
 | 6 | `p_gen` | per-repeater generation probability (inhomogeneity signal) |
 | 7 | `p_swap` | per-repeater BSM success probability (inhomogeneity signal) |
-| 8 | `link_urgency` | `mean(age / link_cutoff)` over occupied qubits; 0 if none, →1 near expiry |
+| 8 | `normalized_age` | `mean(age / link_cutoff)` over occupied qubits; 0 if none, →1 near expiry |
 
 Features 4 and 5 are forced to 0 for source and destination nodes (they may only NOOP).
 Features 6/7 are constant across nodes when the network is homogeneous (`std = 0`).
@@ -275,8 +274,8 @@ full, entries overwrite at position `self.pos` (modulo `max_size`). Sampling use
 Geometric `Data` object on the specified device. This bridges the numpy-based environment
 interface with the torch-based model.
 
-**`_running_avg(vals, window)`**: Computes a causal (backward-looking) moving average with
-the given window size. Used exclusively for smoothing training metric plots.
+(`_running_avg`, the causal backward-looking moving average used to smooth the training
+curves, moved to `plots.py` with the rest of the figure code.)
 
 
 ### 5.2 Class `QRNAgent`
@@ -410,9 +409,9 @@ The strategies compared are:
 | Strategy | Source | Behaviour |
 |---|---|---|
 | Agent | `select_actions(training=False)` | Greedy Q-value policy |
-| SwapASAP | `strategies.swap_asap` | Swap at every node that can, every step |
-| PurifySwap | `strategies.purify_then_swap` | Purify if possible, else swap if possible |
-| Random | `strategies.random_policy` | Uniform random valid action per node |
+| SwapASAP | `policies.swap_asap` | Swap at every node that can, every step |
+| PurifySwap | `policies.purify_then_swap` | Purify if possible, else swap if possible |
+| Random | `policies.random_policy` | Uniform random valid action per node |
 
 > `BeliefPropagationPolicy` and `fidelity_gated_swap` were deliberately removed 2026-07-09
 > (out of scope for the paper; recoverable from git history).
@@ -426,24 +425,29 @@ episodes additionally produce per-step geometric renderings of the network state
 `save_dir/visual/state_{step}.png`.
 
 
-### 5.7 Plotting methods (brief)
+### 5.7 Plotting (module `plots.py`)
 
-**`_plot_training(metrics, save_path)`**: Generates a 3-panel figure showing episode return
+The figure code lives in `rl_stack/plots.py`, not in `agent.py`, so importing the agent
+does not pull in matplotlib. `agent.py` imports these lazily, at the call site, only when
+a figure is actually requested. `plots.py` selects the non-interactive `Agg` backend
+before importing `pyplot`, so it works on a headless cluster node.
+
+**`plot_training(metrics, save_path, window=None)`**: Generates a 3-panel figure showing episode return
 (with running average), loss (log scale), and success rate over training. Saved as
 `training_metrics.png`.
 
-**`_print_results_table(results, N, pg, ps, c)`**: Prints a formatted ASCII table of
+**`print_results_table(results, N, pg, ps, c)`**: Prints a formatted ASCII table of
 validation results (average steps with standard deviation, average fidelity with standard
 deviation, success percentage) for each strategy.
 
-**`_plot_timeline_grid(timelines, N, pg, ps, c, save_dir)`**: Visualises action sequences
+**`plot_timeline_grid(timelines, N, pg, ps, c, save_dir)`**: Visualises action sequences
 from the first validation episode. Each cell represents one node at one timestep. The cell
 colour encodes the repeater identity (from a colourmap). Hatching distinguishes actions:
 solid = NOOP, `///` = SWAP, `...` = PURIFY. A black patch marks the terminal step. Saved as
 `validation_actions.png`.
 
 
-## 6. File: `strategies.py` - Baseline Policies
+## 6. File: `policies.py` - Baseline Policies and the Winnability Oracle
 
 Three heuristic strategies are provided for benchmarking. All respect the action mask
 (source/destination are NOOP) and return an `(N,)` int32 action array.

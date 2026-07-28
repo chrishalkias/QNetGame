@@ -26,43 +26,42 @@ import numpy as np
 from experiments.policy_probes import _collect as C
 
 LABELS = {
-    "occ": "Occupancy", "fidelity": "Fidelity", "is_target": "Target",
-    "avail": "Availability", "can_swap": "Can swap", "can_purify": "Can purify",
+    "occ": "Occupancy", "can_swap": "Can swap", "can_purify": "Can purify",
     "p_gen": r"$p_{\mathrm{gen}}$", "p_swap": r"$p_{\mathrm{swap}}$",
-    "urgency": "Urgency",
+    "normalized_age": "Normalized age", "relative_position": "Relative position",
 }
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plot", action="store_true", help="render from existing json")
-    ap.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
-    ap.add_argument("--episodes", type=int, default=200, help="per seed")
-    ap.add_argument("--seeds", type=int, nargs="+", default=[0],
-                    help="one independent collection per seed; bars = mean, "
-                         "error bars = std across seeds")
-    ap.add_argument("--ranges", nargs="+", default=["4-12"],
-                    help="chain-size ranges 'lo-hi', one panel each "
-                         "(training range is 4-12)")
-    ap.add_argument("--notes", nargs="+", default=None,
-                    help="panel titles, one per range (default: '$N=lo$--$hi$')")
-    ap.add_argument("--save_dir", default=None)
-    ap.add_argument("--color", default="#4C72B0",
-                    help="bar color (CC-delay agent uses purple by convention)")
-    ap.add_argument("--dt_seconds", type=float, default=0.0,
-                    help="CC delay per step (2.5e-4 = 1 step/hop at spacing=50)")
-    ap.add_argument("--max_steps", type=int, default=200,
-                    help="episode cap for rollout collection (bump under CC delays)")
-    ap.add_argument("--xmax", type=float, default=None,
-                    help="fixed x-axis limit (default: auto from the data)")
-    return ap.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--plot", action="store_true", help="render from existing json")
+    p.add_argument("--ckpt", default="checkpoints/sota/policy.pth")
+    p.add_argument("--episodes", type=int, default=200, help="per seed")
+    p.add_argument("--n_ch", type=int, nargs="+", default=[2, 3, 4],
+                   help="n_ch pool for rollouts (match the ckpt's training n_ch)")
+    p.add_argument("--seeds", type=int, nargs="+", default=[0],
+                   help="one independent collection per seed; bars = mean, "
+                   "error bars = std across seeds")
+    p.add_argument("--ranges", nargs="+", default=["4-12"],
+                   help="chain-size ranges 'lo-hi', one panel each "
+                   "(training range is 4-12)")
+    p.add_argument("--notes", nargs="+", default=None,
+                   help="panel titles, one per range (default: '$N=lo$--$hi$')")
+    p.add_argument("--save_dir", default=None)
+    p.add_argument("--color", default="#4C72B0",
+                   help="bar color (CC-delay agent uses purple by convention)")
+    p.add_argument("--max_steps", type=int, default=200,
+                   help="episode cap for rollout collection")
+    p.add_argument("--xmax", type=float, default=None,
+                   help="fixed x-axis limit (default: auto from the data)")
+    return p.parse_args()
 
 
-def _flip_fractions(ckpt, episodes, seed, sizes, dt_seconds, max_steps):
+def _flip_fractions(ckpt, episodes, seed, sizes, max_steps, n_chs=(2, 3, 4)):
     """One collection -> {feature: flip fraction}."""
     d = C.collect(ckpt, episodes=episodes, seed=seed, sizes=sizes,
-                  dt_seconds=dt_seconds, max_steps=max_steps)
+                  n_chs=n_chs, max_steps=max_steps)
     model, states, idx, base = d["model"], d["states"], d["idx"], d["A"]
     rng = np.random.default_rng(seed)
     flip = {}
@@ -89,7 +88,7 @@ def compute(a, out_json):
         for seed in a.seeds:
             print(f"[range {lo}-{hi}, seed {seed}]", flush=True)
             flip = _flip_fractions(a.ckpt, a.episodes, seed, range(lo, hi + 1),
-                                   a.dt_seconds, a.max_steps)
+                                   a.max_steps, n_chs=tuple(a.n_ch))
             for name, v in flip.items():
                 per_seed[name].append(v)
         panels.append(dict(n_lo=lo, n_hi=hi, note=note, flip=per_seed))

@@ -2,18 +2,31 @@
 --------------------------------------------------------------------------------
 RL environment wrapper for the quantum repeater network simulator.
 
-Step flow
----------
-  reset() > auto-entangle > return obs
-  step(actions):
-    1. Execute agent actions (purify first, then swap).
-    2. Age links (resolve pending events, decohere, expire).
-    3. Check end-to-end.
-    4. Auto-entangle (prepare links for next observation).
-    5. Return (obs, reward, done, info).
+Serialized left-to-right sweep
+-------------------------------
+One env "step" is now ONE micro-decision for env.active_node, applied
+immediately (the engine applies swap/purify without deferral). Interior
+nodes 1..N-2 act in a fixed left-to-right order each tick; source (0) and
+dest (N-1) never act (they are never members of `_interior`, so they can
+never be active). After the LAST interior node's micro-step, the tick
+boundary runs: age_links (decohere, expire) then auto-entangle (background
+link generation). End-to-end is checked after EVERY micro-step, so a swap
+may cascade end-to-end within one sweep and the episode can terminate
+mid-sweep on the closing node.
 
-The agent always sees the POST-auto-entangle state so it can
-immediately choose swap / purify if links are available.
+  reset()       -> auto-entangle once, cursor = first interior node, return obs
+  step(action):
+    1. apply `action` to env.active_node immediately
+    2. check end-to-end -> terminate here if connected (mid-sweep close)
+    3. advance the cursor to the next interior node (intra-tick), OR if this
+       was the last interior node: age_links, check end-to-end again,
+       auto-entangle, wrap the cursor back to the first interior node
+       (tick boundary)
+
+Physical time/cost attach to the TICK, not the micro-step: STEP_COST is
+charged once, on the boundary micro-step; intra-tick micro-steps carry pure
+PBRS shaping with gamma_eff=1.0 (telescoping over the tick), the boundary
+micro-step uses gamma_eff=self.gamma. See `step()` for the exact formulas.
 
 Action space
 -------------
@@ -24,7 +37,12 @@ Action space
 Entanglement generation is **not** an agent action - it is handled
 entirely by the automatic background generation step.
 
-Source and destination nodes are restricted to NOOP only.
+Source and destination nodes never act (structurally excluded from
+`_interior`).
+
+Precondition: N >= 3. A shorter chain has no interior node, so there is no
+decision to make and the MDP is degenerate; `__init__` rejects it rather
+than carrying a second, never-trained step path for it.
 --------------------------------------------------------------------------------
 """
 
@@ -33,7 +51,7 @@ from typing import Dict, Tuple, Optional
 import numpy as np
 
 from simulator.network import build_network
-from simulator.repeater import NO_PARTNER
+from simulator.repeater import NO_PARTNER, QUBIT_OCCUPIED, werner_to_fidelity
 from rl_stack import potential
 
 # --- action constants ----------------------------------------------------
@@ -64,29 +82,19 @@ class QRNEnv:
         "rng",        # RNG: per-episode physics + action sampling
         "max_steps",  # truncation horizon (steps before time-limit)
         "gamma",      # PBRS discount (threaded to equal the DQN gamma)
-        "topology",   # topology tag (always 'chain')
         "net",        # RepeaterNetwork physics engine
-        "_topo",      # frozen Topology snapshot (adjacency + positions)
         "N",          # number of repeaters
         "source",     # source node id (0)
         "dest",       # destination node id (N-1)
         "steps",      # steps elapsed in the current episode
         "done",       # episode terminated or truncated
         "_phi",       # last PBRS potential Φ(s)
-        "_d_src",     # BFS hop distances from source
-        "_d_dst",     # BFS hop distances from dest
-        "_d_total",   # source→dest hop distance (path length)
+        "_interior",  # fixed left-to-right sweep order (source/dest excluded)
+        "_active",    # current active interior node (always in _interior)
     )
 
     STEP_COST       = -0.01
     SUCCESS_REWARD  =  1.0
-    # ponytail: 0 = no penalty for failed ops. The mask already blocks invalid
-    # actions, so this term only ever fired on STOCHASTIC swap/purify failures
-    # (rng > p_swap) — punishing the agent for the env's coin-flip and training
-    # it swap-shy. Failure is already costed naturally (lost links → -PBRS +
-    # step cost). Restore a small negative only to penalize genuinely-invalid
-    # attempts if masking is ever disabled.
-    FAILED_ACTION   =  0.0
 
     def __init__(self,
                  n_repeaters = 5,
@@ -97,32 +105,43 @@ class QRNEnv:
                  p_gen_std = 0.0,
                  p_swap_std = 0.0,
                  cutoff = 20,
-                 F0 = 0.95,
-                 channel_loss = 0.02,
-                 dt_seconds = 1e-4,
+                 F0 = 1.0,
+                 channel_loss = 0.0,
                  max_steps = 50,
                  rng: Optional[np.random.Generator] = None,
-                 topology = 'chain',
                  gamma = 0.99):
+        """Physics defaults are IDEALISED: `F0=1.0` (perfect fresh links) and
+        `channel_loss=0.0` (no fibre attenuation, so neither the generation
+        rate nor the link fidelity depends on distance). Every trainer,
+        evaluator and probe in the repo already passed exactly those two
+        values, so the default now matches the regime the project actually
+        studies instead of silently disagreeing with it. The lossy physics is
+        untouched: pass `F0=0.95, channel_loss=0.02` to exercise it.
+        """
 
-        if topology != 'chain':
-            raise ValueError(f'Topology {topology} not supported')
+        # N >= 3 is a hard precondition of the serialized sweep, not a nicety:
+        # source and dest never act, so a shorter chain has no interior node,
+        # no decision, and no MDP. Raised (not asserted) because `python -O`
+        # strips asserts and this guard is what keeps `active_node` a real
+        # node index everywhere downstream.
+        if n_repeaters < 3:
+            raise ValueError(
+                f"n_repeaters must be at least 3 (source, one interior node, "
+                f"dest); got {n_repeaters}")
 
         self.rng = rng if rng is not None else np.random.default_rng()
         self.max_steps = max_steps
         self.gamma = gamma
         self._phi = 0.0
-        self.topology = topology
 
         self.net = build_network(
-            topology=topology, n_repeaters=n_repeaters, n_ch=n_ch,
+            n_repeaters=n_repeaters, n_ch=n_ch,
             spacing=spacing, p_gen=p_gen, p_swap=p_swap,
             p_gen_std=p_gen_std, p_swap_std=p_swap_std, cutoff=cutoff,
-            F0=F0, channel_loss=channel_loss, dt_seconds=dt_seconds,
+            F0=F0, channel_loss=channel_loss,
             rng=self.rng)
 
-        self._topo = self.net.topology()
-        self.N = self._topo.N
+        self.N = self.net.N
         self.source = -1
         self.dest = -1
         self.steps = 0
@@ -140,32 +159,33 @@ class QRNEnv:
 #                     ▀▀▀
 
     def _pick_targets(self):
-        # Chain endpoints are the two ends; also cache BFS hop distances that
-        # the PBRS potential (_progress) reads every step.
+        """Chain endpoints are the two ends."""
         self.source, self.dest = 0, self.N - 1
-        adj = self._topo.adjacency
-        self._d_src = potential.bfs_hops(adj, self.source)
-        self._d_dst = potential.bfs_hops(adj, self.dest)
-        self._d_total = float(self._d_src[self.dest])
 
     def _entangled_edges(self):
         """Undirected (a, b) edges of the current entanglement graph."""
         edges = set()
         for i in range(self.N):
-            ns = self.net.node_state(i)
-            for qi in np.flatnonzero(ns.occupied):
-                p = int(ns.partner_node[qi])
+            rep = self.net.node(i)
+            for qi in np.flatnonzero(rep.status == QUBIT_OCCUPIED):
+                p = int(rep.partner_repeater[qi])
                 if p != NO_PARTNER and p != i:
                     edges.add((min(i, p), max(i, p)))
         return edges
 
     def _progress(self) -> float:
-        """Topology-general PBRS potential in [0, 1]."""
-        return potential.path_progress(
-            self._d_src, self._d_dst, self._d_total, self._entangled_edges())
+        """PBRS potential Phi in [0, 1] (see rl_stack.potential)."""
+        return potential.path_progress(self._entangled_edges(), self.N)
 
     def is_target(self, node: int) -> bool:
         return node == self.source or node == self.dest
+
+    @property
+    def active_node(self) -> int:
+        """Interior node deciding the current micro-step. Always a real node
+        index in [1, N-2]: N >= 3 is enforced at construction, so `_interior`
+        is never empty and the cursor never needs a sentinel."""
+        return self._active
 
 #   ▄▄▄▄▄   ▄▄
 # ▄███████▄ ██                                   ██   ▀▀
@@ -178,88 +198,46 @@ class QRNEnv:
     def get_observation(self) -> Dict[str, np.ndarray]:
         """Build size-agnostic node features + topology.
 
-        Features per node (9):
-            [0] frac_occupied     — occupied / n_ch
-            [1] mean_fidelity     — avg F of available (unlocked) qubits (0 if none)
-            [2] in_endnode        — 1.0 if source OR dest (endpoints are symmetric)
-            [3] frac_available    — available (unlocked occupied) / n_ch
-            [4] can_swap          — 1.0 if a viable swap pair exists: ≥2 available qubits to different partners whose fused link survives same-tick resolution (age_i + age_j + 2 < min cutoff)
-            [5] can_purify        — 1.0 if ≥2 available qubits to same partner
-            [6] p_gen             — per-repeater link-generation prob. (inhomogeneity)
-            [7] p_swap            — per-repeater BSM success prob. (inhomogeneity)
-            [8] link_urgency      — mean(age/link_cutoff) over occupied qubits (0 if none)
+        Features per node (8):
+            [0] frac_occupied      occupied / physical capacity (2*n_ch interior, n_ch ends)
+            [1] can_swap           1.0 if a viable swap pair exists: one available LEFT link (partner<node) + one available RIGHT link (partner>node) whose fused link survives the tick boundary (age_i + age_j + 1 < min cutoff)
+            [2] can_purify         1.0 if >=2 available qubits to same partner
+            [3] p_gen              per-repeater link-generation prob. (inhomogeneity)
+            [4] p_swap             per-repeater BSM success prob. (inhomogeneity)
+            [5] normalized_age     mean(age/link_cutoff) over occupied qubits (0 if none)
+            [6] relative_position  i / (N-1): 0.0 at source, 1.0 at dest
+            [7] is_active          1.0 at env.active_node, the node deciding this micro-step (exactly one node, always: N >= 3 is enforced at construction)
 
-        Features [4] and [5] are forced to 0 for source / dest. Features [6]/[7]
+        Features [1] and [2] are forced to 0 for source / dest. Features [3]/[4]
         are constant across nodes when the network is homogeneous (std=0); they
         carry node-quality signal only under per-repeater inhomogeneity.
-        Feature [8] is 0 for nodes with no occupied qubits; ~1 means links are
+        Feature [5] is 0 for nodes with no occupied qubits; ~1 means links are
         about to expire.
         """
-        feats = np.zeros((self.N, 9), dtype=np.float32)
+        feats = np.zeros((self.N, 8), dtype=np.float32)
         for i in range(self.N):
-            ns = self.net.node_state(i)
-            occ = ns.occupied
-            avail = occ & (~ns.locked)
-            feats[i, 0] = int(occ.sum()) / ns.n_ch
-            feats[i, 1] = (float(ns.fidelity[avail].mean())
-                           if bool(avail.any()) else 0.0)
-            feats[i, 2] = 1.0 if self.is_target(i) else 0.0
-            feats[i, 3] = int(avail.sum()) / ns.n_ch
+            rep = self.net.node(i)
+            occ = rep.status == QUBIT_OCCUPIED
+            capacity = occ.size  # physical qubit count (2*n_ch interior, n_ch ends)
+            feats[i, 0] = int(occ.sum()) / capacity
             if self.is_target(i):
-                feats[i, 4] = 0.0
-                feats[i, 5] = 0.0
+                feats[i, 1] = 0.0
+                feats[i, 2] = 0.0
             else:
-                feats[i, 4] = 1.0 if self._can_swap_from(ns) else 0.0
-                feats[i, 5] = 1.0 if self._can_purify_from(ns) else 0.0
-            feats[i, 6] = ns.p_gen
-            feats[i, 7] = ns.p_swap
+                feats[i, 1] = 1.0 if rep.can_swap() else 0.0
+                feats[i, 2] = 1.0 if rep.can_purify() else 0.0
+            feats[i, 3] = rep.p_gen
+            feats[i, 4] = rep.p_swap
             if bool(occ.any()):
-                lc = np.maximum(ns.link_cutoff[occ], 1)
-                feats[i, 8] = float(np.clip(np.mean(ns.age[occ] / lc), 0.0, 1.0))
+                lc = np.maximum(rep.link_cutoff[occ], 1)
+                feats[i, 5] = float(np.clip(np.mean(rep.age[occ] / lc), 0.0, 1.0))
             else:
-                feats[i, 8] = 0.0
-        src, dst = np.nonzero(self._topo.adjacency)
+                feats[i, 5] = 0.0
+        feats[:, 6] = np.arange(self.N, dtype=np.float32) / (self.N - 1)
+        feats[self._active, 7] = 1.0
+        src, dst = np.nonzero(self.net.adj)
         edge_index = np.stack([src, dst], axis=0).astype(np.int64)
         return {"x": feats, "edge_index": edge_index}
-
-#   ▄▄▄▄▄
-# ▄███████▄                         ▀▀
-# ███   ███ ██ ██ ▄█▀█▄ ████▄ ████▄ ██  ▄█▀█▄ ▄█▀▀▀
-# ███▄█▄███ ██ ██ ██▄█▀ ██ ▀▀ ██ ▀▀ ██  ██▄█▀ ▀███▄
-#  ▀█████▀  ▀██▀█ ▀█▄▄▄ ██    ██    ██▄ ▀█▄▄▄ ▄▄▄█▀
-#       ▀▀
-
-
-    def _can_swap_from(self, ns) -> bool:
-        """True if ns has a VIABLE swap pair: >=2 available qubits to distinct
-        partners whose fused link survives same-tick resolution
-        (age_i + age_j + 2 < min(link_cutoff_i, link_cutoff_j)). Mirrors the
-        engine's decision gate; exact for homogeneous cutoffs (the only
-        regime in use), and the engine stays authoritative regardless."""
-        avail = np.flatnonzero(ns.occupied & (~ns.locked))
-        if avail.size < 2:
-            return False
-        partners = ns.partner_node[avail]
-        real = partners != NO_PARTNER
-        avail, partners = avail[real], partners[real]
-        if avail.size < 2:
-            return False
-        i, j = np.triu_indices(avail.size, k=1)
-        ages = ns.age[avail].astype(np.int64)
-        cuts = ns.link_cutoff[avail].astype(np.int64)
-        viable = (ages[i] + ages[j] + 2) < np.minimum(cuts[i], cuts[j])
-        return bool(np.any((partners[i] != partners[j]) & viable))
-
-    def _can_purify_from(self, ns) -> bool:
-        """True if ns has ≥2 available qubits linked to the *same* partner.
-        `bincount` over partner ids beats `np.unique` (no sort) for tiny arrays."""
-        avail = ns.occupied & (~ns.locked)
-        if int(avail.sum()) < 2:
-            return False
-        partners = ns.partner_node[avail]
-        counts = np.bincount(partners[partners != NO_PARTNER])
-        return bool(np.any(counts >= 2))
-
 
 # ▄▄▄      ▄▄▄
 # ████▄  ▄████             ▄▄
@@ -268,20 +246,34 @@ class QRNEnv:
 # ███      ███ ▀█▄██ ▄▄▄█▀ ██ ▀█▄
 
 
-    def get_action_mask(self) -> np.ndarray:
-        """(N, 3) bool mask.  Source/dest: only NOOP."""
-        mask = np.zeros((self.N, N_ACTIONS), dtype=bool)
-        mask[:, NOOP] = True
+    def action_mask(self, node: int) -> np.ndarray:
+        """(3,) bool mask for ONE node: the decision-path primitive.
 
-        for i in range(self.N):
-            if self.is_target(i):
-                continue
-            ns = self.net.node_state(i)
-            if self._can_swap_from(ns):
-                mask[i, SWAP] = True
-            if self._can_purify_from(ns):
-                mask[i, PURIFY] = True
-        return mask
+        Only env.active_node ever decides, so building an (N,3) grid to read one
+        row was an O(N) pass per micro-step for O(1) of information. NOOP is
+        always legal so a masked argmax can never be all -inf; source and dest
+        are NOOP-only. Legality itself is defined once, on the node
+        (`Repeater.can_swap` / `can_purify`), so the mask cannot drift from the
+        engine's own gate.
+
+        Returns a fresh array every call, so callers may edit it in place (the
+        agent's `disable_actions`) without touching anyone else's mask.
+        """
+        m = np.zeros(N_ACTIONS, dtype=bool)
+        m[NOOP] = True
+        if self.is_target(node):
+            return m
+        rep = self.net.node(node)
+        m[SWAP] = rep.can_swap()
+        m[PURIFY] = rep.can_purify()
+        return m
+
+    def get_action_mask(self) -> np.ndarray:
+        """(N, 3) bool mask for every node. Kept for the offline probes and the
+        tests, which want the whole grid; built FROM `action_mask` so there is
+        exactly one definition of what is legal. The decision path should call
+        `action_mask(node)` directly."""
+        return np.stack([self.action_mask(i) for i in range(self.N)])
 
 #  ▄▄▄▄▄▄▄
 # █████▀▀▀  ██
@@ -291,71 +283,63 @@ class QRNEnv:
 #                      ██
 #                      ▀▀
 
-    def step(self, actions: np.ndarray) -> Tuple[Dict, float, bool, Dict]:
-        """Execute one step:  actions → age → check e2e → auto-entangle."""
-        assert len(actions) == self.N
-        actions = actions.copy()
-        info = {"fidelity": 0.0, "swaps": 0, "purifies": 0,
-                "noops": 0, "failed_actions": 0, "actions": actions.copy()}
+    def step(self, action: int) -> Tuple[Dict, float, bool, Dict]:
+        """Execute one micro-decision for env.active_node. See the module
+        docstring for the serialized-sweep model; see the class docstring
+        note above for the credit-assignment (gamma_eff / STEP_COST) rules.
+        """
+        r = self._active
+        info = {"active_node": r, "fidelity": 0.0, "age": 0}
+        phi_before = self._phi
 
-        # Safety: clamp any non-NOOP at source / dest
-        for t in [self.source, self.dest]:
-            if actions[t] != NOOP:
-                actions[t] = NOOP
-                info["actions"][t] = NOOP
+        # apply the active node's action immediately (source/dest never active)
+        if action == PURIFY:   self._exec_purify(r)
+        elif action == SWAP:   self._exec_swap(r)
 
-        # Phase 1a: execute purifications first (order matters:
-        #   purify before swap ensures swapped links are freshly improved)
-        for r in np.flatnonzero(actions == PURIFY):
-            result = self._exec_purify(int(r))
-            info["purifies"] += 1
-            if not result["success"]:
-                info["failed_actions"] += 1
-
-        # Phase 1b: execute swaps
-        for r in np.flatnonzero(actions == SWAP):
-            result = self._exec_swap(int(r))
-            info["swaps"] += 1
-            if not result["success"]:
-                info["failed_actions"] += 1
-
-        info["noops"] = int(np.sum(actions == NOOP))
-
-        # Phase 2: age links (resolves pending events, decoheres, expires)
-        self.net.age_links(discard_expired=True)
-
-        # Phase 3: check end-to-end
-        self.steps += 1
-        connected, fidelity = self._check_e2e()
-        info["fidelity"] = fidelity
-
-        # Reward shaping: failed actions get penalized
-        penalty = info["failed_actions"] * self.FAILED_ACTION
-
+        # mid-sweep delivery check (immediate apply -> link exists now)
+        connected, fidelity, age = self._check_e2e()
         if connected:
             self.done = True
-            # Terminal: Φ(s_terminal) = 0 by PBRS convention
-            shaping = -self._phi
-            reward = fidelity * self.SUCCESS_REWARD + penalty + shaping
-            info["terminated"], info["truncated"] = True, False
+            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
+                        tick_boundary=False, next_active_node=-1,
+                        gamma_eff=self.gamma, ticks=self.steps + 1)
+            reward = fidelity * self.SUCCESS_REWARD - phi_before  # Phi(terminal)=0
+            self._phi = 0.0
             return self.get_observation(), reward, True, info
 
-        # Phase 4: auto-entangle for next step's observation
+        # advance the sweep cursor
+        idx = self._interior.index(r)
+        if idx + 1 < len(self._interior):          # intra-tick micro-step
+            self._active = self._interior[idx + 1]
+            phi_new = self._progress()
+            reward = phi_new - phi_before           # gamma_eff = 1, no step cost
+            self._phi = phi_new
+            info.update(terminated=False, truncated=False, tick_boundary=False,
+                        next_active_node=self._active, gamma_eff=1.0, ticks=self.steps)
+            return self.get_observation(), reward, False, info
+
+        # tick boundary: physics resolves, then background generation
+        self.net.age_links(discard_expired=True)
+        self.steps += 1
+        connected, fidelity, age = self._check_e2e()     # a link may have expired/formed
+        if connected:
+            self.done = True
+            info.update(fidelity=fidelity, age=age, terminated=True, truncated=False,
+                        tick_boundary=True, next_active_node=-1,
+                        gamma_eff=self.gamma, ticks=self.steps)
+            reward = fidelity * self.SUCCESS_REWARD - phi_before
+            self._phi = 0.0
+            return self.get_observation(), reward, True, info
         self._auto_entangle()
-
-        # PBRS: γΦ(s') - Φ(s)  (topology-general potential)
+        self._active = self._interior[0]
         phi_new = self._progress()
-        shaping = self.gamma * phi_new - self._phi
+        reward = self.STEP_COST + (self.gamma * phi_new - phi_before)
         self._phi = phi_new
-
-        # A time-limit hit is truncation, NOT a true terminal: it takes the
-        # same non-terminal path above (auto-entangle + normal PBRS) so V(s')
-        # stays bootstrappable. terminated=False -> the DQN target bootstraps.
         truncated = self.steps >= self.max_steps
         self.done = truncated
-        info["terminated"], info["truncated"] = False, truncated
-        return (self.get_observation(),
-                self.STEP_COST + penalty + shaping, truncated, info)
+        info.update(terminated=False, truncated=truncated, tick_boundary=True,
+                    next_active_node=self._active, gamma_eff=self.gamma, ticks=self.steps)
+        return self.get_observation(), reward, truncated, info
 
 
 #  ▄▄▄▄▄▄▄
@@ -368,7 +352,7 @@ class QRNEnv:
 
     def _auto_entangle(self):
         """Background entanglement: one pass over all adjacent pairs."""
-        pairs = list(zip(*np.nonzero(np.triu(self._topo.adjacency, k=1))))
+        pairs = list(zip(*np.nonzero(np.triu(self.net.adj, k=1))))
         self.rng.shuffle(pairs)
         for r1, r2 in pairs:
             self.net.entangle(int(r1), int(r2))
@@ -377,26 +361,54 @@ class QRNEnv:
         return self.net.swap(r)
 
     def _exec_purify(self, r: int) -> Dict:
-        ns = self.net.node_state(r)
-        avail = ns.occupied & (~ns.locked)
+        """One PURIFY action runs the distillation cascade on EVERY partner with
+        which node r shares >=2 available links (each cascade leaves one survivor
+        or none).
+
+        ``valid`` is built ONCE, before the first ``purify()`` call, and ``rep``
+        is the live engine object (snapshots.py deleted 2026-07-26), so the list
+        is deliberately stale by the time later partners are processed. That is
+        safe because of DISJOINTNESS, not because of how the list was copied:
+        the links to a lower-index partner and to a higher-index partner sit on
+        different ports of r, and ``purify(r, p)`` only touches qubits in
+        ``rep.qubits_to(p)``, so cascading on one partner cannot change how many
+        links r shares with another. ``valid`` also holds partner IDs, never
+        qubit indices, and ``purify()`` re-reads the qubits live and returns
+        ``insufficient_shared_pairs`` if a partner has since dropped below two,
+        so a stale ID degrades to a no-op rather than to wrong physics.
+        Guarded by tests/test_rl_stack.py::TestMultiPartnerPurify.
+        """
+        rep = self.net.node(r)
+        avail = rep.status == QUBIT_OCCUPIED
         if int(avail.sum()) < 2:
             return {"success": False, "reason": "insufficient_qubits"}
-        partners = ns.partner_node[avail]
+        partners = rep.partner_repeater[avail]
         unique, counts = np.unique(partners[partners != NO_PARTNER],
                                    return_counts=True)
-        valid = [(int(p), c) for p, c in zip(unique, counts) if c >= 2]
+        valid = [int(p) for p, c in zip(unique, counts) if c >= 2]
         if not valid:
             return {"success": False, "reason": "no_valid_pair"}
-        best_nb = max(valid, key=lambda x: x[1])[0]
-        return self.net.purify(r, best_nb)
+        any_ok = False
+        for p in valid:
+            res = self.net.purify(r, p)
+            any_ok = any_ok or res["success"]
+        return {"success": any_ok, "reason": "ok"}
 
-    def _check_e2e(self) -> Tuple[bool, float]:
-        """Check whether source and dest share a direct entanglement link."""
-        ns = self.net.node_state(self.source)
-        for qi in np.flatnonzero(ns.occupied):
-            if int(ns.partner_node[qi]) == self.dest:
-                return True, float(ns.fidelity[qi])
-        return False, 0.0
+    def _check_e2e(self) -> Tuple[bool, float, int]:
+        """Whether source and dest share a direct link, plus that link's
+        fidelity and accumulated age.
+
+        Age is the sum-ages inheritance from every swap that built the link, so
+        it reports how much memory lifetime the delivery consumed; a caller can
+        compare it against the cutoff. When there is no end-to-end link the age
+        is reported as 0, matching the 0.0 reported for fidelity.
+        """
+        rep = self.net.node(self.source)
+        for qi in np.flatnonzero(rep.status == QUBIT_OCCUPIED):
+            if int(rep.partner_repeater[qi]) == self.dest:
+                return (True, float(werner_to_fidelity(rep.werner_param[qi])),
+                        int(rep.age[qi]))
+        return False, 0.0, 0
 
 
 # ▄▄▄      ▄▄▄
@@ -408,20 +420,14 @@ class QRNEnv:
 
 
     def reset(self) -> Dict[str, np.ndarray]:
-        """Reset, auto-entangle once, return observation."""
+        """Reset, position the sweep cursor at the first interior node,
+        auto-entangle once, return observation."""
         self.net.reset()
         self._pick_targets()
         self.steps = 0
         self.done  = False
+        self._interior = list(range(1, self.N - 1))   # non-empty: N >= 3
+        self._active = self._interior[0]
         self._auto_entangle()
         self._phi = self._progress()
         return self.get_observation()
-
-    @staticmethod
-    def action_label(action: int, node: int) -> str:
-        return f"{['W','S','P'][action]}({node})"
-
-    def render(self, filepath=None, figsize=None, dpi=250):
-        return self.net.render(filepath=filepath, figsize=figsize,
-                               dpi=dpi,
-                               source_dest=(self.source, self.dest))

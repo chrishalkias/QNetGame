@@ -1,6 +1,6 @@
 import numpy as np
-from rl_stack.winnability import WinnabilityCache
-from rl_stack import strategies
+from rl_stack.policies import WinnabilityCache
+from rl_stack import policies
 
 
 def test_easy_cell_winnable_hard_cell_not():
@@ -20,13 +20,23 @@ def test_results_are_cached_per_bin():
     assert wc.pilot_calls == calls
 
 
+def test_ticks_not_microsteps_large_n_not_wrongly_pruned():
+    # Regression for the tick/micro-step mixup: probe_steps must be read as
+    # TICKS (env.steps), not micro-decisions. At N=10 (8 interior nodes) a
+    # micro-step-counting pilot only covers probe_steps/8 ticks, which can
+    # wrongly mark a winnable cell unwinnable. seed=5 with these params is a
+    # verified divergence point (pre-fix: unwinnable; post-fix: winnable).
+    wc = WinnabilityCache(n_pilots=5, probe_steps=1000, seed=5)
+    assert wc.winnable(p_gen=0.4, p_swap=0.5, cutoff=25, n_repeaters=10, n_ch=2)
+
+
 def test_oracle_is_purify_then_swap(monkeypatch):
     calls = {"n": 0}
-    real = strategies.purify_then_swap
+    real = policies.purify_then_swap
     def spy(env):
         calls["n"] += 1
         return real(env)
-    monkeypatch.setattr(strategies, "purify_then_swap", spy)
+    monkeypatch.setattr(policies, "purify_then_swap", spy)
     wc = WinnabilityCache(n_pilots=1, probe_steps=30, seed=0)
     wc.winnable(1.0, 1.0, 20, 3, 2)
     assert calls["n"] > 0

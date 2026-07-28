@@ -28,13 +28,7 @@ from torch_geometric.data import Data, Batch
 from rl_stack.model import QNetwork
 from rl_stack.buffer import ReplayBuffer
 from rl_stack.env_wrapper import QRNEnv, N_ACTIONS, NOOP, SWAP, PURIFY, ACTION_NAMES
-from rl_stack import strategies
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.colors import to_rgba
+from rl_stack import policies
 
 
 
@@ -47,7 +41,7 @@ from matplotlib.colors import to_rgba
                 #                    ██                      
                 #                    ▀▀       
                               
-NODE_DIM = 9   # must match env_wrapper get_observation feature count
+NODE_DIM = 8  # must match env_wrapper get_observation feature count
 
 def _obs_to_data(obs: Dict[str, np.ndarray], device="cpu") -> Data:
     x = torch.tensor(obs["x"], dtype=torch.float32, device=device)
@@ -95,21 +89,6 @@ def _draw_winnable_cell(rng, wc, *, p_gen, p_swap, cutoff,
     return pg, ps, ct, n, nch
 
 
-def _running_avg(vals, window=30):
-    out = []
-    for i in range(len(vals)):
-        lo = max(0, i - window + 1)
-        out.append(np.mean(vals[lo:i+1]))
-    return out
-
-
-def _repeater_colors(N: int):
-    cmap = plt.cm.tab10 if N <= 10 else plt.cm.tab20
-    return [to_rgba(cmap(i / max(N - 1, 1))) for i in range(N)]
-
-
-_ACTION_HATCH = {NOOP: "", SWAP: "///", PURIFY: "..."}
-
             #   ▄▄▄▄    ▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄ ▄▄▄    ▄▄▄ ▄▄▄▄▄▄▄▄▄ 
             # ▄██▀▀██▄ ███▀▀▀▀▀  ███▀▀▀▀▀ ████▄  ███ ▀▀▀███▀▀▀ 
             # ███  ███ ███       ███▄▄    ███▀██▄███    ███    
@@ -118,13 +97,19 @@ _ACTION_HATCH = {NOOP: "", SWAP: "///", PURIFY: "..."}
                       
 
 class QRNAgent:
-    """                                                       
+    """
     Double-DQN agent with per-node Q-values on a GNN backbone.
 
-    The agent selects one of {noop, swap, purify} for every node.
-    Training uses shared global reward broadcast to each node.
-    The successor action mask is stored in the buffer and applied
-    during target Q-value computation to ensure physical validity.
+    The env runs a SERIALIZED per-node sweep (one micro-decision at
+    env.active_node per env.step call), so training is per-decision: each
+    replay transition is ONE node's (state, action, reward, next-state)
+    at its active node, with its own gamma_eff (1.0 intra-tick, self.gamma
+    at the tick boundary) and terminated flag. train_step gathers exactly
+    one Q-value per transition, at the batched-graph global index of that
+    transition's active node (`Batch.ptr[b] + ai_b`).
+    The successor action mask (for the ACTIVE node at the next micro-step)
+    is stored in the buffer and applied during target Q-value computation
+    to ensure physical validity.
     """
 
     def __init__(self, node_dim = NODE_DIM, hidden = 64,
@@ -157,28 +142,27 @@ class QRNAgent:
             #    ▀████ ███      ███      ███      ███         ███    
             # ███████▀ ▀███████ ████████ ▀███████ ▀███████    ███   
 
-    def select_actions(self, obs: Dict[str, np.ndarray],
-                       mask: np.ndarray, training: bool = True
-                       ) -> np.ndarray:
-        """ε-greedy over masked Q-values.  (N,) int32 actions."""
-        N = mask.shape[0]
+    def select_action(self, obs: Dict[str, np.ndarray], mask_row: np.ndarray,
+                      active_node: int, training: bool = True) -> int:
+        """ε-greedy scalar action for ONE node: env.active_node, the sole
+        node deciding at this micro-step. `mask_row` is that node's (3,)
+        action mask.
 
+        This is the only selection entry point. The batched `select_actions`
+        (an (N,3) mask in, an (N,) action vector out) was deleted 2026-07-26:
+        under the serialized sweep exactly one node decides per micro-step, so
+        every caller indexed the result at env.active_node and threw the other
+        N-1 argmaxes away."""
         if training and self.rng.random() < self.epsilon:
-            actions = np.zeros(N, dtype=np.int32)
-            for i in range(N):
-                valid = np.flatnonzero(mask[i])
-                actions[i] = self.rng.choice(valid) if len(valid) else NOOP
-            return actions
+            valid = np.flatnonzero(mask_row)
+            return int(self.rng.choice(valid)) if len(valid) else NOOP
 
         data = _obs_to_data(obs, self.device)
-        mask_t = torch.tensor(mask, dtype=torch.bool, device=self.device)
-
         with torch.no_grad():
-            q = self.policy_net(data)
-            q[~mask_t] = -float("inf")
+            q = self.policy_net(data)[active_node].clone()
+            q[~torch.tensor(mask_row, dtype=torch.bool, device=self.device)] = -float("inf")
+        return int(q.argmax().item())
 
-        return q.argmax(dim=1).cpu().numpy().astype(np.int32)
-    
 
                                                   
         #  ▄▄▄▄▄▄▄                      ▄▄▄▄▄▄▄             
@@ -191,7 +175,12 @@ class QRNAgent:
 
 
     def train_step(self) -> Optional[float]:
-        """Sample batch, compute masked Double-DQN loss, backprop."""
+        """Sample batch, compute masked Double-DQN loss AT THE ACTIVE NODE of
+        each transition, backprop. One Q-value per transition (not one per
+        node per graph): gathered at the batched-graph global index
+        `Batch.ptr[b] + ai_b`. Per-transition gamma_eff (1.0 intra-tick,
+        self.gamma at the tick boundary) and terminated flag drive the
+        target, not fixed per-graph scalars."""
         if self.memory.size() < self.batch_size:
             return None
 
@@ -202,39 +191,41 @@ class QRNAgent:
         next_states = Batch.from_data_list(
             [_as_data(t, "s_") for t in batch]).to(self.device)
 
-        # Per-graph scalars → broadcast to every node
-        rewards_pg = torch.tensor(
-            [t["r"] for t in batch], dtype=torch.float32, device=self.device)
-        dones_pg = torch.tensor(
-            [float(t["d"]) for t in batch], dtype=torch.float32, device=self.device)
-
-        node_to_graph = states.batch
-        rewards = rewards_pg[node_to_graph]
-        dones   = dones_pg[node_to_graph]
-
-        # Per-node actions / next masks: concatenate in NumPy, then ONE tensor
-        # call each (vs a torch.tensor per transition + torch.cat).
         actions = torch.tensor(
-            np.concatenate([t["a"] for t in batch]),
-            dtype=torch.long, device=self.device)
-        next_masks = torch.tensor(
-            np.concatenate([t["m_"] for t in batch]),
-            dtype=torch.bool, device=self.device)
+            [t["a"] for t in batch], dtype=torch.long, device=self.device)
+        rewards = torch.tensor(
+            [t["r"] for t in batch], dtype=torch.float32, device=self.device)
+        gammas = torch.tensor(
+            [t["g"] for t in batch], dtype=torch.float32, device=self.device)
+        dones = torch.tensor(
+            [float(t["d"]) for t in batch], dtype=torch.float32, device=self.device)
+        next_mask_rows = torch.tensor(
+            np.stack([t["m_"] for t in batch]), dtype=torch.bool, device=self.device)
 
-        # -- Current Q(s, a) --
-        q_all    = self.policy_net(states)
-        current_q = q_all.gather(1, actions.unsqueeze(1)).squeeze(1)
+        # Batched-graph global index of each transition's active node:
+        # graph b's nodes start at ptr[b], so its active node is ptr[b] + ai_b.
+        ptr = states.ptr[:-1]
+        act_idx = ptr + torch.tensor(
+            [t["ai"] for t in batch], dtype=torch.long, device=self.device)
 
-        # -- Target Q (Double DQN with masked next actions) --
+        # -- Current Q(s, a) at the active node --
+        q_all     = self.policy_net(states)
+        current_q = q_all[act_idx].gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        # -- Target Q (Double DQN with masked next actions), per-transition γ --
         with torch.no_grad():
-            next_q_policy = self.policy_net(next_states)
-            next_q_policy[~next_masks] = -float("inf")   # took alot time finding this bug...
+            nptr = next_states.ptr[:-1]
+            next_idx = nptr + torch.tensor(
+                [t["nai"] for t in batch], dtype=torch.long, device=self.device)
+
+            next_q_policy = self.policy_net(next_states)[next_idx].clone()
+            next_q_policy[~next_mask_rows] = -float("inf")   # took alot time finding this bug...
             best_actions = next_q_policy.argmax(dim=1)
 
-            next_q_target = self.target_net(next_states)
+            next_q_target = self.target_net(next_states)[next_idx]
             next_q = next_q_target.gather(1, best_actions.unsqueeze(1)).squeeze(1)
 
-            target_q = rewards + self.gamma * next_q * (1.0 - dones)
+            target_q = rewards + gammas * next_q * (1.0 - dones)
 
         loss = self.loss_fn(current_q, target_q)
 
@@ -259,8 +250,11 @@ class QRNAgent:
                                           
     @staticmethod
     def _normalize_n_ch(n_ch):
-        """Resolve n_ch (int or sequence) to a non-empty list of ints >= 2.
+        """Resolve n_ch (int or sequence) to a non-empty list of ints >= 1.
 
+        n_ch is qubits PER SIDE (left/right ports), so n_ch=1 => 2 physical
+        qubits interior (one left + one right link) and is valid for swap-only
+        schedules; purify just can never fire (needs >=2 to the same partner).
         Int -> single-element pool (backward compatible). List/tuple -> the
         pool the training loop samples from uniformly per episode."""
         pool = list(n_ch) if isinstance(n_ch, (list, tuple)) else [n_ch]
@@ -269,8 +263,8 @@ class QRNAgent:
         for c in pool:
             if isinstance(c, bool) or not isinstance(c, (int, np.integer)):
                 raise ValueError(f"n_ch values must be ints, got {c!r}")
-            if int(c) < 2:
-                raise ValueError(f"n_ch values must be >= 2, got {c}")
+            if int(c) < 1:
+                raise ValueError(f"n_ch values must be >= 1, got {c}")
         return [int(c) for c in pool]
 
     @staticmethod
@@ -314,7 +308,7 @@ class QRNAgent:
         Rolling reward is only comparable once difficulty AND exploration are
         fixed: the curriculum must have opened the FULL size range
         (`curriculum_frac*episodes`) AND epsilon must have reached its floor
-        (`eps_floor_frac*episodes`, matching the cosine schedule). Before that,
+        (`eps_floor_frac*episodes`, matching the ε schedule). Before that,
         the easy early phase (small chains deliver fast, high reward) would win
         and freeze the checkpoint at ~ep 300. Returns the later of the two gates;
         `curriculum=False` drops the curriculum gate but still waits for epsilon."""
@@ -340,19 +334,19 @@ class QRNAgent:
               p_gen_std = 0.0,
               p_swap_std = 0.0,
               cutoff = 30,
-              F0 = 0.95,
-              channel_loss = 0.02,
-              dt_seconds = 1e-3,
+              F0 = 1.0,
+              channel_loss = 0.0,
               curriculum = True,
               curriculum_frac = 0.5,
-              topology = 'chain',
               prune_unwinnable = False,
               env_seed = None,
               save_path = None,
               save_best = True,
+              ckpt_pool = False,
               best_window = 200,
               eps_init = 1.0,
               eps_fin = 0.05,
+              eps_schedule = 'linear',
               lr_decay = None,
               eval_fn = None,
               eval_every = 0,
@@ -360,6 +354,7 @@ class QRNAgent:
               eval_mode = 'min',
               disable_actions = (),
               compare = False,
+              compare_every = 10,
               compare_extra = None,
               plot = True) -> Dict[str, list]:
         """
@@ -367,6 +362,11 @@ class QRNAgent:
 
         Curriculum linearly widens the eligible chain size to the full range
         over the first `curriculum_frac` of training (see _curriculum_pool).
+
+        `F0`/`channel_loss` default to IDEALISED physics (perfect fresh links,
+        lossless fibre), matching what every SLURM recipe and the train.py CLI
+        already pass explicitly. The engine keeps its full lossy surface, it is
+        just no longer the default nobody asked for.
 
         Checkpointing: `policy.pth` always holds the BEST agent seen, never the
         final one (late-training degradation therefore can't clobber it); the
@@ -376,6 +376,14 @@ class QRNAgent:
         fully open + epsilon at floor, see _ckpt_window_start): otherwise the easy
         early curriculum phase — small chains deliver fast, high reward — freezes
         the checkpoint at ~ep 300 and the harder late policy never replaces it.
+
+        `ckpt_pool`: with an `eval_fn` and a `save_path`, ALSO write every
+        probed checkpoint to `save_path/pool/ep{ep:06d}.pth` (and log
+        (ep, probe value) to metrics['pool']). The probe is deliberately cheap,
+        so its running argmin is noisy and the online winner is often within
+        noise of several other candidates; `runoff` re-scores the whole pool at
+        a much larger budget once training is over. It is pure extra IO: the
+        training stream is untouched, so a given seed still bit-reproduces.
 
         Early stopping: when `eval_fn` and `eval_every` are set, the probe runs
         every `eval_every` episodes; if it fails to improve for `eval_patience`
@@ -388,14 +396,22 @@ class QRNAgent:
         the Double-DQN target (e.g. (PURIFY,) trains a pure swap-scheduler).
         `eval_mode`: 'min' (lower probe = better, e.g. delivery time) or 'max'.
 
-        `compare`: each episode, also roll out the GREEDY agent, swap-asap and
-        random on one freshly seeded network and log per-policy return, steps
-        and success to metrics['cmp_{agent,swap,rand}{,_steps,_succ}'] (+ a 3-
-        panel `training_compare.png`). Read crossovers off the STEPS/SUCCESS
-        panels — those are the pure task metrics; return also reflects
-        fidelity-weighted success and failed-action penalties, so a policy can
-        lead on return while only tying on delivery time. Diagnostic only; costs
-        ~3 extra rollouts/episode; default off.
+        `compare`: every `compare_every` episodes, also roll out the GREEDY
+        agent, swap-asap and random on one freshly seeded network and log
+        per-policy return, steps and success to
+        metrics['cmp_{agent,swap,rand}{,_steps,_succ}'], with the sampled
+        episode indices in metrics['cmp_ep'] (+ a 3-panel
+        `training_compare.png`). Read crossovers off the STEPS/SUCCESS panels,
+        those are the pure task metrics; return also reflects fidelity-weighted
+        success, so a policy can lead on return while only tying on delivery
+        time. Diagnostic only; default off.
+
+        `compare_every`: sampling period for those extra rollouts (default 10).
+        Each sample costs three extra greedy rollouts, so sampling every
+        episode is the dominant cost of a --compare run; the panels are rolling
+        means, so a 10x sparser sample is visually identical past a few hundred
+        episodes. `compare_every=1` reproduces the old every-episode behaviour
+        exactly, RNG stream included.
 
         `compare_extra`: optional dict {name: policy_fn(env, obs) -> actions} of
         extra baselines to log alongside agent/swap/rand under the SAME per-
@@ -406,7 +422,10 @@ class QRNAgent:
         #TODO: Add wandb logging
         compare_extra = dict(compare_extra or {})
         cmp_names = ['agent', 'swap', 'rand', *compare_extra.keys()]
-        metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": []}
+        metrics = {"reward": [], "loss": [], "steps": [], "success": [], "eval": [],
+                   "opt_steps": [],   # cumulative optimizer steps at each episode end
+                   "pool": []}        # (ep, probe value) per pooled checkpoint
+        metrics["cmp_ep"] = []   # episode index of each comparison sample
         for nm in cmp_names:
             metrics[f"cmp_{nm}"] = []
             metrics[f"cmp_{nm}_steps"] = []
@@ -420,6 +439,12 @@ class QRNAgent:
             "cutoff": cutoff, "max_steps": max_steps, "episodes": episodes,
             "disable_actions": list(disable_actions),
         }
+        assert eps_schedule in ('linear', 'cosine'), \
+            f"eps_schedule must be 'linear' or 'cosine', got {eps_schedule!r}"
+        if int(compare_every) < 1:
+            raise ValueError(
+                f"compare_every must be >= 1, got {compare_every!r}")
+        compare_every = int(compare_every)
         # eps_init/eps_fin now come from the signature (fine-tuning wants a LOW
         # eps_init so a warm-started policy isn't scrambled). lr_decay enables an
         # exponential LR schedule (default None = constant LR, unchanged).
@@ -427,10 +452,10 @@ class QRNAgent:
                  if lr_decay is not None else None)
         n_ch_pool = self._normalize_n_ch(n_ch)
         if prune_unwinnable:
-            from rl_stack.winnability import WinnabilityCache
+            from rl_stack.policies import WinnabilityCache
             self._wc = WinnabilityCache(
                 probe_steps=max(3 * max_steps, 200),
-                dt_seconds=dt_seconds, channel_loss=channel_loss, F0=F0)
+                channel_loss=channel_loss, F0=F0)
         else:
             self._wc = None
         disable_actions = tuple(disable_actions)
@@ -452,6 +477,7 @@ class QRNAgent:
                   else None)
 
         try:
+            opt_steps_total = 0   # running count of real optimizer steps (train_step != None)
             for ep in range(episodes):
                 # -- Curriculum: linearly widen max chain size --
                 pool = self._curriculum_pool(
@@ -476,9 +502,7 @@ class QRNAgent:
                     'gamma': self.gamma,   # env PBRS gamma == DQN discount
                     'F0' : F0,
                     'channel_loss' : channel_loss,
-                    'dt_seconds': dt_seconds,
                     'max_steps' : max_steps,
-                    'topology' : topology,
                     }
 
                 env_rng = (np.random.default_rng(env_ss.spawn(1)[0])
@@ -488,21 +512,31 @@ class QRNAgent:
                 score = 0.0
                 ep_loss = []
 
-                for _ in range(max_steps):
-                    mask    = env.get_action_mask()
+                # Serialized per-node sweep: one micro-decision at
+                # env.active_node per env.step call. `max_steps` (ticks) is
+                # enforced inside the env itself (truncation), so the loop
+                # just runs to `done`.
+                while True:
+                    r_node = env.active_node
+                    mask_row = env.action_mask(r_node)
                     if disable_actions:
-                        mask[:, disable_actions] = False
-                    actions = self.select_actions(obs=obs, mask=mask, training=True)
+                        mask_row = mask_row.copy()
+                        for d in disable_actions:
+                            mask_row[d] = False
+                    a = self.select_action(obs, mask_row, r_node, training=True)
 
-                    next_obs, reward, done, info = env.step(actions)
-                    next_mask = env.get_action_mask()
+                    next_obs, reward, done, info = env.step(a)
+                    nai = (info["next_active_node"]
+                           if info["next_active_node"] >= 0 else r_node)
+                    next_mask = env.action_mask(nai)
                     if disable_actions:
-                        next_mask[:, disable_actions] = False
+                        for d in disable_actions:
+                            next_mask[d] = False
 
                     # store terminated (not done): timeouts (truncated) must
                     # bootstrap V(s') in the DQN target, only true wins zero it.
-                    self.memory.add(obs, actions, reward,
-                                    next_obs, info["terminated"], next_mask)
+                    self.memory.add(obs, a, r_node, reward, next_obs, nai,
+                                    next_mask, info["terminated"], info["gamma_eff"])
 
                     loss = self.train_step()
                     if loss is not None:
@@ -513,33 +547,51 @@ class QRNAgent:
                     if done:
                         break
 
-                # Cosine annealing ε
-                if ep < 0.9* episodes:
+                # ε annealing over the first 90% of episodes, then floor. Both
+                # schedules hit eps_fin at 0.9·episodes so _ckpt_window_start's
+                # eps_floor_frac=0.9 gate holds for either. 'linear' is the DQN
+                # standard (Mnih 2015 / SB3); 'cosine' kept for reproducibility.
+                if ep >= 0.9 * episodes:
+                    self.epsilon = eps_fin
+                elif eps_schedule == 'cosine':
                     self.epsilon = eps_fin + 0.5 * (eps_init - eps_fin) * (
                         1 + math.cos(math.pi * ep / max(episodes, 1)))
-                else:
-                    self.epsilon = eps_fin
+                else:  # 'linear'
+                    frac = ep / (0.9 * max(episodes, 1))
+                    self.epsilon = eps_init + (eps_fin - eps_init) * frac
                 if sched is not None and ep_loss:   # only after a real optimizer step
                     sched.step()
 
                 metrics["reward"].append(score)
                 metrics["loss"].append(
                     np.mean(ep_loss) if ep_loss else 0.0)
-                metrics["steps"].append(env.steps)
+                metrics["steps"].append(info["ticks"])
                 metrics["success"].append(
                     1.0 if info.get("fidelity", 0) > 0 else 0.0)
+                # under the serialized sweep, optimizer steps per episode vary with
+                # chain length / episode duration, so track the cumulative count as
+                # the honest x-axis for learning-progress plots (len(ep_loss) counts
+                # only train_step calls that actually stepped the optimizer).
+                opt_steps_total += len(ep_loss)
+                metrics["opt_steps"].append(opt_steps_total)
 
-                # -- Per-episode paired comparison (--compare): run the GREEDY
-                # agent, swap-asap and random on ONE freshly seeded network so
-                # the returns are directly comparable. Reveals the training
-                # phases where the learned policy overtakes random, then
-                # swap-asap. Greedy (not the eps-exploring training rollout) so
-                # the crossover reflects policy quality, not the eps schedule.
-                if compare:
+                # -- Paired comparison (--compare): run the GREEDY agent,
+                # swap-asap and random on ONE freshly seeded network so the
+                # returns are directly comparable. Reveals the training phases
+                # where the learned policy overtakes random, then swap-asap.
+                # Greedy (not the eps-exploring training rollout) so the
+                # crossover reflects policy quality, not the eps schedule.
+                # Sampled every `compare_every` episodes (default 10): three
+                # extra rollouts per sample are the dominant cost of a
+                # --compare run, and the panels are rolling means, so a sparser
+                # sample is visually identical. The episode index goes to
+                # cmp_ep, which is the x-axis those panels plot against.
+                if compare and ep % compare_every == 0:
                     cmp_seed = int(self.rng.integers(0, 2**32))
-                    policies = {'agent': 'agent', 'swap': 'swap', 'rand': 'rand',
-                                **compare_extra}
-                    for nm, pol in policies.items():
+                    metrics["cmp_ep"].append(ep)
+                    cmp_policies = {'agent': 'agent', 'swap': 'swap',
+                                    'rand': 'rand', **compare_extra}
+                    for nm, pol in cmp_policies.items():
                         ret, st, sc = self._cmp_rollout(
                             args, cmp_seed, pol, max_steps, disable_actions)
                         metrics[f"cmp_{nm}"].append(ret)
@@ -564,6 +616,20 @@ class QRNAgent:
                 if eval_fn is not None and eval_every > 0 and (ep + 1) % eval_every == 0:
                     m = float(eval_fn(self))
                     metrics["eval"].append((ep, m))
+                    if ckpt_pool and save_path:
+                        # Persist EVERY probed checkpoint, not just the running
+                        # best: the probe is a cheap, noisy estimate (a couple
+                        # of cells x a few dozen rollouts of a high-variance
+                        # metric), so the argmin over probes is often within
+                        # noise of several others. runoff() re-scores the whole
+                        # pool at a much larger episode budget and picks the
+                        # real winner. A hidden=64 GNN is ~120 KB, so a
+                        # 20-entry pool costs ~2.4 MB.
+                        pool_dir = os.path.join(save_path, "pool")
+                        os.makedirs(pool_dir, exist_ok=True)
+                        torch.save(self.policy_net.state_dict(),
+                                   os.path.join(pool_dir, f"ep{ep:06d}.pth"))
+                        metrics["pool"].append((ep, m))
                     improved = m < best_eval if eval_mode == 'min' else m > best_eval
                     if improved:
                         best_eval, best_ep, best_saved, eval_stale = m, ep, True, 0
@@ -604,9 +670,54 @@ class QRNAgent:
             self._save_metrics(metrics, save_path)
 
         if plot:
-            self._plot_training(metrics, save_path)
+            from rl_stack.plots import plot_training
+            plot_training(metrics, save_path)
 
         return metrics
+
+    def runoff(self, pool_dir: str, eval_fn, n_repeats: int = 1):
+        """Re-score every checkpoint in `pool_dir` and return (best_path, score).
+
+        The per-probe eval during training is deliberately cheap, so its argmin
+        is noisy. This re-runs `eval_fn` (normally the SAME probe built with a
+        much larger n_episodes) over the whole pool once, at the end, when the
+        compute is affordable. The comparison is PAIRED by construction: the
+        probe seeds each rollout from (probe_seed, episode index) alone, so
+        every candidate is scored on a bit-identical episode set and nothing
+        here draws from self.rng.
+
+        Scores greedily (epsilon forced to 0) and restores the agent's original
+        weights, epsilon and train/eval mode before returning, so the caller's
+        already-written policy_final.pth stays the LAST training weights.
+
+        Lower is better: this is the delivery-time convention (eval_mode='min'),
+        the only probe in the repo. If a 'max' probe is ever added, thread
+        eval_mode through here, do not silently flip the comparison.
+        """
+        import glob
+        paths = sorted(glob.glob(os.path.join(pool_dir, "*.pth")))
+        if not paths:
+            raise FileNotFoundError(f"no checkpoints in {pool_dir}")
+        saved = {k: v.clone() for k, v in self.policy_net.state_dict().items()}
+        was_training = self.policy_net.training
+        old_eps, self.epsilon = self.epsilon, 0.0
+        scores = {}
+        try:
+            for p in paths:
+                self.policy_net.load_state_dict(
+                    torch.load(p, map_location=self.device, weights_only=True))
+                self.policy_net.eval()
+                s = float(np.mean([eval_fn(self) for _ in range(n_repeats)]))
+                scores[p] = s
+                print(f"  [runoff] {os.path.basename(p)}  {s:.4f}", flush=True)
+        finally:
+            self.policy_net.load_state_dict(saved)
+            self.policy_net.train(was_training)
+            self.epsilon = old_eps
+        best = min(scores, key=scores.get)
+        print(f"[runoff] winner {os.path.basename(best)} = {scores[best]:.4f} "
+              f"over {len(scores)} checkpoints", flush=True)
+        return best, scores[best]
 
     @staticmethod
     def _save_metrics(metrics, save_path):
@@ -618,40 +729,46 @@ class QRNAgent:
             json.dump(metrics, f, default=float)   # default=float coerces np types
 
     def _cmp_rollout(self, args, seed, policy, max_steps, disable_actions=()):
-        """One episode on a freshly SEEDED network (so all policies are paired on
-        the same net). Returns (return, steps, success): `steps` = episode length
-        (max_steps if undelivered), `success` = 1.0 if the e2e link was
-        delivered. Return mixes speed/fidelity/action-economy; steps+success are
-        the pure task metrics (delivery time, delivery rate).
+        """One episode on a freshly SEEDED network (so all policies are paired
+        on the same net), driven one micro-step at a time (the serialized
+        sweep; env self-truncates at `max_steps` ticks). Returns
+        (return, steps, success): `steps` = ticks elapsed (info["ticks"]),
+        `success` = 1.0 if the e2e link was delivered. Return mixes
+        speed/fidelity/action-economy; steps+success are the pure task
+        metrics (delivery time, delivery rate).
 
-        `policy`: 'agent' (greedy, eps-free), 'swap' (swap-asap), 'rand' (random),
-        or a callable(env, obs) -> actions (an extra baseline, e.g. the optimum).
-        Used only by --compare; never touches the agent's training rollout."""
+        `policy`: 'agent' (greedy, eps-free), 'swap' (swap-asap), 'rand'
+        (random), or a callable policy_fn(env, obs) -> int (an extra
+        baseline, e.g. the optimum) -- the scalar action for env.active_node,
+        recomputed fresh every micro-step so every policy sees the current
+        state. Used only by --compare / the eval probe; never touches the
+        agent's training rollout."""
         env = QRNEnv(**args, rng=np.random.default_rng(seed))
         obs = env.reset()
         rand_rng = np.random.default_rng((seed ^ 0x9E3779B9) & 0xFFFFFFFF)
         ret = 0.0
-        steps = max_steps
         success = 0.0
-        for t in range(max_steps):
-            mask = env.get_action_mask()
-            if disable_actions:
-                mask[:, disable_actions] = False
+        while True:
+            r_node = env.active_node
             if policy == 'agent':
-                acts = self.select_actions(obs, mask, training=False)
+                # action_mask(node) returns a fresh (3,) array, so disabling
+                # actions in place here cannot leak into anyone else's mask.
+                mask_row = env.action_mask(r_node)
+                for d in disable_actions:
+                    mask_row[d] = False
+                a = self.select_action(obs, mask_row, r_node, training=False)
             elif policy == 'swap':
-                acts = strategies.swap_asap(env)
+                a = policies.swap_asap(env)
             elif policy == 'rand':
-                acts = strategies.random_policy(env, rand_rng)
+                a = policies.random_policy(env, rand_rng)
             else:                      # callable extra baseline
-                acts = policy(env, obs)
-            obs, r, done, info = env.step(acts)
+                a = policy(env, obs)
+            obs, r, done, info = env.step(int(a))
             ret += r
             if done:
-                steps = t + 1
                 success = 1.0 if info.get("fidelity", 0.0) > 0 else 0.0
                 break
-        return float(ret), int(steps), float(success)
+        return float(ret), int(info["ticks"]), float(success)
 
 
         # ▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄ 
@@ -672,16 +789,13 @@ class QRNAgent:
                  p_gen_std=0.0,
                  p_swap_std=0.0,
                  cutoff=15,
-                 F0=0.95,
-                 channel_loss=0.02,
-                 dt_seconds=1e-3,
-                 plot_actions=True,
-                 topology = 'chain',
-                 verbose = 0,
-                 save_dir="."
+                 F0=1.0,
+                 channel_loss=0.0,
                 ):
         """
-        Validate agent vs baselines; plot action timelines."""
+        Validate the agent against the heuristic baselines on paired episode
+        seeds and print the results table (avg steps, avg fidelity, success%).
+        """
         if model_path is not None:
             self.policy_net.load_state_dict(
                 torch.load(model_path, map_location=self.device,
@@ -692,13 +806,12 @@ class QRNAgent:
 
         strat_fns = {
             "Agent":        None,
-            "SwapASAP":     strategies.swap_asap,
-            "PurifySwap":   strategies.purify_then_swap,
+            "SwapASAP":     policies.swap_asap,
+            "PurifySwap":   policies.purify_then_swap,
             "Random":       None,
         }
         results   = {k: {"steps": [], "fidelities": [], "total": 0}
                      for k in strat_fns}
-        timelines = {k: [] for k in strat_fns}
 
         args = {
             'n_repeaters': n_repeaters,
@@ -711,17 +824,12 @@ class QRNAgent:
             'cutoff': cutoff,
             'F0' : F0,
             'channel_loss' : channel_loss,
-            'dt_seconds': dt_seconds,
             'max_steps' : max_steps,
-            'topology' : topology,
             }
 
         action_rng = np.random.default_rng()
         seed_rng = np.random.default_rng(42)
         ep_seeds = seed_rng.integers(0, 2**32, size=n_episodes)
-
-        # Store all episode timelines so we can pick the median one
-        all_timelines = {k: [] for k in strat_fns}
 
         for name, fn in strat_fns.items():
             for ep in range(n_episodes):
@@ -731,295 +839,30 @@ class QRNAgent:
                 obs  = env.reset()
                 done = False
                 fid  = 0.0
-                ep_actions = []
 
-                for step in range(max_steps):
-                    mask = env.get_action_mask()
+                while True:
+                    r_node = env.active_node
                     if name == "Agent":
-                        acts = self.select_actions(obs, mask, training=False)
+                        a = self.select_action(obs, env.action_mask(r_node),
+                                               r_node, training=False)
                     elif name == "Random":
-                        acts = strategies.random_policy(env, action_rng)
+                        a = policies.random_policy(env, action_rng)
                     else:
-                        acts = fn(env)
+                        a = fn(env)
 
-                    if plot_actions:
-                        ep_actions.append(acts.copy())
-
-                    obs, reward, done, info = env.step(acts)
+                    obs, reward, done, info = env.step(a)
                     fid = info.get("fidelity", 0.0)
-
-                    if verbose==1 and name=="Agent":
-                        savedir=f"{save_dir}visual/state_{step}.png"
-                        os.makedirs(os.path.dirname(savedir), exist_ok=True)
-                        env.render(filepath=savedir)
                     if done:
                         break
 
                 succeeded = done and fid > 0
                 if succeeded:
-                    results[name]["steps"].append(step + 1)
+                    results[name]["steps"].append(info["ticks"])
                     results[name]["fidelities"].append(fid)
                 results[name]["total"] += 1
 
-                if plot_actions:
-                    all_timelines[name].append(ep_actions)
-
         self.epsilon = old_eps
-        self._print_results_table(results, n_repeaters, p_gen, p_swap, cutoff)
-
-        if plot_actions:
-            # Pick the median-length successful episode per strategy
-            for name in strat_fns:
-                episodes = all_timelines[name]
-                succ_steps = results[name]["steps"]
-                if not succ_steps:
-                    # No successes — use the first episode as fallback
-                    timelines[name] = episodes[0] if episodes else []
-                    continue
-                median_steps = int(np.median(succ_steps))
-                # Find the successful episode closest to the median
-                best_idx, best_diff = 0, float("inf")
-                ep_succ = 0
-                for ep_idx, ep_tl in enumerate(episodes):
-                    ep_len = len(ep_tl)
-                    if ep_len >= max_steps:
-                        continue  # skip failed episodes
-                    diff = abs(ep_len - median_steps)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_idx = ep_idx
-                timelines[name] = episodes[best_idx]
-
-            self._plot_timeline_grid(timelines, n_repeaters,
-                                     p_gen, p_swap, cutoff, save_dir)
+        from rl_stack.plots import print_results_table
+        print_results_table(results, n_repeaters, p_gen, p_swap, cutoff)
         return results
 
-                                       
-                # ▄▄▄▄▄▄▄   ▄▄▄        ▄▄▄▄▄   ▄▄▄▄▄▄▄▄▄ 
-                # ███▀▀███▄ ███      ▄███████▄ ▀▀▀███▀▀▀ 
-                # ███▄▄███▀ ███      ███   ███    ███    
-                # ███▀▀▀▀   ███      ███▄▄▄███    ███    
-                # ███       ████████  ▀█████▀     ███    
-    
-    @staticmethod
-    def _config_caption(cfg):
-        """One-line parameter caption for the figures (N, n_ch, p_gen, p_swap,
-        tau=cutoff, H). Returns '' if no config was recorded (older runs)."""
-        if not cfg:
-            return ""
-        def f(v):
-            if isinstance(v, (list, tuple)):
-                u = sorted(set(v))
-                return str(u[0]) if len(u) == 1 else "{" + ",".join(map(str, u)) + "}"
-            return str(v)
-        parts = [f"N={f(cfg.get('N'))}", f"n_ch={f(cfg.get('n_ch'))}",
-                 f"p_gen={f(cfg.get('p_gen'))}", f"p_swap={f(cfg.get('p_swap'))}",
-                 f"τ(cutoff)={cfg.get('cutoff')}", f"max_steps={cfg.get('max_steps')}"]
-        if 2 in (cfg.get("disable_actions") or []):
-            parts.append("swap-only")
-        return ", ".join(parts)
-
-    @staticmethod
-    def _plot_training(metrics, save_path='assets/', window=None):
-        """`window`: rolling-mean window for ALL smoothed curves. None -> the
-        per-panel adaptive defaults; pass an int (e.g. via replot.py --window)
-        to make the figures smoother without retraining."""
-        w_metric = int(window) if window else 30
-        w_steps = int(window) if window else 50
-        caption = QRNAgent._config_caption(metrics.get("config"))
-        fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-        fig.suptitle("Training Metrics" + (f"\n{caption}" if caption else ""),
-                     fontsize=11, y=0.99)
-
-        ep = range(len(metrics["reward"]))
-        axes[0].fill_between(ep, metrics["reward"], alpha=0.15, color="royalblue")
-        axes[0].plot(_running_avg(metrics["reward"], w_metric), color="royalblue", lw=1.2)
-        axes[0].set_ylabel("Episode Return")
-        axes[0].axhline(0, color="grey", ls=":", lw=0.5)
-
-        nonzero = [v for v in metrics["loss"] if v > 0]
-        if nonzero:
-            axes[1].plot(metrics["loss"], alpha=0.2, color="red")
-            axes[1].plot(_running_avg(metrics["loss"], w_metric), color="red", lw=1.2)
-            axes[1].set_ylabel("Loss")
-            axes[1].set_yscale("log")
-
-        axes[2].fill_between(ep, metrics["steps"], alpha=0.15, color="seagreen")
-        axes[2].plot(_running_avg(metrics["steps"], w_steps), color="seagreen",
-                     lw=1.4)
-        axes[2].set_ylabel("Avg Steps to Termination")
-        axes[2].set_xlabel("Episode")
-
-        plt.tight_layout()
-        fname = os.path.join(save_path, "training_metrics.png") if save_path else "training_metrics.png"
-        plt.savefig(fname, dpi=200, bbox_inches="tight")
-        plt.close()
-
-        # --compare: dedicated crossover plot, same net/episode, GREEDY agent vs
-        # baselines. Return mixes speed/fidelity/action-economy; the steps and
-        # success panels are the pure TASK metrics — read crossovers off those.
-        if metrics.get("cmp_agent"):
-            # Fixed colour/label per known series; only those present are drawn,
-            # so the optimal line appears automatically when compare_extra
-            # supplies it. Add new named baselines here to colour them.
-            _known = (("rand", "grey", "Random"),
-                      ("swap", "darkorange", "SwapASAP"),
-                      ("optimal", "seagreen", "Optimal (swap-only)"),
-                      ("agent", "royalblue", "Agent (greedy)"))
-            series = tuple(s for s in _known if metrics.get(f"cmp_{s[0]}"))
-            n = len(metrics["cmp_agent"])
-            cep = range(n)
-            # Wide smoothing: per-episode (p_gen,p_swap) randomisation injects huge
-            # raw variance, so a small window can't reveal the trend. No raw fog —
-            # at thousands of episodes it just buries the means. `window` (e.g. via
-            # replot.py --window) overrides the adaptive default.
-            win = int(window) if window else max(50, n // 25)
-
-            # Paired GAP-to-optimal panel (the key readout): because every policy
-            # runs on the SAME seeded net each episode, policy_steps - opt_steps
-            # cancels the param-draw noise. Agent -> 0 means it reached optimal.
-            has_opt = bool(metrics.get("cmp_optimal_steps"))
-            panels = [("cmp_{}", "Episode Return"),
-                      ("cmp_{}_steps", "Steps to Terminate"),
-                      ("cmp_{}_succ", "Success")]
-            nrows = len(panels) + (1 if has_opt else 0)
-            fig2, axes2 = plt.subplots(nrows, 1, figsize=(10, 3 * nrows), sharex=True)
-
-            for i, (tmpl, ylabel) in enumerate(panels):
-                for short, color, label in series:
-                    axes2[i].plot(cep, _running_avg(metrics[tmpl.format(short)], win),
-                                  color=color, lw=1.8, label=(label if i == 0 else None))
-                axes2[i].set_ylabel(ylabel)
-            axes2[0].axhline(0, color="grey", ls=":", lw=0.5)
-
-            if has_opt:
-                gax = axes2[len(panels)]
-                opt = np.asarray(metrics["cmp_optimal_steps"], dtype=float)
-                for short, color, label in series:
-                    if short == "optimal":
-                        continue
-                    gap = (np.asarray(metrics[f"cmp_{short}_steps"], float) - opt).tolist()
-                    gax.plot(cep, _running_avg(gap, win), color=color, lw=1.8)
-                gax.axhline(0, color="seagreen", ls="--", lw=1.4)  # optimal = 0
-                gax.set_ylabel("Steps above Optimal\n(paired; 0 = optimal)")
-
-            _title = (f"Per-episode paired comparison "
-                      f"(same seeded network, rolling mean w={win})")
-            if caption:
-                _title += f"\n{caption}"
-            axes2[0].set_title(_title, fontsize=10)
-            axes2[0].legend(loc="best", fontsize=9)
-            axes2[-1].set_xlabel("Episode")
-            plt.tight_layout()
-            fname2 = (os.path.join(save_path, "training_compare.png")
-                      if save_path else "training_compare.png")
-            plt.savefig(fname2, dpi=200, bbox_inches="tight")
-            plt.close()
-
-    @staticmethod
-    def _print_results_table(results, N, pg, ps, c):
-        pm = "\u00B1"
-        print(f"\n{'='*70}")
-        print(f"Validation: N={N}, p_gen={pg}, p_swap={ps}, cutoff={c}")
-        print(f"{'='*70}")
-        print(f"{'Strategy':<14} | {'Avg Steps':>12} | {'Avg Fidelity':>14} | "
-              f"{'Succ%':>6}")
-        print("-" * 70)
-        for name, data in results.items():
-            ns   = len(data["steps"])   # only successful episodes
-            tot  = data["total"]
-            succ = ns / max(tot, 1) * 100
-            avg_s = np.mean(data["steps"]) if ns else float("nan")
-            std_s = np.std(data["steps"])  if ns else 0.0
-            avg_f = np.mean(data["fidelities"]) if ns else 0.0
-            std_f = np.std(data["fidelities"])  if ns else 0.0
-            print(f"{name:<14} | {avg_s:>5.1f}{pm}{std_s:<5.1f} | "
-                  f"{avg_f:>6.4f}{pm}{std_f:<6.4f} | {succ:>5.0f}%")
-
-    @staticmethod
-    def _plot_timeline_grid(timelines, N, pg, ps, c, save_dir="."):
-        """Plot action timeline.
-
-        Each cell = one node at one timestep.
-        - Solid colour (repeater ID) = NOOP (wait / background entangle).
-        - Hatched ``///`` = SWAP.
-        - Hatched ``...`` = PURIFY.
-        """
-        strats   = list(timelines.keys())
-        n_strats = len(strats)
-        max_steps = max((len(tl) for tl in timelines.values()), default=1)
-        rep_colors = _repeater_colors(N)
-
-        fig_w = min(max_steps * 0.3 + 3, 22)
-        fig_h = n_strats * 1.4 + 1.2
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-
-        row_h = 1.0
-        bar_h = row_h / N
-
-        for si, sname in enumerate(strats):
-            tl = timelines[sname]
-            y_base = (n_strats - 1 - si) * (row_h + 0.3)
-
-            for t, actions in enumerate(tl):
-                for node in range(min(N, len(actions))):
-                    a = int(actions[node])
-                    y = y_base + node * bar_h
-                    color = rep_colors[node]
-                    hatch = _ACTION_HATCH.get(a, "")
-
-                    rect = mpatches.FancyBboxPatch(
-                        (t - 0.45, y), 0.9, bar_h * 0.9,
-                        boxstyle="square,pad=0",
-                        facecolor=color, edgecolor="none", linewidth=0)
-                    ax.add_patch(rect)
-
-                    # Only overlay hatch for SWAP / PURIFY
-                    if a in (SWAP, PURIFY):
-                        h_rect = mpatches.FancyBboxPatch(
-                            (t - 0.45, y), 0.9, bar_h * 0.9,
-                            boxstyle="square,pad=0",
-                            facecolor="none", edgecolor="black",
-                            hatch=hatch, linewidth=0, alpha=0.6)
-                        ax.add_patch(h_rect)
-            
-            # Append black patch after the end of the timeline
-            t_end = len(tl)
-            black_patch = mpatches.FancyBboxPatch(
-                (t_end - 0.45, y_base), 0.9, row_h - (bar_h * 0.1),
-                boxstyle="square,pad=0",
-                facecolor="black", edgecolor="none", linewidth=0, zorder=3)
-            ax.add_patch(black_patch)
-
-        y_positions = [(n_strats - 1 - i) * (row_h + 0.3) + row_h / 2
-                       for i in range(n_strats)]
-        ax.set_yticks(y_positions)
-        ax.set_yticklabels(strats)
-        
-        # Extended xlim to ensure the appended patch is not cut off
-        ax.set_xlim(-0.5, max_steps + 1.5)
-        ax.set_ylim(-0.3, n_strats * (row_h + 0.3))
-        ax.set_xlabel("Time Step")
-        ax.set_title(f"Policy Actions — median episode (N={N}, pg={pg}, ps={ps}, c={c})")
-        ax.grid(False)
-
-        handles = []
-        for i in range(N):
-            handles.append(mpatches.Patch(
-                facecolor=rep_colors[i], label=f"R{i}",
-                edgecolor="grey", linewidth=0.5))
-        handles.append(mpatches.Patch(
-            facecolor="white", edgecolor="grey", label="Noop"))
-        handles.append(mpatches.Patch(
-            facecolor="white", edgecolor="black", hatch="///", label="Swap"))
-        handles.append(mpatches.Patch(
-            facecolor="white", edgecolor="black", hatch="...", label="Purify"))
-
-        box = ax.get_position()
-        ax.set_position([box.x0, box.y0, box.width * 0.82, box.height])
-        ax.legend(handles=handles, loc="center left",
-                  bbox_to_anchor=(1, 0.5), title="Legend", fontsize=7)
-
-        plt.savefig(os.path.join(save_dir, "validation_actions.png"),
-                    dpi=150, bbox_inches="tight")
-        plt.close()
