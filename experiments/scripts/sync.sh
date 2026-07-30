@@ -2,9 +2,11 @@
 # Cluster sync. Never hand-roll rsync; use this.
 #   ./experiments/scripts/sync.sh up   [extra rsync args, e.g. --exclude '.local']
 #   ./experiments/scripts/sync.sh down [extra rsync args]
+#   ./experiments/scripts/sync.sh log  <jobid>
 #
 # up   = code -> cluster  (never touches checkpoints/ or results/ on the remote)
 # down = checkpoints + slurm_logs -> local
+# log  = ONE slurm log by job id -> local (the cluster keeps the full history)
 #
 # Override host/path/dirs via env, e.g.:
 #   REMOTE_HOST=chalkiasc1@alice-gw ./experiments/scripts/sync.sh up
@@ -16,7 +18,7 @@ REMOTE_HOST="${REMOTE_HOST:-alice-gw}"
 REMOTE_PATH="${REMOTE_PATH:-~/QNetGame}"
 LOCAL_DIR="$PWD"
 
-MODE="${1:?usage: sync.sh up|down [rsync args...]}"; shift
+MODE="${1:?usage: sync.sh up|down|log [rsync args...]}"; shift
 
 case "$MODE" in
   up)
@@ -45,5 +47,14 @@ case "$MODE" in
         "$REMOTE_HOST:$REMOTE_PATH/$sub/" "$LOCAL_DIR/$sub/"
     done
     ;;
-  *) echo "unknown mode '$MODE' (want: up|down)" >&2; exit 2 ;;
+  log)
+    # Fetch ONE slurm log by job id. The cluster is the source of truth for
+    # slurm_logs/; pull only the log being inspected instead of the archive.
+    JOB="${1:?usage: sync.sh log <jobid>}"
+    mkdir -p "$LOCAL_DIR/slurm_logs"
+    echo "Downloading $REMOTE_HOST:$REMOTE_PATH/slurm_logs/*$JOB* -> $LOCAL_DIR/slurm_logs/"
+    rsync -avz "$REMOTE_HOST:$REMOTE_PATH/slurm_logs/*${JOB}*" "$LOCAL_DIR/slurm_logs/"
+    ls -l "$LOCAL_DIR/slurm_logs/" | grep "$JOB"
+    ;;
+  *) echo "unknown mode '$MODE' (want: up|down|log)" >&2; exit 2 ;;
 esac
