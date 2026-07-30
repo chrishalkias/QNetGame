@@ -1,0 +1,6 @@
+# Only needed by experiments/training/batch_validate.py (heatmap sweeps) and
+# experiments/q_heuristic/fit_q_conditional.py (the logistic FIT; evaluating a
+# fitted model is numpy-only by design).
+pandas
+seaborn
+scikit-learn
