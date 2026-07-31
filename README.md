@@ -42,7 +42,7 @@ from rl_stack import QRNEnv
 env = QRNEnv(n_repeaters=5, n_ch=4, p_gen=0.8, p_swap=0.7,
              cutoff=15, rng=np.random.default_rng(0))
 
-obs  = env.get_observation()          # {"x": (N,8), "edge_index": (2,E)}
+obs  = env.reset()                        # {"x": (N,8), "edge_index": (2,E)}
 mask = env.action_mask(env.active_node)   # (3,) bool: NOOP / SWAP / PURIFY
 obs, reward, done, info = env.step(0)     # ONE scalar action, for env.active_node
 ```
@@ -65,7 +65,7 @@ fidelity `F = (3p+1)/4`.
 |---|---|
 | Generation | succeeds w.p. `(p_gen_i+p_gen_j)/2 · e^{-αd/2}` (if distance-dependent); new pair starts at `p₀ = F0 · e^{-αd}` |
 | Swap (BSM) | succeeds w.p. `p_swap`; on success `p_new = p₁·p₂`; on failure both links are destroyed immediately |
-| Purify (BBPSSW) | needs ≥2 shared pairs; sacrifices the lower-fidelity one to raise the other, `P_succ = (p₁p₂+1)/2`; failure destroys both |
+| Purify (BBPSSW) | needs ≥2 shared pairs; a sorted-adjacent distillation cascade folds all of them into one survivor, `P_succ = (p₁p₂+1)/2`, failure destroys both inputs; a round is only attempted when it beats keeping the stronger link |
 | Decoherence | each tick `p(age) = p₀·e^{-age/c_eff}`; link destroyed at `age ≥ cutoff` |
 
 Swap and purify outcomes are drawn and applied **immediately**, the instant the

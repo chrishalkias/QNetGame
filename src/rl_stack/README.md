@@ -6,7 +6,7 @@ The `rl_stack` package implements a reinforcement learning pipeline for learning
 routing policies on quantum repeater networks. It wraps the physics simulator
 (`simulator`) in a Gym-like environment, defines a Graph Neural Network (GNN)
 that outputs per-node Q-values, and provides a Double-DQN training loop with curriculum
-learning and cosine epsilon annealing.
+learning and linear epsilon annealing (`cosine` is a flag away, §5.5).
 
 The package is designed for size-agnostic generalisation: the agent trains on small chain
 topologies and is evaluated zero-shot on larger or differently parameterised networks.
@@ -19,7 +19,7 @@ topologies and is evaluated zero-shot on larger or differently parameterised net
 | `model.py` | Neural network | 3-layer GraphSAGE Q-network producing per-node action values |
 | `buffer.py` | Experience storage | Fixed-size ring buffer of PER-DECISION transitions (s, a, ai, r, s', nai, mask', terminated, gamma_eff) |
 | `agent.py` | Training and evaluation | Double-DQN agent: action selection, loss computation, training loop, validation |
-| `policies.py` | Baselines + training helper | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking, plus the purify-then-swap winnability oracle (2026-07-12; was swap-asap) used to prune unsolvable episode cells |
+| `policies.py` | Baselines + training helper | Heuristic policies (SwapASAP, PurifyThenSwap, Random) for benchmarking, plus the winnability oracle used to prune unsolvable episode cells (it rolls out purify-then-swap, §6) |
 | `potential.py` | Reward shaping | PBRS potential (`path_progress`, chain closed form), pure, no torch |
 | `plots.py` | Figures | All matplotlib (`Agg` backend); `agent.py` imports it lazily, never at module level |
 | `__init__.py` | Re-exports | Public API surface with guarded torch imports |
@@ -508,9 +508,16 @@ most aggressive strategy: it extends entanglement reach as fast as possible but 
 improve fidelity through purification.
 
 **`purify_then_swap(env)`**: prefer PURIFY if legal; otherwise SWAP if legal; otherwise
-NOOP. This prioritises link quality over speed. It is also the winnability-feasibility
-oracle used by `WinnabilityCache` (2026-07-12; swap-asap can livelock at `n_ch=4`,
-purify-then-swap does not).
+NOOP. This prioritises link quality over speed. It is also what `WinnabilityCache` rolls
+out as its feasibility oracle (`policies.py`, the pilot loop), so `--prune_unwinnable`
+keeps exactly the cells purify-then-swap can deliver.
+
+> ⚠ The choice of oracle is **not settled**. The project docs long claimed swap-asap was
+> the oracle, and justified it with "purify-then-swap can livelock at `n_ch=4`". The code
+> has done the opposite since before that claim was written, and the livelock has never
+> been measured. If it is real, pruning has been discarding cells swap-asap could deliver
+> and quietly narrowing the training distribution. Settle it before the next full-scale
+> retrain, not after.
 
 **`random_policy(env, rng)`**: sample uniformly from the valid actions. Takes an **explicit
 RNG that must be independent of `env.rng`**, sharing it would perturb the environment's own
@@ -576,7 +583,7 @@ graduating to harder configurations.
 normalised features (fractions and binary flags rather than absolute counts), this enables
 zero-shot transfer to networks larger than those seen during training.
 
-**Cosine epsilon annealing**: Smoother than linear decay. The cosine schedule maintains
-higher exploration in early training (where the value function is unreliable) and decays
-smoothly to the final exploration rate. The last 10% of training holds epsilon constant at
-the minimum to stabilise final performance.
+**Linear epsilon annealing**: the DQN standard (Mnih 2015, SB3), and the default since
+commit `fa7e038`. `'cosine'` holds exploration higher through early training and is kept
+behind `--eps_schedule` for reproducing the runs that used it. Either way the last 10% of
+training holds epsilon constant at the minimum to stabilise final performance.
